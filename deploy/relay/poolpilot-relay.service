@@ -1,0 +1,23 @@
+[Unit]
+Description=PoolPilot Relay agent (ProCon.IP remote access + alerting)
+Documentation=https://github.com/ylabonte/poolpilot-relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/poolpilot-relay
+# CLOUD_BASE_URL (and optional overrides) live here:
+EnvironmentFile=-/etc/poolpilot-relay/config
+# Owns /var/lib/poolpilot-relay for state.json (pairing, enrollment, rules).
+DynamicUser=yes
+StateDirectory=poolpilot-relay
+Environment=STATE_PATH=/var/lib/poolpilot-relay/state.json
+# Factory reset exits the process on purpose; always come back up.
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target

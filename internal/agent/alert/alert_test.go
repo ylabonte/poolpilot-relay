@@ -1,0 +1,464 @@
+package alert
+
+import (
+	"encoding/json"
+	"testing"
+	"time"
+
+	"github.com/ylabonte/poolpilot-relay/bands"
+	"github.com/ylabonte/poolpilot-relay/internal/measure"
+	"github.com/ylabonte/poolpilot-relay/wire"
+)
+
+const guid = "g1"
+
+// fake clock: t0 plus n poll ticks of one minute.
+var t0 = time.Date(2026, 7, 4, 10, 0, 0, 0, time.UTC)
+
+func tick(n int) time.Time { return t0.Add(time.Duration(n) * time.Minute) }
+
+func phRule() wire.AlertRule {
+	return wire.AlertRule{
+		ID: "r-ph", Kind: wire.RuleKindMeasurementBand, Enabled: true, Source: "default",
+		MeasurementType: bands.TypePH, NotifySeverities: []string{"bad"},
+		DebouncePolls: 3, CooldownSeconds: 21600, NotifyRecovery: true,
+	}
+}
+
+func phReading(v float64) []measure.Reading {
+	return []measure.Reading{{Type: bands.TypePH, Value: v, Unit: "pH", Label: "pH", Key: "7"}}
+}
+
+// poll runs one Evaluate step and returns the emitted alerts.
+func poll(t *testing.T, rules []wire.AlertRule, states map[string]*RuleState, v float64, n int) []wire.AlertRequest {
+	t.Helper()
+	return Evaluate(rules, states, phReading(v), guid, tick(n))
+}
+
+func TestSeedDefaults(t *testing.T) {
+	rules := SeedDefaults()
+	if len(rules) != len(bands.Defaults)+1 {
+		t.Fatalf("rule count = %d, want one per banded type + stale", len(rules))
+	}
+	if err := ValidateRules(rules); err != nil {
+		t.Fatalf("seeded defaults must validate: %v", err)
+	}
+	byID := map[string]wire.AlertRule{}
+	for _, r := range rules {
+		byID[r.ID] = r
+	}
+	ph, ok := byID["default-"+bands.TypePH]
+	if !ok {
+		t.Fatal("missing default pH rule")
+	}
+	if !ph.Enabled || ph.Source != "default" || ph.DebouncePolls != 3 ||
+		ph.CooldownSeconds != 21600 || !ph.NotifyRecovery ||
+		len(ph.NotifySeverities) != 1 || ph.NotifySeverities[0] != "bad" {
+		t.Errorf("pH default shape: %+v", ph)
+	}
+	if ph.Bands != nil {
+		t.Error("default rules derive bands from the parity table, not a frozen copy")
+	}
+	stale, ok := byID["default-stale"]
+	if !ok {
+		t.Fatal("missing default stale rule")
+	}
+	if stale.Kind != wire.RuleKindStaleData || stale.StaleAfterSeconds != 5400 ||
+		stale.CooldownSeconds != 86400 || !stale.NotifyRecovery {
+		t.Errorf("stale default shape: %+v", stale)
+	}
+	// Determinism (map iteration must not leak into rule order).
+	again := SeedDefaults()
+	for i := range rules {
+		if rules[i].ID != again[i].ID {
+			t.Fatalf("rule order not deterministic: %v vs %v", rules[i].ID, again[i].ID)
+		}
+	}
+}
+
+func TestEnterCommitsOnlyAfterDebounce(t *testing.T) {
+	rules := []wire.AlertRule{phRule()}
+	states := map[string]*RuleState{}
+
+	// Boundary contract: pH exactly 7.8 belongs to the UPPER band → bad.
+	for n := 1; n <= 2; n++ {
+		if got := poll(t, rules, states, 7.8, n); len(got) != 0 {
+			t.Fatalf("poll %d: notified before debounce satisfied: %+v", n, got)
+		}
+	}
+	got := poll(t, rules, states, 7.8, 3)
+	if len(got) != 1 {
+		t.Fatalf("3rd consecutive bad poll must notify, got %+v", got)
+	}
+	a := got[0]
+	if a.Transition != wire.TransitionEnter || a.Severity != "bad" ||
+		a.MeasurementType != bands.TypePH || a.ControllerGUID != guid ||
+		a.Value != 7.8 || a.Unit != "pH" || a.RuleID != "r-ph" {
+		t.Errorf("alert shape: %+v", a)
+	}
+	if a.OccurredAt != tick(3).Format(time.RFC3339) {
+		t.Errorf("occurred_at = %q", a.OccurredAt)
+	}
+
+	// Steady state inside cooldown: silence.
+	if got := poll(t, rules, states, 7.9, 4); len(got) != 0 {
+		t.Errorf("persisting bad within cooldown must not re-notify: %+v", got)
+	}
+}
+
+func TestDebounceSuppressesFlap(t *testing.T) {
+	rules := []wire.AlertRule{phRule()}
+	states := map[string]*RuleState{}
+
+	// bad, bad, ok, bad, bad, ok … never 3 consecutive → never notifies.
+	seq := []float64{7.9, 7.9, 7.2, 7.9, 7.9, 7.2, 7.9, 7.9, 7.2}
+	for n, v := range seq {
+		if got := poll(t, rules, states, v, n+1); len(got) != 0 {
+			t.Fatalf("flapping sequence notified at step %d: %+v", n+1, got)
+		}
+	}
+}
+
+func TestRecoveryIsDebouncedAndNotifiedOnce(t *testing.T) {
+	rules := []wire.AlertRule{phRule()}
+	states := map[string]*RuleState{}
+
+	for n := 1; n <= 3; n++ {
+		poll(t, rules, states, 7.9, n)
+	}
+
+	// Two ok polls: not committed yet (symmetric debounce).
+	for n := 4; n <= 5; n++ {
+		if got := poll(t, rules, states, 7.2, n); len(got) != 0 {
+			t.Fatalf("recovery notified before debounce at poll %d: %+v", n, got)
+		}
+	}
+	got := poll(t, rules, states, 7.2, 6)
+	if len(got) != 1 || got[0].Transition != wire.TransitionRecover {
+		t.Fatalf("3rd ok poll must emit recover: %+v", got)
+	}
+	if got[0].Severity != "bad" {
+		t.Errorf("recover must carry the severity recovered FROM, got %q", got[0].Severity)
+	}
+	// Recover exactly once.
+	if got := poll(t, rules, states, 7.2, 7); len(got) != 0 {
+		t.Errorf("second recover emitted: %+v", got)
+	}
+}
+
+func TestCooldownRenotify(t *testing.T) {
+	rule := phRule()
+	rule.CooldownSeconds = 600 // 10min for the test
+	rules := []wire.AlertRule{rule}
+	states := map[string]*RuleState{}
+
+	for n := 1; n <= 3; n++ {
+		poll(t, rules, states, 7.9, n)
+	}
+	// Within cooldown: silent (entered at tick 3, cooldown 10min).
+	if got := poll(t, rules, states, 7.9, 12); len(got) != 0 {
+		t.Fatalf("renotified inside cooldown: %+v", got)
+	}
+	got := poll(t, rules, states, 7.9, 13) // 10min after tick(3)
+	if len(got) != 1 || got[0].Transition != wire.TransitionRenotify || got[0].Severity != "bad" {
+		t.Fatalf("cooldown expiry must renotify: %+v", got)
+	}
+	// Cooldown restarts from the renotify.
+	if got := poll(t, rules, states, 7.9, 14); len(got) != 0 {
+		t.Errorf("renotify must restart the cooldown: %+v", got)
+	}
+}
+
+func TestWarnNotNotifiedByDefault(t *testing.T) {
+	rules := []wire.AlertRule{phRule()} // notify_severities = ["bad"]
+	states := map[string]*RuleState{}
+
+	// pH 7.5 = warn (boundary 7.4 ok→warn, 7.8 warn→bad).
+	for n := 1; n <= 6; n++ {
+		if got := poll(t, rules, states, 7.5, n); len(got) != 0 {
+			t.Fatalf("warn must be silent with default notify_severities: %+v", got)
+		}
+	}
+	// The transition still committed (visible in state, no notification).
+	if rs := states["r-ph"]; rs.LastSeverity != "warn" || rs.Notified {
+		t.Errorf("state after silent warn commit: %+v", rs)
+	}
+}
+
+func TestWarnNotifiedWhenOptedIn(t *testing.T) {
+	rule := phRule()
+	rule.NotifySeverities = []string{"warn", "bad"}
+	rules := []wire.AlertRule{rule}
+	states := map[string]*RuleState{}
+
+	for n := 1; n <= 2; n++ {
+		if got := poll(t, rules, states, 7.5, n); len(got) != 0 {
+			t.Fatalf("debounce ignored for warn: %+v", got)
+		}
+	}
+	got := poll(t, rules, states, 7.5, 3)
+	if len(got) != 1 || got[0].Transition != wire.TransitionEnter || got[0].Severity != "warn" {
+		t.Fatalf("opted-in warn must notify: %+v", got)
+	}
+
+	// Escalation warn→bad is a NEW notified severity → fresh enter.
+	for n := 4; n <= 5; n++ {
+		poll(t, rules, states, 7.9, n)
+	}
+	got = poll(t, rules, states, 7.9, 6)
+	if len(got) != 1 || got[0].Transition != wire.TransitionEnter || got[0].Severity != "bad" {
+		t.Fatalf("warn→bad escalation must re-enter: %+v", got)
+	}
+}
+
+func TestLeavingNotifiedIntoNonNotifiedSeverityRecovers(t *testing.T) {
+	rules := []wire.AlertRule{phRule()} // warn NOT notified, bad is
+	states := map[string]*RuleState{}
+
+	for n := 1; n <= 3; n++ {
+		poll(t, rules, states, 7.9, n) // bad, notified at 3
+	}
+	// bad → warn: warn is non-notified → recover once.
+	for n := 4; n <= 5; n++ {
+		if got := poll(t, rules, states, 7.5, n); len(got) != 0 {
+			t.Fatalf("premature emit: %+v", got)
+		}
+	}
+	got := poll(t, rules, states, 7.5, 6)
+	if len(got) != 1 || got[0].Transition != wire.TransitionRecover || got[0].Severity != "bad" {
+		t.Fatalf("bad→warn must recover: %+v", got)
+	}
+}
+
+func TestNoRecoveryWhenDisabled(t *testing.T) {
+	rule := phRule()
+	rule.NotifyRecovery = false
+	rules := []wire.AlertRule{rule}
+	states := map[string]*RuleState{}
+
+	for n := 1; n <= 3; n++ {
+		poll(t, rules, states, 7.9, n)
+	}
+	for n := 4; n <= 7; n++ {
+		if got := poll(t, rules, states, 7.2, n); len(got) != 0 {
+			t.Fatalf("notify_recovery=false must stay silent: %+v", got)
+		}
+	}
+}
+
+func TestDisabledRuleAndMissingReadingAreSilent(t *testing.T) {
+	disabled := phRule()
+	disabled.Enabled = false
+	orp := phRule()
+	orp.ID, orp.MeasurementType = "r-orp", bands.TypeORP // no ORP reading supplied
+	states := map[string]*RuleState{}
+
+	for n := 1; n <= 5; n++ {
+		got := Evaluate([]wire.AlertRule{disabled, orp}, states, phReading(7.9), guid, tick(n))
+		if len(got) != 0 {
+			t.Fatalf("disabled/missing-reading rules emitted: %+v", got)
+		}
+	}
+}
+
+func TestBandsOverrideRespected(t *testing.T) {
+	rule := phRule()
+	rule.DebouncePolls = 1
+	rule.Bands = &bands.BandsConfig{Min: 6.0, OkMin: 6.5, OkMax: 8.5, Max: 9.0}
+	states := map[string]*RuleState{}
+
+	// 7.9 is bad under defaults but ok under the override.
+	if got := poll(t, []wire.AlertRule{rule}, states, 7.9, 1); len(got) != 0 {
+		t.Fatalf("override bands ignored: %+v", got)
+	}
+	got := poll(t, []wire.AlertRule{rule}, states, 9.0, 2)
+	if len(got) != 1 || got[0].Severity != "bad" {
+		t.Fatalf("override boundary 9.0 must be bad: %+v", got)
+	}
+}
+
+func staleRule() wire.AlertRule {
+	return wire.AlertRule{
+		ID: "r-stale", Kind: wire.RuleKindStaleData, Enabled: true, Source: "default",
+		StaleAfterSeconds: 5400, CooldownSeconds: 86400, NotifyRecovery: true,
+	}
+}
+
+func TestStaleEnterRenotifyRecover(t *testing.T) {
+	rules := []wire.AlertRule{staleRule()}
+	states := map[string]*RuleState{}
+	lastSuccess := t0
+
+	// Fresh data: silent.
+	if got := EvaluateStale(rules, states, lastSuccess, guid, t0.Add(time.Minute)); len(got) != 0 {
+		t.Fatalf("fresh data flagged stale: %+v", got)
+	}
+	// Exactly at the threshold: NOT stale (strictly greater fires).
+	if got := EvaluateStale(rules, states, lastSuccess, guid, t0.Add(5400*time.Second)); len(got) != 0 {
+		t.Fatalf("boundary elapsed==stale_after fired: %+v", got)
+	}
+	// Past the threshold: enter.
+	now := t0.Add(5401 * time.Second)
+	got := EvaluateStale(rules, states, lastSuccess, guid, now)
+	if len(got) != 1 || got[0].Transition != wire.TransitionEnter || got[0].Severity != SeverityStale ||
+		got[0].Kind != wire.RuleKindStaleData || got[0].ControllerGUID != guid {
+		t.Fatalf("stale enter: %+v", got)
+	}
+	// Still stale within cooldown: silent.
+	if got := EvaluateStale(rules, states, lastSuccess, guid, now.Add(12*time.Hour)); len(got) != 0 {
+		t.Fatalf("stale renotified inside cooldown: %+v", got)
+	}
+	// Past cooldown: renotify.
+	got = EvaluateStale(rules, states, lastSuccess, guid, now.Add(24*time.Hour))
+	if len(got) != 1 || got[0].Transition != wire.TransitionRenotify {
+		t.Fatalf("stale renotify: %+v", got)
+	}
+	// Next success: recover immediately (no debounce for stale).
+	lastSuccess = now.Add(25 * time.Hour)
+	got = EvaluateStale(rules, states, lastSuccess, guid, lastSuccess)
+	if len(got) != 1 || got[0].Transition != wire.TransitionRecover || got[0].Severity != SeverityStale {
+		t.Fatalf("stale recover: %+v", got)
+	}
+	// And only once.
+	if got := EvaluateStale(rules, states, lastSuccess, guid, lastSuccess.Add(time.Minute)); len(got) != 0 {
+		t.Fatalf("stale double recover: %+v", got)
+	}
+}
+
+func TestStaleNeverFiresBeforeFirstSuccess(t *testing.T) {
+	rules := []wire.AlertRule{staleRule()}
+	states := map[string]*RuleState{}
+	// Zero lastSuccess = the agent has never reached the controller — a fresh
+	// boot must not page anyone.
+	if got := EvaluateStale(rules, states, time.Time{}, guid, t0.Add(1000*time.Hour)); len(got) != 0 {
+		t.Fatalf("stale fired without any successful poll ever: %+v", got)
+	}
+}
+
+// Reboot safety: persisting the rule-state map through JSON mid-cooldown and
+// mid-debounce must not produce early or duplicate notifications.
+func TestRebootSafetyRoundTrip(t *testing.T) {
+	rules := []wire.AlertRule{phRule()}
+	states := map[string]*RuleState{}
+
+	for n := 1; n <= 3; n++ {
+		poll(t, rules, states, 7.9, n) // notified at tick 3
+	}
+
+	// Simulate reboot: state → JSON → fresh map (what the state file does).
+	raw, err := json.Marshal(states)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored := map[string]*RuleState{}
+	if err := json.Unmarshal(raw, &restored); err != nil {
+		t.Fatal(err)
+	}
+
+	// Still bad right after reboot: must NOT re-enter or renotify (cooldown
+	// timestamp survived the round trip).
+	if got := Evaluate(rules, restored, phReading(7.9), guid, tick(10)); len(got) != 0 {
+		t.Fatalf("reboot re-notified early: %+v", got)
+	}
+	// Cooldown continuity: renotify fires relative to the pre-reboot notify.
+	got := Evaluate(rules, restored, phReading(7.9), guid, tick(3).Add(21601*time.Second))
+	if len(got) != 1 || got[0].Transition != wire.TransitionRenotify {
+		t.Fatalf("cooldown lost across reboot: %+v", got)
+	}
+
+	// Mid-debounce round trip: 2 of 3 ok polls before "reboot".
+	states2 := map[string]*RuleState{}
+	for n := 1; n <= 3; n++ {
+		poll(t, rules, states2, 7.9, n)
+	}
+	poll(t, rules, states2, 7.2, 4)
+	poll(t, rules, states2, 7.2, 5)
+	raw2, _ := json.Marshal(states2)
+	restored2 := map[string]*RuleState{}
+	_ = json.Unmarshal(raw2, &restored2)
+	got = Evaluate(rules, restored2, phReading(7.2), guid, tick(6))
+	if len(got) != 1 || got[0].Transition != wire.TransitionRecover {
+		t.Fatalf("pending debounce count lost across reboot: %+v", got)
+	}
+}
+
+func TestValidateRules(t *testing.T) {
+	valid := phRule()
+	cases := []struct {
+		name    string
+		rules   []wire.AlertRule
+		wantErr bool
+	}{
+		{"valid defaults", SeedDefaults(), false},
+		{"valid single", []wire.AlertRule{valid}, false},
+		{"empty set is a valid full replace", nil, false},
+		{"missing id", []wire.AlertRule{func() wire.AlertRule { r := valid; r.ID = ""; return r }()}, true},
+		{"duplicate id", []wire.AlertRule{valid, valid}, true},
+		{"unknown kind", []wire.AlertRule{func() wire.AlertRule { r := valid; r.Kind = "sms"; return r }()}, true},
+		{"unknown measurement type", []wire.AlertRule{func() wire.AlertRule { r := valid; r.MeasurementType = "salinity"; return r }()}, true},
+		{"non-monotonic bands", []wire.AlertRule{func() wire.AlertRule {
+			r := valid
+			r.Bands = &bands.BandsConfig{Min: 7.8, OkMin: 7.0, OkMax: 7.4, Max: 6.6}
+			return r
+		}()}, true},
+		{"zero debounce", []wire.AlertRule{func() wire.AlertRule { r := valid; r.DebouncePolls = 0; return r }()}, true},
+		{"zero cooldown", []wire.AlertRule{func() wire.AlertRule { r := valid; r.CooldownSeconds = 0; return r }()}, true},
+		{"bad notify severity", []wire.AlertRule{func() wire.AlertRule { r := valid; r.NotifySeverities = []string{"ok"}; return r }()}, true},
+		{"stale needs positive threshold", []wire.AlertRule{func() wire.AlertRule {
+			r := staleRule()
+			r.StaleAfterSeconds = 0
+			return r
+		}()}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateRules(tc.rules)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("ValidateRules = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestEffectiveSeverity(t *testing.T) {
+	override := phRule()
+	override.Bands = &bands.BandsConfig{Min: 6.0, OkMin: 6.5, OkMax: 8.5, Max: 9.0}
+	r := measure.Reading{Type: bands.TypePH, Value: 7.9}
+
+	if sev, ok := EffectiveSeverity([]wire.AlertRule{override}, r); !ok || sev != "ok" {
+		t.Errorf("override severity = %q, %v", sev, ok)
+	}
+	if sev, ok := EffectiveSeverity(nil, r); !ok || sev != "bad" {
+		t.Errorf("default severity = %q, %v", sev, ok)
+	}
+	if _, ok := EffectiveSeverity(nil, measure.Reading{Type: "generic", Value: 1}); ok {
+		t.Error("unbanded type must report no severity")
+	}
+}
+
+// The blocking review finding: a restart during an ACTIVE stale alert leaves
+// Notified=true persisted while the in-memory lastSuccess is zero. Zero means
+// "unknown", not "recovered" — the engine must stay silent (no false recovery,
+// no disarm) until a real poll outcome exists.
+func TestStaleRebootWithActiveAlertStaysSilent(t *testing.T) {
+	rule := staleRule()
+	rules := []wire.AlertRule{rule}
+	states := map[string]*RuleState{
+		rule.ID: {LastSeverity: SeverityStale, Notified: true, LastNotifiedAt: t0, ActiveSince: t0},
+	}
+
+	if got := EvaluateStale(rules, states, time.Time{}, guid, t0.Add(2*time.Hour)); len(got) != 0 {
+		t.Fatalf("reboot with unknown lastSuccess emitted %+v — false recovery", got)
+	}
+	if !states[rule.ID].Notified {
+		t.Fatal("unknown lastSuccess cleared Notified — watchdog disarmed")
+	}
+
+	// With the persisted timestamp seeded back (still ancient), the alert
+	// continues normally: renotify once the cooldown elapses.
+	longAgo := t0.Add(-48 * time.Hour)
+	got := EvaluateStale(rules, states, longAgo, guid, t0.Add(25*time.Hour))
+	if len(got) != 1 || got[0].Transition != wire.TransitionRenotify {
+		t.Fatalf("seeded lastSuccess did not resume the active alert: %+v", got)
+	}
+}

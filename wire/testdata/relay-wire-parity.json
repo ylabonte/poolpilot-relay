@@ -1,0 +1,291 @@
+{
+  "_comment": "Cross-repo wire parity fixture for shared/relay-client <-> poolpilot-relay internal/wire. One fully-populated example of each message; both sides decode this exact file and assert field-for-field. Snake_case names, durations as integer seconds. When a wire field changes, update this file AND the Go-side round-trip test (poolpilot-relay/internal/wire/testdata) together — that is the whole point of the fixture. POST /v1/pair takes exactly one of three codes, so it gets three request entries rather than one message with all three set: a single combined entry would pin a shape the relay answers 400 bad_json for.",
+  "info": {
+    "agent_id": "0123456789abcdef0123456789abcdef",
+    "version": "1.4.2",
+    "paired": true,
+    "enrolled": true,
+    "fingerprint": "sha256/aGVsbG8gd29ybGQgc3BraSBwaW4gZXhhbXBsZQ==",
+    "preset_support": ["procon-ip", "violet"]
+  },
+  "pair_request": {
+    "enrollment_code": "ABCD-EFGH",
+    "device_name": "Yannic's iPhone"
+  },
+  "pair_request_invite": {
+    "invite_code": "WXYZ-1234",
+    "device_name": "Yannic's iPad"
+  },
+  "pair_request_recovery": {
+    "recovery_code": "M7Q2-K4XT",
+    "device_name": "Yannic's iPhone"
+  },
+  "pair_response": {
+    "pairing_token": "pt_9f8e7d6c5b4a39281706",
+    "agent_id": "0123456789abcdef0123456789abcdef",
+    "device_id": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d",
+    "app_bearer_voucher": "3f5a1c7e9b0d2468ace013579bdf2468ace013579bdf2468ace013579bdf2468",
+    "voucher_role": "member",
+    "voucher_expires_at": "2026-07-07T21:20:00Z"
+  },
+  "device_info": {
+    "device_id": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d",
+    "label": "Yannic's iPhone",
+    "created_at": "2026-07-07T20:00:00Z",
+    "current": true
+  },
+  "devices_response": [
+    {
+      "device_id": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d",
+      "label": "Yannic's iPhone",
+      "created_at": "2026-07-07T20:00:00Z",
+      "current": true
+    },
+    {
+      "device_id": "2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e",
+      "label": "",
+      "created_at": "2026-07-08T09:30:00Z",
+      "current": false
+    }
+  ],
+  "invite_mint_request": {
+    "attest_challenge": "FiuC61Uncxn75pXEjFgYxUKGGwjNIGVB"
+  },
+  "invite_mint_response": {
+    "invite_code": "WXYZ-1234",
+    "expires_at": "2026-07-07T21:45:00Z"
+  },
+  "voucher_redeem_request": {
+    "voucher": "3f5a1c7e9b0d2468ace013579bdf2468ace013579bdf2468ace013579bdf2468",
+    "platform": "ios",
+    "attest_challenge": "FiuC61Uncxn75pXEjFgYxUKGGwjNIGVB",
+    "attest_key_id": "R0hNVnhLd0FBQUFBQUFBQUFBQUFBQUE9",
+    "attestation": "o2NmbXRvYXBwbGUtYXBwYXR0ZXN0Z2F0dFN0bXQ="
+  },
+  "controller_config": {
+    "preset": "procon-ip",
+    "lan_address": "192.168.1.50",
+    "username": "admin",
+    "password": "pool123",
+    "use_https": true,
+    "label": "Garden Pool"
+  },
+  "controller_response": {
+    "guid": "fedcba9876543210fedcba9876543210",
+    "remote_url": "https://fedcba9876543210fedcba9876543210.remote.poolpilot.eu",
+    "remote_api_url": "https://fedcba9876543210fedcba9876543210-api.remote.poolpilot.eu"
+  },
+  "controller_info": {
+    "guid": "fedcba9876543210fedcba9876543210",
+    "label": "Garden Pool",
+    "lan_address": "192.168.1.50",
+    "remote_url": "https://fedcba9876543210fedcba9876543210.remote.poolpilot.eu",
+    "remote_api_url": "https://fedcba9876543210fedcba9876543210-api.remote.poolpilot.eu"
+  },
+  "controllers_response": [
+    {
+      "guid": "fedcba9876543210fedcba9876543210",
+      "label": "Garden Pool",
+      "lan_address": "192.168.1.50",
+      "remote_url": "https://fedcba9876543210fedcba9876543210.remote.poolpilot.eu",
+      "remote_api_url": "https://fedcba9876543210fedcba9876543210-api.remote.poolpilot.eu"
+    },
+    {
+      "guid": "00112233445566770011223344556677",
+      "label": "",
+      "lan_address": "192.168.1.51",
+      "remote_url": "",
+      "remote_api_url": ""
+    }
+  ],
+  "controllers_list_response": {
+    "controllers": [
+      {
+        "guid": "fedcba9876543210fedcba9876543210",
+        "label": "Garden Pool",
+        "lan_address": "192.168.1.50:80",
+        "remote_url": "https://fedcba9876543210fedcba9876543210.remote.poolpilot.eu",
+        "remote_api_url": "https://fedcba9876543210fedcba9876543210-api.remote.poolpilot.eu",
+        "relay_id": "3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f"
+      }
+    ]
+  },
+  "status": {
+    "paired": true,
+    "tunnel": {
+      "state": "connected",
+      "last_error": "",
+      "api_state": "connected"
+    },
+    "controller": {
+      "guid": "fedcba9876543210fedcba9876543210",
+      "label": "Garden Pool",
+      "configured": true,
+      "reachable": true,
+      "last_poll_at": "2026-07-07T21:15:00Z",
+      "measurements": [
+        { "type": "ph", "value": 7.24, "unit": "pH", "label": "pH", "severity": "ok" },
+        { "type": "orp_mv", "value": 512.0, "unit": "mV", "label": "Redox", "severity": "warn" }
+      ],
+      "remote_api_url": "https://fedcba9876543210fedcba9876543210-api.remote.poolpilot.eu",
+      "tunnel": {
+        "state": "connected",
+        "last_error": "",
+        "api_state": "connected"
+      }
+    },
+    "controllers": [
+      {
+        "guid": "fedcba9876543210fedcba9876543210",
+        "label": "Garden Pool",
+        "configured": true,
+        "reachable": true,
+        "last_poll_at": "2026-07-07T21:15:00Z",
+        "measurements": [
+          { "type": "ph", "value": 7.24, "unit": "pH", "label": "pH", "severity": "ok" },
+          { "type": "orp_mv", "value": 512.0, "unit": "mV", "label": "Redox", "severity": "warn" }
+        ],
+        "remote_api_url": "https://fedcba9876543210fedcba9876543210-api.remote.poolpilot.eu",
+        "tunnel": {
+          "state": "connected",
+          "last_error": "",
+          "api_state": "connected"
+        }
+      }
+    ],
+    "alerts": {
+      "active": [
+        {
+          "controller_guid": "fedcba9876543210fedcba9876543210",
+          "rule_id": "orp-band",
+          "kind": "measurement_band",
+          "measurement_type": "orp_mv",
+          "severity": "warn",
+          "value": 512.0,
+          "since": "2026-07-07T20:50:00Z"
+        }
+      ]
+    }
+  },
+  "alert_rules": {
+    "rules": [
+      {
+        "id": "ph-band",
+        "kind": "measurement_band",
+        "enabled": true,
+        "source": "default",
+        "measurement_type": "ph",
+        "bands": { "min": 6.8, "ok_min": 7.0, "ok_max": 7.4, "max": 7.8 },
+        "notify_severities": ["warn", "bad"],
+        "debounce_polls": 3,
+        "stale_after_seconds": 0,
+        "cooldown_seconds": 3600,
+        "notify_recovery": true
+      },
+      {
+        "id": "stale-watchdog",
+        "kind": "stale_data",
+        "enabled": true,
+        "source": "app",
+        "measurement_type": "",
+        "notify_severities": [],
+        "debounce_polls": 0,
+        "stale_after_seconds": 1800,
+        "cooldown_seconds": 3600,
+        "notify_recovery": false
+      }
+    ]
+  },
+  "enroll_request": {},
+  "enroll_response": {
+    "enrollment_code": "ABCD-EFGH",
+    "expires_at": "2026-07-07T21:45:00Z"
+  },
+  "device_registration": {
+    "platform": "apns",
+    "token": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
+    "environment": "prod",
+    "locale": "de"
+  },
+  "device_unregister": {
+    "platform": "apns",
+    "token": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
+  },
+  "device_test_request": {},
+  "device_test_response": {
+    "delivered": 2,
+    "failed": 0
+  },
+  "push_source_create_request": {
+    "label": "VIOLET",
+    "ingest_id": "uoHBvRPOIvGrv5iFlbCBFNOgmBjMtp",
+    "ingest_secret": "asiaOclRz3AwzKsbVRJN9wVGFYGW2W",
+    "attest_challenge": "FiuC61Uncxn75pXEjFgYxUKGGwjNIGVB"
+  },
+  "push_source_create_response": {
+    "ingest_id": "uoHBvRPOIvGrv5iFlbCBFNOgmBjMtp",
+    "ingest_secret": "asiaOclRz3AwzKsbVRJN9wVGFYGW2W",
+    "host": "push.poolpilot.eu",
+    "path": "/1/messages.json",
+    "label": "VIOLET"
+  },
+  "push_source_lookup_request": {
+    "ingest_id": "uoHBvRPOIvGrv5iFlbCBFNOgmBjMtp",
+    "ingest_secret": "asiaOclRz3AwzKsbVRJN9wVGFYGW2W",
+    "device_id": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d",
+    "attest_challenge": "FiuC61Uncxn75pXEjFgYxUKGGwjNIGVB"
+  },
+  "push_source_lookup_response": {
+    "found": true,
+    "label": "VIOLET",
+    "subscribed": true,
+    "expires_at": "2026-09-01T12:00:00Z"
+  },
+  "push_source_revoke_request": {
+    "ingest_id": "uoHBvRPOIvGrv5iFlbCBFNOgmBjMtp",
+    "ingest_secret": "asiaOclRz3AwzKsbVRJN9wVGFYGW2W",
+    "attest_challenge": "FiuC61Uncxn75pXEjFgYxUKGGwjNIGVB"
+  },
+  "push_source_subscribe_request": {
+    "ingest_id": "uoHBvRPOIvGrv5iFlbCBFNOgmBjMtp",
+    "ingest_secret": "asiaOclRz3AwzKsbVRJN9wVGFYGW2W",
+    "platform": "apns",
+    "token": "b3f1c2d4e5a6079818273645ac9bdef012345678",
+    "environment": "prod",
+    "locale": "de",
+    "device_id": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d",
+    "attest_challenge": "FiuC61Uncxn75pXEjFgYxUKGGwjNIGVB"
+  },
+  "rc_link_request": {
+    "app_user_id": "rc-user-1",
+    "attest_challenge": "chal-1"
+  },
+  "rc_link_response": {
+    "tenant_id": "7f3e-tenant",
+    "app_user_id": "rc-user-1",
+    "rc_status": "active",
+    "changed": true
+  },
+  "rc_claim_init_request": {
+    "app_user_id": "$RCAnonymousID:abc",
+    "platform": "ios",
+    "attest_challenge": "chal-1",
+    "attest_key_id": "key-1",
+    "attestation": "att-1"
+  },
+  "rc_claim_init_response": {
+    "status": "pending",
+    "claim_id": "c1a2b3c4-0000-0000-0000-000000000000",
+    "expires_at": "2026-08-19T12:00:00Z"
+  },
+  "rc_claim_status_response": {
+    "status": "pending",
+    "expires_at": "2026-08-19T12:00:00Z"
+  },
+  "rc_claim_object_request": {
+    "attest_challenge": "chal-1"
+  },
+  "rc_claim_object_response": {
+    "status": "objected"
+  }
+}

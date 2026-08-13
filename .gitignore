@@ -1,0 +1,12 @@
+# Go
+/poolpilot-relay
+*.test
+*.out
+
+# local env
+.env
+*.local
+
+# go.work (local multi-module dev against a sibling checkout; never committed)
+go.work
+go.work.sum

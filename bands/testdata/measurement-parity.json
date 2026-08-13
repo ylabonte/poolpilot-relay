@@ -1,0 +1,65 @@
+{
+  "_comment": "SINGLE SOURCE OF TRUTH for the cross-platform MeasurementBands<->ValueScale parity contract (CLAUDE.md tripwire / docs/ARCHITECTURE.md#cross-platform-parity-contracts). Asserted by: shared/core jvmTest (Kotlin, severity+type+digits), apps/android/ui-common test (Android, format only -- type+digits ride the shared Kotlin MeasurementBands, covered by the jvmTest above), apps/ios/UICommon Tests (Swift, all). Changing a band threshold or precision rule requires editing this file AND the matching platform code, or one side's test fails. Do not duplicate this file -- the Gradle tests read it via a test-resources srcDir and the Swift test reads it via a #filePath-relative path.",
+  "severity": [
+    { "scale": "ph", "input": 6.0, "expected": "bad" },
+    { "scale": "ph", "input": 6.6, "expected": "warn" },
+    { "scale": "ph", "input": 6.9, "expected": "warn" },
+    { "scale": "ph", "input": 7.0, "expected": "ok" },
+    { "scale": "ph", "input": 7.2, "expected": "ok" },
+    { "scale": "ph", "input": 7.4, "expected": "warn" },
+    { "scale": "ph", "input": 7.7, "expected": "warn" },
+    { "scale": "ph", "input": 7.8, "expected": "bad" },
+    { "scale": "ph", "input": 8.5, "expected": "bad" },
+
+    { "scale": "orp_mv", "input": 500.0, "expected": "bad" },
+    { "scale": "orp_mv", "input": 600.0, "expected": "warn" },
+    { "scale": "orp_mv", "input": 640.0, "expected": "warn" },
+    { "scale": "orp_mv", "input": 650.0, "expected": "ok" },
+    { "scale": "orp_mv", "input": 725.0, "expected": "ok" },
+    { "scale": "orp_mv", "input": 800.0, "expected": "warn" },
+    { "scale": "orp_mv", "input": 840.0, "expected": "warn" },
+    { "scale": "orp_mv", "input": 850.0, "expected": "bad" },
+    { "scale": "orp_mv", "input": 1000.0, "expected": "bad" },
+
+    { "scale": "chlorine_mg_l", "input": 0.1, "expected": "bad" },
+    { "scale": "chlorine_mg_l", "input": 0.2, "expected": "warn" },
+    { "scale": "chlorine_mg_l", "input": 0.3, "expected": "warn" },
+    { "scale": "chlorine_mg_l", "input": 0.4, "expected": "ok" },
+    { "scale": "chlorine_mg_l", "input": 1.0, "expected": "ok" },
+    { "scale": "chlorine_mg_l", "input": 1.5, "expected": "warn" },
+    { "scale": "chlorine_mg_l", "input": 2.0, "expected": "warn" },
+    { "scale": "chlorine_mg_l", "input": 2.5, "expected": "bad" },
+    { "scale": "chlorine_mg_l", "input": 5.0, "expected": "bad" }
+  ],
+  "measurementType": [
+    { "unit": "pH", "labelHint": null, "expected": "ph" },
+    { "unit": "mV", "labelHint": null, "expected": "orp_mv" },
+    { "unit": "mg/l", "labelHint": null, "expected": "chlorine_mg_l" },
+    { "unit": "ppm", "labelHint": "Chlorine", "expected": "chlorine_mg_l" },
+    { "unit": "ppm", "labelHint": "cl", "expected": "chlorine_mg_l" },
+    { "unit": "ppm", "labelHint": null, "expected": "ppm" },
+    { "unit": "°C", "labelHint": null, "expected": "temp_water_c" },
+    { "unit": "C", "labelHint": null, "expected": "temp_water_c" },
+    { "unit": "°C", "labelHint": "Air temperature", "expected": "temp_air_c" },
+    { "unit": "C", "labelHint": "ambient", "expected": "temp_air_c" },
+    { "unit": "C", "labelHint": "outdoor", "expected": "temp_air_c" },
+    { "unit": "", "labelHint": null, "expected": "generic" },
+    { "unit": "lux", "labelHint": null, "expected": "lux" }
+  ],
+  "fractionDigits": [
+    { "type": "ph", "expected": 2 },
+    { "type": "orp_mv", "expected": 1 },
+    { "type": "chlorine_mg_l", "expected": 2 },
+    { "type": "temp_water_c", "expected": 1 },
+    { "type": "temp_air_c", "expected": 1 }
+  ],
+  "format": [
+    { "input": 7.0, "fractionDigits": 1, "expectedEn": "7.0" },
+    { "input": 7.25, "fractionDigits": 2, "expectedEn": "7.25" },
+    { "input": 750.0, "fractionDigits": 0, "expectedEn": "750" },
+    { "input": 7.0, "fractionDigits": null, "expectedEn": "7" },
+    { "input": 7.5, "fractionDigits": null, "expectedEn": "7.50" },
+    { "input": 7.005, "fractionDigits": 2, "expectedEn": "7.00" },
+    { "input": 26.45, "fractionDigits": 1, "expectedEn": "26.4" }
+  ]
+}
