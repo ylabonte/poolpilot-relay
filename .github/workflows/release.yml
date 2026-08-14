@@ -91,6 +91,20 @@ jobs:
           # in step, and a mismatch here means the fleet could not verify either.
           minisign -Vm dist/sha256sums.txt -p deploy/relay/minisign.pub
 
+      - name: Verify fleet assets are present
+        run: |
+          # install.sh fetches these exact asset names from the release; a
+          # published tag is immutable, so a build-step edit that renamed or
+          # dropped one would ship a permanently-broken release. Assert they
+          # exist before publishing — the forward half of the old dl-publish
+          # allowlist, kept now that GitHub Releases is the channel.
+          for f in poolpilot-relay_linux_arm64 poolpilot-relay_linux_armv7 \
+                   poolpilot-relay_linux_amd64 poolpilot-relay_linux_386 \
+                   poolpilot-relay_linux_riscv64 poolpilot-relay.service \
+                   sha256sums.txt sha256sums.txt.minisig; do
+            [ -f "dist/$f" ] || { echo "::error::release asset dist/$f is missing — the build step and the installer have diverged."; exit 1; }
+          done
+
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -100,8 +114,11 @@ jobs:
           # install.sh fetches from releases/download/<tag>/. Publishing is INERT —
           # no relay is offered this version until an operator promotes it in
           # admin-ui; control-plane keeps rollout authority and CI has no write
-          # path into it. rc tags are marked --prerelease so Go MVS and
-          # /install-target never surface them.
+          # path into it. rc tags are marked --prerelease so they stay off
+          # the "Latest" badge and out of releases/latest. (They are already
+          # invisible to Go MVS, which ignores prerelease tags, and to
+          # /install-target, since control-plane's relver rejects pre-release
+          # suffixes — an rc can't be promoted.)
           case "$GITHUB_REF_NAME" in *-rc.*) PRE=--prerelease;; *) PRE=;; esac
           # shellcheck disable=SC2086
           gh release create "${GITHUB_REF_NAME}" dist/* \

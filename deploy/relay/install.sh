@@ -210,9 +210,10 @@ main() {
   fi
 
   # Signature verification is BEST-EFFORT at install time, on purpose. You are
-  # running a script fetched over TLS from the same host the binary comes
-  # from: the script itself is the root of trust, and an attacker who could
-  # replace the binary could equally replace this script and delete this
+  # running a script and a binary fetched over TLS from the same trust domain
+  # (the public GitHub repo plus its release assets): the script itself is the
+  # root of trust, and an attacker who could replace the binary could equally
+  # replace this script and delete this
   # check. The signature boundary that actually bites begins at the first
   # SELF-UPDATE, where the public key is compiled into binaries an attacker on
   # the download host did not supply. Checking here is still worthwhile — it
