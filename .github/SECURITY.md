@@ -20,7 +20,7 @@ discussion for a suspected vulnerability.
 PoolPilot Relay is an open-source, single-maintainer project, so timelines are
 best-effort — but I take security seriously and will:
 
-- **acknowledge** your report within **3 business days**;
+- **aim to acknowledge** your report within **3 business days**;
 - keep you updated as I investigate and fix;
 - **credit** you in the published advisory (unless you'd prefer to stay
   anonymous);
