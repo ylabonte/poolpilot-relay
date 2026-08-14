@@ -15,8 +15,8 @@ jobs:
       # → 'false' → both steps skip → the drift tests take their non-strict path.
       PARITY_FETCH_ENABLED: ${{ secrets.PARITY_APP_CLIENT_ID != '' }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -36,7 +36,7 @@ jobs:
       - name: Mint pool-apps read token
         id: pool-apps-token
         if: ${{ env.PARITY_FETCH_ENABLED == 'true' }}
-        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ secrets.PARITY_APP_CLIENT_ID }}
           private-key: ${{ secrets.PARITY_APP_PRIVATE_KEY }}
@@ -60,8 +60,8 @@ jobs:
   build-agent:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
