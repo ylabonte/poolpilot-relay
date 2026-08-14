@@ -15,8 +15,8 @@
 # of install steps that is printed BEFORE sudo ever prompts, so you know
 # exactly what you are approving.
 #
-# TRANSPARENCY — the relay binary is closed-source, so this script is your
-# window into what installation does:
+# TRANSPARENCY — an installer you pipe into bash deserves scrutiny, so here is
+# exactly what it does:
 #   - Network: exactly two hosts are contacted. api.poolpilot.eu (one GET, to
 #     resolve the release version) and dl.poolpilot.eu (the downloads).
 #   - Verification: sha256 against the release's checksum file, plus a
