@@ -1,0 +1,27 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      go-dependencies:
+        patterns: ["*"]
+    ignore:
+      # frp is version-locked to the tunnel integration (pinned 0.69.1). Allow
+      # security/patch updates but not major/minor bumps — those need manual
+      # vetting against the tunnel code, not a drive-by PR.
+      - dependency-name: "github.com/fatedier/frp"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns: ["*"]
