@@ -1,0 +1,79 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      # `secrets` isn't available in step-level `if:`, so probe it once here at
+      # job level and gate the parity-fetch steps on it. Fork PRs get no secret
+      # → 'false' → both steps skip → the drift tests take their non-strict path.
+      PARITY_FETCH_ENABLED: ${{ secrets.PARITY_APP_CLIENT_ID != '' }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - run: go vet ./...
+      - run: go build ./...
+      # wire + bands drift-test their vendored fixtures against pool-apps'
+      # shared/test-fixtures/*.json. A read-only GitHub App on ylabonte/poolpilot-app
+      # (Contents: read) mints a short-lived, repo-scoped token. A missing token on a
+      # TRUSTED run (not a fork / not Dependabot) means the App is mis-configured, so
+      # we refuse rather than let the drift gate silently skip.
+      - name: Require parity fetch on trusted runs
+        if: ${{ env.PARITY_FETCH_ENABLED != 'true' && github.event.pull_request.head.repo.fork != true && github.event.pull_request.user.login != 'dependabot[bot]' }}
+        run: |
+          echo "::error::PARITY_APP_CLIENT_ID is not configured on a trusted run (not a fork or Dependabot PR) — the fixture drift gate would silently skip. Refusing."
+          exit 1
+      - name: Mint pool-apps read token
+        id: pool-apps-token
+        if: ${{ env.PARITY_FETCH_ENABLED == 'true' }}
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ secrets.PARITY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.PARITY_APP_PRIVATE_KEY }}
+          owner: ylabonte
+          repositories: poolpilot-app
+          permission-contents: read
+      - name: Fetch pool-apps parity fixtures
+        if: ${{ env.PARITY_FETCH_ENABLED == 'true' }}
+        env:
+          GH_TOKEN: ${{ steps.pool-apps-token.outputs.token }}
+        shell: bash
+        run: |
+          gh api repos/ylabonte/poolpilot-app/contents/shared/test-fixtures/measurement-parity.json \
+            --jq '.content' | base64 -d > "$RUNNER_TEMP/measurement-parity.json"
+          gh api repos/ylabonte/poolpilot-app/contents/shared/test-fixtures/relay-wire-parity.json \
+            --jq '.content' | base64 -d > "$RUNNER_TEMP/relay-wire-parity.json"
+          echo "PARITY_SOURCE_PATH=$RUNNER_TEMP/measurement-parity.json" >> "$GITHUB_ENV"
+          echo "WIRE_PARITY_SOURCE_PATH=$RUNNER_TEMP/relay-wire-parity.json" >> "$GITHUB_ENV"
+      - name: Run tests
+        run: go test ./...
+  build-agent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      # Prove every release target keeps building; release.yml ships this exact matrix.
+      - name: Cross-compile agent (all release targets)
+        run: |
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o /dev/null ./cmd/poolpilot-relay
+          GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 go build -o /dev/null ./cmd/poolpilot-relay
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /dev/null ./cmd/poolpilot-relay
+          GOOS=linux GOARCH=386 CGO_ENABLED=0 go build -o /dev/null ./cmd/poolpilot-relay
+          GOOS=linux GOARCH=riscv64 CGO_ENABLED=0 go build -o /dev/null ./cmd/poolpilot-relay
+          GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -o /dev/null ./cmd/poolpilot-relay
+          GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o /dev/null ./cmd/poolpilot-relay
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o /dev/null ./cmd/poolpilot-relay

@@ -1,4 +1,4 @@
 # CLAUDE.md
 
-Relay agent module. Shared `wire`/`bands`/`preset`/`idgen` packages are consumed by the private
-`poolpilot-cloud` repo. See the restructuring plan in `pool-apps` for the full split rationale.
+Relay agent module (Go). The exported `wire`/`bands`/`preset`/`idgen` packages are the shared
+wire/measurement contract that the private control-plane consumes as a versioned dependency.
