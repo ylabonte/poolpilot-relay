@@ -2,11 +2,12 @@
 # PoolPilot Relay installer for systemd-based Linux hosts (Raspberry Pi or
 # other SBCs, x86 boxes, …):
 #
-#   curl -fsSL https://dl.poolpilot.eu/install.sh | bash
-#     (or: wget -qO- https://dl.poolpilot.eu/install.sh | bash)
+#   curl -fsSL https://get.poolpilot.eu/install.sh | bash
+#     (or: wget -qO- https://get.poolpilot.eu/install.sh | bash)
 #
-# Prefer to read before you run? Same script, two steps:
-#   curl -fsSLO https://dl.poolpilot.eu/install.sh
+# Prefer to read before you run? This script lives in the public repo — fetch
+# it straight from source, read it, then run it:
+#   curl -fsSLO https://raw.githubusercontent.com/ylabonte/poolpilot-relay/main/deploy/relay/install.sh
 #   less install.sh && bash install.sh
 #
 # This script runs UNPRIVILEGED: it detects the CPU architecture, asks the
@@ -17,8 +18,12 @@
 #
 # TRANSPARENCY — an installer you pipe into bash deserves scrutiny, so here is
 # exactly what it does:
-#   - Network: exactly two hosts are contacted. api.poolpilot.eu (one GET, to
-#     resolve the release version) and dl.poolpilot.eu (the downloads).
+#   - Network: two hosts do the work — api.poolpilot.eu (one GET, to resolve
+#     which release version to install) and github.com (the binaries are public
+#     GitHub Release assets; github.com 302-redirects the download to its asset
+#     CDN, objects.githubusercontent.com). If you used the branded
+#     get.poolpilot.eu one-liner, that host is contacted first and only
+#     302-redirects to this script's source on GitHub — it serves nothing else.
 #   - Verification: sha256 against the release's checksum file, plus a
 #     minisign signature check when the tool is available (offered below as
 #     an optional package install).
@@ -29,10 +34,15 @@
 #     is downloaded alongside the binary, checksum-verified, and plain text:
 #     read it in /etc/systemd/system/poolpilot-relay.service after install.
 #   - Nothing else: no telemetry, no shell-profile edits, no cron entries.
+#
+# Advanced overrides (env vars, for dev/e2e/support — unset on the normal path):
+#   INSTALL_VERSION  pin a specific release, skipping the control-plane lookup
+#   CLOUD_BASE_URL   control-plane base URL   (default https://api.poolpilot.eu)
+#   REPO_DL_BASE     release-asset base URL   (default the GitHub releases URL)
 set -euo pipefail
 
 main() {
-  REPO_DL_BASE="${REPO_DL_BASE:-https://dl.poolpilot.eu}"
+  REPO_DL_BASE="${REPO_DL_BASE:-https://github.com/ylabonte/poolpilot-relay/releases/download}"
   CLOUD_BASE_URL="${CLOUD_BASE_URL:-https://api.poolpilot.eu}"
   BIN=/usr/local/bin/poolpilot-relay
   UNIT=/etc/systemd/system/poolpilot-relay.service
@@ -101,20 +111,27 @@ main() {
   # Which version to install is decided by control-plane, not by a `latest`
   # pointer on the download host. That is deliberate: it means halting a bad
   # release in admin-ui stops FRESH INSTALLS too, with no second place to
-  # update.
-  echo "==> resolving current release"
-  fetch "${CLOUD_BASE_URL}/install-target" "${WORKDIR}/install-target.json" || true
-  VERSION=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-    "${WORKDIR}/install-target.json" 2>/dev/null)
-  if [[ -z "${VERSION}" ]]; then
-    echo "Could not resolve the current relay release from ${CLOUD_BASE_URL}/install-target." >&2
-    echo "The service may be temporarily unavailable — please retry shortly." >&2
-    exit 1
+  # update. INSTALL_VERSION overrides this — for rehearsing an rc prerelease,
+  # pinned support installs and offline debugging; the normal path leaves it
+  # unset and lets control-plane decide.
+  if [[ -n "${INSTALL_VERSION:-}" ]]; then
+    VERSION="${INSTALL_VERSION}"
+    echo "==> installing pinned release ${VERSION} (INSTALL_VERSION set — skipping control-plane lookup)"
+  else
+    echo "==> resolving current release"
+    fetch "${CLOUD_BASE_URL}/install-target" "${WORKDIR}/install-target.json" || true
+    VERSION=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+      "${WORKDIR}/install-target.json" 2>/dev/null)
+    if [[ -z "${VERSION}" ]]; then
+      echo "Could not resolve the current relay release from ${CLOUD_BASE_URL}/install-target." >&2
+      echo "The service may be temporarily unavailable — please retry shortly." >&2
+      exit 1
+    fi
+    echo "    ${VERSION}"
   fi
-  echo "    ${VERSION}"
 
   ASSET="poolpilot-relay_linux_${ARCH}"
-  BASE_URL="${REPO_DL_BASE}/relay/${VERSION}"
+  BASE_URL="${REPO_DL_BASE}/${VERSION}"
 
   echo "==> downloading ${BASE_URL}/${ASSET}"
   fetch_show "${BASE_URL}/${ASSET}" "${WORKDIR}/${ASSET}"
