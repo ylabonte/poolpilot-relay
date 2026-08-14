@@ -10,7 +10,7 @@ updates:
       go-dependencies:
         patterns: ["*"]
     ignore:
-      # frp is version-locked to the tunnel integration (pinned 0.69.1). Allow
+      # frp is version-locked to the tunnel integration (pinned 0.70.1). Allow
       # security/patch updates but not major/minor bumps — those need manual
       # vetting against the tunnel code, not a drive-by PR.
       - dependency-name: "github.com/fatedier/frp"

@@ -220,7 +220,7 @@ func TestTranslateRejectsBadInput(t *testing.T) {
 }
 
 // buildService proves the config translation is accepted by the real frp
-// v0.69.1 client library (NewService validates + completes the config without
+// v0.70.1 client library (NewService validates + completes the config without
 // touching the network).
 func TestBuildServiceFromConfig(t *testing.T) {
 	svc, err := buildService(testConfig())
@@ -380,7 +380,7 @@ func TestReconcileApplyErrorFallsBackToRebuild(t *testing.T) {
 	}
 }
 
-// reconcile against a REAL frp v0.69.1 service (not running, so no network):
+// reconcile against a REAL frp v0.70.1 service (not running, so no network):
 // a proxy-only change is accepted in place and the SAME service instance stays
 // valid afterwards — proof the in-place API path integrates, mirroring how
 // TestBuildServiceFromConfig proves NewService accepts our config.
@@ -408,12 +408,16 @@ func TestReconcileKeepsRealServiceInPlace(t *testing.T) {
 	// this frpTunnel to a real "running" ctrl-proxy and reconciling in place)
 	// was attempted here to close that gap with a unit-level proof; it started
 	// and passed cleanly without -race, but -race caught unsynchronized field
-	// access inside frp v0.69.1 itself (server/control.go's worker vs.
-	// RegisterWorkConn, and client/service.go's Run/keepControllerWorking
-	// reading svr.ctl outside the ctlMu lock that stop() uses to write it) —
-	// a pre-existing bug in the vendored library, not fixable from here within
-	// a timeboxed hygiene pass, so the attempt was abandoned in favor of this
-	// comment and the e2e suite remains the authority for that proof.
+	// access inside frp itself — a pre-existing bug in the vendored library,
+	// not fixable from here within a timeboxed hygiene pass, so the attempt
+	// was abandoned in favor of this comment and the e2e suite remains the
+	// authority for that proof. Status as of the v0.70.1 bump: frp fixed the
+	// SERVER-side half of this (server/control.go's worker vs.
+	// RegisterWorkConn no longer races), but the CLIENT-side half persists —
+	// client/service.go's Run/keepControllerWorking still reads svr.ctl
+	// outside the ctlMu lock that stop() uses to write it — so that abandoned
+	// harness would still trip -race on 0.70.1. The checked-in suite never
+	// calls Run, so it passes -race as-is; CI stays without -race, unchanged.
 	if _, ok := svc.StatusExporter().GetProxyStatus("ctrl-ffffffffffffffffffffffffffffffff"); ok {
 		t.Error("new proxy should not report status before Run")
 	}

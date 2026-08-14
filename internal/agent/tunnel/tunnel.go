@@ -1,4 +1,4 @@
-// Package tunnel embeds the frp client (v0.69.1) to expose the configured
+// Package tunnel embeds the frp client (v0.70.1) to expose the configured
 // controller through the cloud frps. It reproduces test/e2e/frpc.toml.tmpl
 // programmatically: token transport auth, the per-relay token in metadatas.token,
 // loginFailExit=false, and one http proxy with subdomain=<controller GUID>.
