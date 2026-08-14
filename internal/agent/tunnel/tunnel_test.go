@@ -415,8 +415,9 @@ func TestReconcileKeepsRealServiceInPlace(t *testing.T) {
 	// SERVER-side half of this (server/control.go's worker vs.
 	// RegisterWorkConn no longer races), but the CLIENT-side half persists —
 	// client/service.go's Run/keepControllerWorking still reads svr.ctl
-	// outside the ctlMu lock that stop() uses to write it — so -race still
-	// fails here on 0.70.1 too and stays off in CI.
+	// outside the ctlMu lock that stop() uses to write it — so that abandoned
+	// harness would still trip -race on 0.70.1. The checked-in suite never
+	// calls Run, so it passes -race as-is; CI stays without -race, unchanged.
 	if _, ok := svc.StatusExporter().GetProxyStatus("ctrl-ffffffffffffffffffffffffffffffff"); ok {
 		t.Error("new proxy should not report status before Run")
 	}
