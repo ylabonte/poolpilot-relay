@@ -12,7 +12,7 @@ discussion for a suspected vulnerability.
   at **https://github.com/ylabonte/poolpilot-relay/security/advisories/new**.
   It stays private between you and the maintainer, with a built-in advisory and
   fix workflow.
-- **By email:** if you'd rather, write to **yannic.labonte@gmail.com** with
+- **By email:** if you'd rather, write to **yannic.labonte+lifeguard@gmail.com** with
   enough detail to reproduce. Mention "PoolPilot Relay security" in the subject.
 
 ## What to expect
