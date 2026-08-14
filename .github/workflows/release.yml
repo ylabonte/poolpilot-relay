@@ -11,6 +11,15 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
+      - name: Validate tag shape
+        run: |
+          # Plain vX.Y.Z, optionally -rc.N for a pre-release rehearsal. No leading
+          # zeros: control-plane's decodeRelease canonicalizes admin input
+          # (adminrelease.go), and a v01.2.3 release URL could never be referenced
+          # by that canonical DB row — reject it at the source, before any build.
+          [[ "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.[1-9][0-9]*)?$ ]] \
+            || { echo "::error::tag '$GITHUB_REF_NAME' is not a plain vX.Y.Z[-rc.N] release tag — refusing to build."; exit 1; }
+
       - uses: actions/checkout@v6
 
       - uses: actions/setup-go@v6
@@ -82,102 +91,36 @@ jobs:
           # in step, and a mismatch here means the fleet could not verify either.
           minisign -Vm dist/sha256sums.txt -p deploy/relay/minisign.pub
 
-      - name: Stage the publishable allowlist
+      - name: Verify fleet assets are present
         run: |
-          # THE constraint of this whole design: only the relay AGENT binary is
-          # publicly downloadable. Never control-plane, admin-ui or pushcheck;
-          # never release notes (--generate-notes synthesizes those from private
-          # commit and PR titles). Today the build step only produces the agent,
-          # but nothing enforced that — a future "just add pushcheck for ops" commit
-          # would have silently published an internal binary. This step is that
-          # enforcement.
-          #
-          # Adding an entry here is a deliberate decision to make that file
-          # world-downloadable. When the #15 updater helper ships, its binaries
-          # and the two systemd units join this list — that is the one expected
-          # amendment.
-          #
-          # darwin/* and windows/* stay in the PRIVATE GitHub release (developer
-          # convenience); the vhost is the Linux/systemd fleet channel only.
-          mkdir -p publish
-          ALLOWED="
-            poolpilot-relay_linux_arm64
-            poolpilot-relay_linux_armv7
-            poolpilot-relay_linux_amd64
-            poolpilot-relay_linux_386
-            poolpilot-relay_linux_riscv64
-            poolpilot-relay.service
-            sha256sums.txt
-            sha256sums.txt.minisig
-          "
-          for f in $ALLOWED; do
-            if [ ! -f "dist/$f" ]; then
-              echo "::error::allowlisted asset dist/$f is missing — the build step and the publish allowlist have diverged."
-              exit 1
-            fi
-            cp "dist/$f" "publish/$f"
+          # install.sh fetches these exact asset names from the release; a
+          # published tag is immutable, so a build-step edit that renamed or
+          # dropped one would ship a permanently-broken release. Assert they
+          # exist before publishing — the forward half of the old dl-publish
+          # allowlist, kept now that GitHub Releases is the channel.
+          for f in poolpilot-relay_linux_arm64 poolpilot-relay_linux_armv7 \
+                   poolpilot-relay_linux_amd64 poolpilot-relay_linux_386 \
+                   poolpilot-relay_linux_riscv64 poolpilot-relay.service \
+                   sha256sums.txt sha256sums.txt.minisig; do
+            [ -f "dist/$f" ] || { echo "::error::release asset dist/$f is missing — the build step and the installer have diverged."; exit 1; }
           done
-          # Reverse check: anything in publish/ that is not allowlisted is a bug
-          # in this step itself.
-          for f in publish/*; do
-            base=$(basename "$f")
-            echo "$ALLOWED" | tr -s '[:space:]' '\n' | grep -qxF "$base" || {
-              echo "::error::$base is staged for publication but not allowlisted."
-              exit 1
-            }
-          done
-          echo "publishing $(ls -1 publish | wc -l) allowlisted assets:"
-          ls -1 publish
-
-      - name: Setup SSH key
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
-        run: |
-          # Same posture as deploy.yml: key material in RUNNER_TEMP (wiped at
-          # job end), and the host key PINNED from a secret rather than
-          # ssh-keyscan'd at run time (keyscan is trust-on-first-use per run).
-          # Neither workflow falls back to keyscan — an unpinned host is never
-          # worth the convenience.
-          mkdir -p "$RUNNER_TEMP/ssh"
-          printf '%s\n' "$SSH_PRIVATE_KEY" > "$RUNNER_TEMP/ssh/deploy_key"
-          chmod 600 "$RUNNER_TEMP/ssh/deploy_key"
-          if [ -z "$SSH_KNOWN_HOSTS" ]; then
-            echo "::error::SSH_KNOWN_HOSTS is not set — refusing to publish over an unpinned host key."
-            exit 1
-          fi
-          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$RUNNER_TEMP/ssh/known_hosts"
-
-      - name: Publish to dl.poolpilot.eu
-        env:
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-        run: |
-          # Tag names feed a remotely shell-evaluated path — refuse anything but a
-          # plain release tag before composing DEST (git allows ' $( ; in refs).
-          # No leading zeros: relver canonicalizes "v01.2.3" to "v1.2.3" for the
-          # DB row, and a published /relay/v01.2.3/ directory could never be
-          # referenced by that canonicalized version — so reject it at publish
-          # time rather than let it land as an unreachable directory.
-          [[ "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "::error::tag '$GITHUB_REF_NAME' is not a plain vX.Y.Z release tag — refusing to publish."; exit 1; }
-          DEST="/srv/poolpilot/dl/relay/${GITHUB_REF_NAME}"
-          SSH_OPTS="-p 2022 -i $RUNNER_TEMP/ssh/deploy_key -o UserKnownHostsFile=$RUNNER_TEMP/ssh/known_hosts -o StrictHostKeyChecking=yes"
-          # shellcheck disable=SC2086
-          ssh $SSH_OPTS "deploy@$SSH_HOST" "mkdir -p '$DEST'"
-          # shellcheck disable=SC2086
-          scp -P 2022 -i "$RUNNER_TEMP/ssh/deploy_key" \
-            -o UserKnownHostsFile="$RUNNER_TEMP/ssh/known_hosts" \
-            -o StrictHostKeyChecking=yes \
-            publish/* "deploy@$SSH_HOST:$DEST/"
-          # Publishing is INERT: no relay is offered this version until an
-          # operator promotes it in admin-ui. That is the deliberate
-          # "ship it inert, flip it on" pattern (cf. ATTEST_MODE, the staged
-          # pair vhost) and it is why CI needs no write path into control-plane.
-          echo "Published ${GITHUB_REF_NAME}. Promote it in admin-ui to roll it out."
 
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # GitHub Releases IS the distribution channel now (public repo): the
+          # agent binaries + sha256sums.txt + its .minisig are the release assets
+          # install.sh fetches from releases/download/<tag>/. Publishing is INERT —
+          # no relay is offered this version until an operator promotes it in
+          # admin-ui; control-plane keeps rollout authority and CI has no write
+          # path into it. rc tags are marked --prerelease so they stay off
+          # the "Latest" badge and out of releases/latest. (They are already
+          # invisible to Go MVS, which ignores prerelease tags, and to
+          # /install-target, since control-plane's relver rejects pre-release
+          # suffixes — an rc can't be promoted.)
+          case "$GITHUB_REF_NAME" in *-rc.*) PRE=--prerelease;; *) PRE=;; esac
+          # shellcheck disable=SC2086
           gh release create "${GITHUB_REF_NAME}" dist/* \
             --title "poolpilot-relay ${GITHUB_REF_NAME}" \
-            --generate-notes
+            --generate-notes $PRE
