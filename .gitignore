@@ -11,5 +11,5 @@
 go.work
 go.work.sum
 
-# Vendored Claude tooling (canonical in poolpilot-claude) — local-only, never committed here.
+# Vendored Claude tooling — gitignored, do not commit
 .claude/
