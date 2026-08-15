@@ -1018,3 +1018,27 @@ type RcClaimObjectRequest struct {
 	// AttestChallenge — see DeviceRegisterRequest.AttestChallenge's doc.
 	AttestChallenge string `json:"attest_challenge,omitempty"`
 }
+
+// ---- Agent self-update (LAN API /v1/update) ----
+
+// UpdateAdvisory means the running version has a known security issue, fixed in
+// FixedIn. Informational only — it never triggers an install; a relay whose
+// owner disabled auto-update is escalated to (the app nags it), never
+// overridden (design doc §2.5). This is the app-facing wire shape surfaced
+// through GET /v1/update; the control plane's own advisory type lives in
+// internal/agent/cloud and is mapped onto this on the way out.
+type UpdateAdvisory struct {
+	Severity string `json:"severity"` // "security" today; treat unknown as security
+	Message  string `json:"message"`  // short, owner-readable, display as-is
+	FixedIn  string `json:"fixed_in"` // the version that resolves it; always > current
+}
+
+// UpdateResult is the outcome of the last update attempt, produced by the
+// privileged updater helper and surfaced verbatim through GET /v1/update.
+type UpdateResult struct {
+	Status     string `json:"status"` // "ok" | "rolled_back" | "rejected"
+	From       string `json:"from,omitempty"`
+	To         string `json:"to,omitempty"`
+	Error      string `json:"error,omitempty"`       // diagnostic on non-ok, not for display
+	FinishedAt string `json:"finished_at,omitempty"` // RFC 3339
+}
