@@ -131,6 +131,48 @@ func TestUnauthenticatedWriteIsRefused(t *testing.T) {
 	}
 }
 
+// A cross-site request carrying a valid session cookie is refused (Fetch-
+// Metadata CSRF guard). The pp_ctrl cookie is SameSite=Lax, so it rides a
+// cross-site top-level GET navigation; without this guard a web page the owner
+// is logged into could drive a GET-based control write as the owner. The
+// in-app WebView is same-origin and the native bearer clients send no
+// Sec-Fetch-Site, so neither is affected.
+func TestCrossSiteCookieRequestIsRefused(t *testing.T) {
+	backend := newFakeController()
+	defer backend.Close()
+	srv := &Server{}
+	srv.SetTargets(map[string]Target{"guid1": {Preset: preset.ProconIP, BaseURL: backend.URL}})
+	srv.SetSessionKey(testKey)
+
+	// The CSRF vector: a GET control write with a valid Lax cookie, cross-site.
+	req := httptest.NewRequest(http.MethodGet, "/Command.htm?MAN_DOSAGE=1,5", nil)
+	req.Host = "guid1.remote.poolpilot.eu"
+	req.AddCookie(sessionCookie(t, "guid1"))
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("got %d, want 403 — a cross-site cookie request must be refused", rec.Code)
+	}
+	if len(backend.hits) != 0 {
+		t.Fatalf("a cross-site request reached the controller: %v", backend.hits)
+	}
+
+	// The same session, same-origin (the in-app WebView), still proxies through.
+	req2 := httptest.NewRequest(http.MethodGet, "/Command.htm?MAN_DOSAGE=1,5", nil)
+	req2.Host = "guid1.remote.poolpilot.eu"
+	req2.AddCookie(sessionCookie(t, "guid1"))
+	req2.Header.Set("Sec-Fetch-Site", "same-origin")
+	rec2 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200 — a same-origin session write must still proxy", rec2.Code)
+	}
+	if len(backend.hits) != 1 {
+		t.Fatalf("same-origin write: backend hits = %v, want exactly one", backend.hits)
+	}
+}
+
 // With no key configured the gate fails CLOSED, never open.
 func TestNoSessionKeyFailsClosed(t *testing.T) {
 	backend := newFakeController()

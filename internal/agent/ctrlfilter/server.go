@@ -250,7 +250,9 @@ func (s *Server) Lookup(guid string) (Target, bool) {
 // GUID stays a plain 404 and the gate is not an existence oracle), then the
 // canonical-path check (so the path this layer sees is the path proxied later —
 // see New's doc for that class of bypass), then the bootstrap route, then the
-// credential gate. Nothing reaches the controller before that credential check.
+// credential gate, then a Fetch-Metadata cross-site guard (CSRF defense for the
+// SameSite=Lax session cookie). Nothing reaches the controller before those
+// checks.
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		guid := guidFromHost(r.Host)
@@ -270,6 +272,19 @@ func (s *Server) Handler() http.Handler {
 		}
 		if !s.authorized(r, guid, now) {
 			slog.Debug("ctrlfilter: refused an unauthorized request", "guid", guid, "path", r.URL.Path)
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		// Fetch-Metadata CSRF guard. The pp_ctrl session cookie is SameSite=Lax,
+		// so it rides along on a cross-site top-level GET navigation — and now
+		// that writes proxy transparently, that would let any web page the owner
+		// is logged into drive a GET-based control write (ProCon.IP /Command.htm,
+		// VIOLET /setFunctionManually) as the owner. Refuse anything the browser
+		// tags cross-site: the in-app WebView loads the controller same-origin,
+		// and the native pairing-bearer clients send no Sec-Fetch-Site header at
+		// all, so neither legitimate path is affected.
+		if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+			slog.Debug("ctrlfilter: refused a cross-site request", "guid", guid, "path", r.URL.Path)
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
