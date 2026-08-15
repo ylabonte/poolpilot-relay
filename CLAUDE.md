@@ -2,12 +2,13 @@
 
 ## What this repo is
 
-`poolpilot-relay` is the **PoolPilot edge agent**: a small, self-updating Go program that runs on a
+`poolpilot-relay` is the **PoolPilot edge agent**: a small Go program, designed to self-update, that runs on a
 device in the user's home (typically a Raspberry Pi or similar). It talks to a **ProCon.IP** or
 **VIOLET** pool controller on the local network and bridges it to the PoolPilot apps — reachable both
 directly over the LAN and, when the user is away, through an outbound **frp tunnel** to the PoolPilot
-cloud backend. It updates itself: which version installs is decided by the control plane, so a bad
-release can be halted centrally.
+cloud backend. It is designed to update itself — the update-check client exists
+(`internal/agent/cloud`), but the updater loop is not yet wired; which version **installs** is decided
+by the control plane, so a bad release can be halted centrally.
 
 Module path: `github.com/ylabonte/poolpilot-relay` (Go 1.26).
 
@@ -57,9 +58,12 @@ coordinating a new tagged release (see *Cross-repo* below).
 - **Commits are signed.** Sign with SSH; never disable signing.
 - **Push with an explicit refspec** — `git push origin <branch>:refs/heads/<branch>` — and verify the
   `-> <branch>` line. Never a bare `git push`. Branch off freshly-fetched `origin/main`.
-- **Releases are minisign-signed.** Binaries ship as GitHub Release assets with a SHA-256 checksum and
-  a minisign signature verified by `deploy/relay/install.sh` against `deploy/relay/minisign.pub`.
-  Keep the public key and the signing flow in step when touching the release path.
+- **Releases are checksum-gated, minisign-signed.** Binaries ship as GitHub Release assets. The
+  installer's hard gate is the **SHA-256 checksum**; a minisign signature is verified *best-effort*
+  (only when a minisign binary is present) against a public key **embedded in
+  `deploy/relay/install.sh`** — the script never reads `deploy/relay/minisign.pub`, which is the
+  rotation source that must be kept in step with the embedded key. Keep the embedded key,
+  `minisign.pub`, and the signing flow in step when touching the release path.
 - **Treat the frp version as a vetting gate, not a routine bump.** `github.com/fatedier/frp` is pinned
   (currently `v0.70.1`); it terminates the user's tunnel, so a bump is a security review, not a
   dependency-update reflex. Change it deliberately, with the reason in the commit.
