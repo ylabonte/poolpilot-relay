@@ -321,24 +321,22 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
-// New returns the handler for ONE controller: vendor selects the
-// write-filter policy (Allowed), target is the controller's real base URL.
+// New returns the reverse-proxy handler for ONE controller: target is the
+// controller's real base URL. (vendor is retained for the caller and any
+// future per-vendor handling; it no longer gates anything — an authenticated
+// caller gets full transparent read+write access; see the package doc for why
+// the "view but don't touch" write filter was removed.)
 //
 // Every request's path is FIRST checked with isCanonicalPath (canonical.go);
 // anything non-canonical — a dot-segment, a doubled slash, or a
-// percent-encoded structural character — is refused with 400 before Allowed
-// ever runs, so the path Allowed matches and the path the reverse proxy
-// forwards can never be two different strings (the class of bypass where the
-// filter evaluates "/foo/../Command.htm", doesn't match the deny list, while
-// the controller's own HTTP stack resolves the identical bytes down to the
-// denied "/Command.htm" and executes the write anyway). Only once a request
-// clears that gate does Allowed decide allow/deny; a request Allowed denies
-// never reaches target — it gets a plain 403.
-//
-// Everything permitted is reverse-proxied through as-is: method, headers,
-// and body unmodified, including the controller's own Basic Auth
-// challenge/response — the caller's browser/app supplies the controller's
-// own credentials, this layer never injects any of its own.
+// percent-encoded structural character — is refused with 400 before the
+// request is forwarded, so the path this layer sees and the path the reverse
+// proxy forwards can never be two different strings (the classic
+// path-normalization smuggling class). A request that clears that gate is
+// reverse-proxied through as-is: method, headers, and body unmodified,
+// including the controller's own Basic Auth challenge/response — the caller's
+// browser/app supplies the controller's own credentials, this layer never
+// injects any of its own.
 //
 // Streaming and WebSocket upgrades get no special handling here and need
 // none: net/http/httputil.ReverseProxy has copied response bodies
@@ -361,10 +359,6 @@ func New(vendor string, target *url.URL) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !isCanonicalPath(r.URL) {
 			http.Error(w, "bad request: non-canonical path", http.StatusBadRequest)
-			return
-		}
-		if !Allowed(vendor, r.Method, r.URL.Path) {
-			http.Error(w, "forbidden: this is a controller write/system endpoint; the relay blocks it (view but don't touch, issue #27)", http.StatusForbidden)
 			return
 		}
 		rp.ServeHTTP(w, r)

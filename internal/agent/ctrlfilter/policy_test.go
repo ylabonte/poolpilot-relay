@@ -11,10 +11,10 @@ import (
 )
 
 // fakeController is an httptest server that records every request it saw
-// (method + full URL, including query) so a test can assert whether a
-// request reached the controller at all, and answers 200 with a body naming
-// the path so a test can also assert the response really was proxied
-// through (not synthesized by the filter).
+// (method + full URL, including query) so a test can assert whether a request
+// reached the controller at all, and answers 200 with a body naming the path
+// so a test can also assert the response really was proxied through (not
+// synthesized by the filter).
 type fakeController struct {
 	*httptest.Server
 	hits []string
@@ -46,45 +46,61 @@ func doRequest(h http.Handler, method, target string) *httptest.ResponseRecorder
 	return rec
 }
 
-func TestPostIsAlwaysDenied(t *testing.T) {
-	backend := newFakeController()
-	defer backend.Close()
-	h := newFilter(t, preset.ProconIP, backend.Server)
+// New is a transparent reverse proxy for a controller: issue #27's "view but
+// don't touch" write deny-list was removed (owner decision — remote access is
+// app-paired-only and a paired device gets the same access it has on the LAN),
+// so every method and path a caller sends is forwarded. WHO reaches this
+// handler is decided by the credential gate in Handler (covered in
+// server_test.go); the only thing New still refuses before forwarding is a
+// non-canonical path (covered in bypass_test.go).
 
-	rec := doRequest(h, http.MethodPost, "/usrcfg.cgi")
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("POST /usrcfg.cgi = %d, want 403", rec.Code)
+// TestWriteMethodsAreProxied: POST — the shape every real config write takes
+// (ProCon.IP /usrcfg.cgi; VIOLET /setConfig, /triggerManualDosing,
+// /setCanAmount) — now reaches the controller instead of being blocked.
+func TestWriteMethodsAreProxied(t *testing.T) {
+	cases := []struct{ vendor, method, path string }{
+		{preset.ProconIP, http.MethodPost, "/usrcfg.cgi"},
+		{preset.Violet, http.MethodPost, "/setConfig"},
 	}
-	if len(backend.hits) != 0 {
-		t.Fatalf("request reached the backend controller: %v", backend.hits)
+	for _, c := range cases {
+		t.Run(c.vendor+" "+c.method+" "+c.path, func(t *testing.T) {
+			backend := newFakeController()
+			defer backend.Close()
+			h := newFilter(t, c.vendor, backend.Server)
+
+			rec := doRequest(h, c.method, c.path)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s %s = %d, want 200 (writes are now proxied)", c.method, c.path, rec.Code)
+			}
+			if len(backend.hits) != 1 {
+				t.Fatalf("backend hits = %v, want exactly one", backend.hits)
+			}
+		})
 	}
 }
 
-func TestProconCommandHtmDeniedEvenAsGET(t *testing.T) {
-	backend := newFakeController()
-	defer backend.Close()
-	h := newFilter(t, preset.ProconIP, backend.Server)
-
-	rec := doRequest(h, http.MethodGet, "/Command.htm?MAN_DOSAGE=1,5")
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("GET /Command.htm?MAN_DOSAGE=1,5 = %d, want 403", rec.Code)
+// TestGetBasedControlWritesAreProxied: the two GET-based control endpoints the
+// deny-list used to block (ProCon.IP Command.htm; VIOLET setFunctionManually)
+// now reach the controller.
+func TestGetBasedControlWritesAreProxied(t *testing.T) {
+	cases := []struct{ vendor, path string }{
+		{preset.ProconIP, "/Command.htm?MAN_DOSAGE=1,5"},
+		{preset.Violet, "/setFunctionManually?PUMP,ON,0,0"},
 	}
-	if len(backend.hits) != 0 {
-		t.Fatalf("request reached the backend controller: %v", backend.hits)
-	}
-}
+	for _, c := range cases {
+		t.Run(c.vendor+" "+c.path, func(t *testing.T) {
+			backend := newFakeController()
+			defer backend.Close()
+			h := newFilter(t, c.vendor, backend.Server)
 
-func TestVioletSetFunctionManuallyDeniedEvenAsGET(t *testing.T) {
-	backend := newFakeController()
-	defer backend.Close()
-	h := newFilter(t, preset.Violet, backend.Server)
-
-	rec := doRequest(h, http.MethodGet, "/setFunctionManually?PUMP,ON,0,0")
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("GET /setFunctionManually?PUMP,ON,0,0 = %d, want 403", rec.Code)
-	}
-	if len(backend.hits) != 0 {
-		t.Fatalf("request reached the backend controller: %v", backend.hits)
+			rec := doRequest(h, http.MethodGet, c.path)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET %s = %d, want 200 (control writes are now proxied)", c.path, rec.Code)
+			}
+			if len(backend.hits) != 1 {
+				t.Fatalf("backend hits = %v, want exactly one", backend.hits)
+			}
+		})
 	}
 }
 
@@ -138,83 +154,12 @@ func TestUIRootProxiedForBothVendors(t *testing.T) {
 	}
 }
 
-func TestUnknownVendorDeniesBothKnownWritePaths(t *testing.T) {
-	for _, vendor := range []string{"", "some-future-vendor"} {
-		t.Run("vendor="+vendor, func(t *testing.T) {
-			backend := newFakeController()
-			defer backend.Close()
-			h := newFilter(t, vendor, backend.Server)
-
-			for _, p := range []string{"/Command.htm", "/setFunctionManually"} {
-				rec := doRequest(h, http.MethodGet, p)
-				if rec.Code != http.StatusForbidden {
-					t.Errorf("GET %s (vendor %q) = %d, want 403", p, vendor, rec.Code)
-				}
-			}
-			if len(backend.hits) != 0 {
-				t.Fatalf("request reached the backend controller: %v", backend.hits)
-			}
-
-			// Still a "view" surface: root UI keeps working even for an
-			// unrecognized/empty vendor.
-			rec := doRequest(h, http.MethodGet, "/")
-			if rec.Code != http.StatusOK {
-				t.Errorf("GET / (vendor %q) = %d, want 200", vendor, rec.Code)
-			}
-		})
-	}
-}
-
-func TestTrailingSlashDoesNotBypassTheDenyList(t *testing.T) {
+func TestHeadIsProxied(t *testing.T) {
 	backend := newFakeController()
 	defer backend.Close()
 	h := newFilter(t, preset.ProconIP, backend.Server)
 
-	rec := doRequest(h, http.MethodGet, "/Command.htm/")
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("GET /Command.htm/ = %d, want 403 (trailing slash must not bypass the filter)", rec.Code)
-	}
-	if len(backend.hits) != 0 {
-		t.Fatalf("request reached the backend controller: %v", backend.hits)
-	}
-}
-
-func TestHeadIsTreatedLikeGet(t *testing.T) {
-	backend := newFakeController()
-	defer backend.Close()
-	h := newFilter(t, preset.ProconIP, backend.Server)
-
-	if rec := doRequest(h, http.MethodHead, "/Command.htm"); rec.Code != http.StatusForbidden {
-		t.Errorf("HEAD /Command.htm = %d, want 403", rec.Code)
-	}
 	if rec := doRequest(h, http.MethodHead, "/GetState.csv"); rec.Code != http.StatusOK {
 		t.Errorf("HEAD /GetState.csv = %d, want 200", rec.Code)
-	}
-}
-
-func TestAllowedPureFunction(t *testing.T) {
-	cases := []struct {
-		vendor, method, path string
-		want                 bool
-	}{
-		{preset.ProconIP, http.MethodGet, "/Command.htm", false},
-		{preset.ProconIP, http.MethodGet, "/command.htm", false},        // case-INsensitive (fail safe): different case is STILL the write path
-		{preset.ProconIP, http.MethodGet, "/CoMmAnD.htm", false},        // mixed case likewise denied
-		{preset.ProconIP, http.MethodGet, "/setFunctionManually", true}, // not a procon-ip write path
-		{preset.Violet, http.MethodGet, "/setFunctionManually", false},
-		{preset.Violet, http.MethodGet, "/setfunctionmanually", false}, // case-insensitive here too
-		{preset.Violet, http.MethodGet, "/Command.htm", true},          // not a violet write path
-		{"", http.MethodGet, "/Command.htm", false},
-		{"", http.MethodGet, "/setFunctionManually", false},
-		{"unknown", http.MethodPost, "/", false},
-		{preset.ProconIP, http.MethodPut, "/GetState.csv", false},
-		{preset.ProconIP, http.MethodDelete, "/", false},
-		{preset.ProconIP, http.MethodGet, "/Command.htm////", false},
-		{preset.ProconIP, http.MethodGet, "/", true},
-	}
-	for _, c := range cases {
-		if got := Allowed(c.vendor, c.method, c.path); got != c.want {
-			t.Errorf("Allowed(%q, %q, %q) = %v, want %v", c.vendor, c.method, c.path, got, c.want)
-		}
 	}
 }
