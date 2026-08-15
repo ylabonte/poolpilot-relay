@@ -108,6 +108,29 @@ func TestRequestWithoutSessionCookieIs403(t *testing.T) {
 	}
 }
 
+// An unauthenticated WRITE is refused exactly like an unauthenticated read: the
+// credential gate is method-agnostic and sits before the transparent proxy, so
+// lifting the write filter did not open writes to unpaired callers.
+func TestUnauthenticatedWriteIsRefused(t *testing.T) {
+	backend := newFakeController()
+	defer backend.Close()
+	srv := &Server{}
+	srv.SetTargets(map[string]Target{"guid1": {Preset: preset.ProconIP, BaseURL: backend.URL}})
+	srv.SetSessionKey(testKey)
+	srv.SetBearerAuthorizer(func(string) bool { return false })
+
+	req := httptest.NewRequest(http.MethodPost, "/usrcfg.cgi", nil)
+	req.Host = "guid1.remote.poolpilot.eu"
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("got %d, want 403 — an unauthenticated write must be refused", rec.Code)
+	}
+	if len(backend.hits) != 0 {
+		t.Fatalf("an unauthenticated write reached the controller: %v", backend.hits)
+	}
+}
+
 // With no key configured the gate fails CLOSED, never open.
 func TestNoSessionKeyFailsClosed(t *testing.T) {
 	backend := newFakeController()
