@@ -10,15 +10,19 @@
 //	TUNNEL_LISTEN    loopback HTTP bind the frp api proxy forwards to
 //	                 (default 127.0.0.1:8480) — the tunneled LAN API
 //	CTRL_FILTER_LISTEN loopback HTTP bind every ctrl-<GUID> frp proxy forwards
-//	                 to (default 127.0.0.1:8481) — the "view but don't touch"
-//	                 write filter (issue #27) standing in front of every
-//	                 controller's real address
+//	                 to (default 127.0.0.1:8481) — the authenticated,
+//	                 credential-gated proxy (issue #27) standing in front of
+//	                 every controller's real address
 //	POLL_INTERVAL    controller poll cadence, Go duration (default 60s; e2e: 1s)
 //	MDNS_DISABLED    "1" disables the mDNS announcer (docker/e2e)
 //	FRPS_AUTH_TOKEN  fallback frps transport token when the redeem response
 //	                 does not carry one (dev/e2e compose)
 //	PAIR_URL_BASE    Universal Link host for `show-pairing` (default
 //	                 https://pair.poolpilot.eu)
+//	UPDATE_DISABLED  "1" disables self-update (checks, staging, auto-apply); the
+//	                 health marker is still written so a manual update is safe
+//	REPO_DL_BASE     release-asset base URL for self-update downloads (default
+//	                 the GitHub releases URL) — symmetric with install.sh
 //
 // Deployment note: /v1/factory-reset wipes the state and EXITS — run under
 // systemd with Restart=always so the agent comes back with a fresh identity.
@@ -40,6 +44,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -55,6 +60,8 @@ import (
 	"github.com/ylabonte/poolpilot-relay/internal/agent/state"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/tlscert"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/tunnel"
+	"github.com/ylabonte/poolpilot-relay/internal/agent/updater"
+	"github.com/ylabonte/poolpilot-relay/internal/update"
 )
 
 // version is stamped via -ldflags "-X main.version=v1.2.3"; it feeds
@@ -128,6 +135,25 @@ func run() error {
 	cloudClient := cloud.New(store)
 	tun := tunnel.New()
 	poll := poller.New(store, cloudClient, interval)
+	// Self-update: the loop checks in via the control plane and stages verified
+	// releases for the privileged helper. Disabled when there is nothing to
+	// verify against (no embedded signing key — dev builds), on an arch no
+	// release is built for, or when the operator opts out via UPDATE_DISABLED.
+	arch, archErr := update.RuntimeArch()
+	if archErr != nil {
+		slog.Warn("self-update disabled: unsupported architecture", "err", archErr)
+	}
+	upd := updater.New(updater.Options{
+		Store:   store,
+		Version: version,
+		Dir:     filepath.Join(filepath.Dir(store.PathName()), "update"),
+		Arch:    arch,
+		PubKey:  update.PublicKey,
+		Checker: cloudClient,
+		DLBase:  os.Getenv("REPO_DL_BASE"),
+		Disabled: version == "dev" || os.Getenv("UPDATE_DISABLED") == "1" ||
+			archErr != nil || update.PublicKey == "",
+	})
 	announcer := announce.New(announce.Config{
 		AgentID:     st.AgentID,
 		Fingerprint: fingerprint,
@@ -135,8 +161,8 @@ func run() error {
 		Paired:      st.Paired(),
 		Disabled:    os.Getenv("MDNS_DISABLED") == "1",
 	})
-	// ctrlFilter is the issue #27 "view but don't touch" write filter every
-	// ctrl-<GUID> proxy forwards to instead of the controller itself — see
+	// ctrlFilter is the issue #27 authenticated tunnel gate every ctrl-<GUID>
+	// proxy forwards to instead of the controller itself — see
 	// lanapi.ReconfigureTunnel and package ctrlfilter.
 	ctrlFilter := &ctrlfilter.Server{Addr: ctrlfilter.Listen()}
 	api := &lanapi.Server{
@@ -153,6 +179,7 @@ func run() error {
 		CloudBaseURL: cloudBaseURL,
 		OnPaired:     announcer,
 		ExitFn:       func() { os.Exit(0) },
+		Updater:      upd,
 	}
 	// The ctrl vhost accepts the pairing bearer as an alternative to the browser
 	// session cookie, for the native polling clients and reachability probes
@@ -185,6 +212,7 @@ func run() error {
 	supervise(ctx, &wg, "tunnel", tun.Run)
 	supervise(ctx, &wg, "poller", poll.Run)
 	supervise(ctx, &wg, "announce", announcer.Run)
+	supervise(ctx, &wg, "updater", upd.Run)
 	wg.Wait()
 	return ctx.Err()
 }

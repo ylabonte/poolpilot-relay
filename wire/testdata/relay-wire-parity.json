@@ -287,5 +287,24 @@
   },
   "rc_claim_object_response": {
     "status": "objected"
+  },
+  "update_status": {
+    "current": "v1.3.2",
+    "available": "v1.4.0",
+    "auto": true,
+    "in_progress": false,
+    "last_check": "2026-07-25T03:12:04Z",
+    "check_error": "cloud_unreachable",
+    "advisory": {
+      "severity": "security",
+      "message": "Fixes an authentication bypass in the LAN API.",
+      "fixed_in": "v1.4.0"
+    },
+    "last_result": {
+      "status": "ok",
+      "from": "v1.3.1",
+      "to": "v1.3.2",
+      "finished_at": "2026-07-24T03:14:11Z"
+    }
   }
 }

@@ -544,9 +544,9 @@ func TestReconfigureTunnelFailsClosedWhenCAMaterializeErrors(t *testing.T) {
 // When a ctrlfilter.Server is supplied, every ctrl-<GUID> proxy's LocalAddr
 // is redirected to the filter's shared listener (not the controller's own
 // address) and the filter's GUID -> Target registry is populated with each
-// controller's vendor preset and real base URL (issue #27's "view but don't
-// touch" write filter) — so the filter can pick the right per-vendor policy
-// and dial the right backend once the tunneled request reaches it.
+// controller's real base URL (issue #27's authenticated tunnel gate) — so the
+// filter can authenticate and dial the right backend once the tunneled
+// request reaches it.
 func TestReconfigureTunnelWithCtrlFilterRewiresLocalAddr(t *testing.T) {
 	ft := &fakeTunnel{}
 	filter := &ctrlfilter.Server{Addr: "127.0.0.1:9999"}

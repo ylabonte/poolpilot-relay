@@ -30,6 +30,7 @@ import (
 	"github.com/ylabonte/poolpilot-relay/internal/agent/recovery"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/state"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/tunnel"
+	"github.com/ylabonte/poolpilot-relay/internal/agent/updater"
 	"github.com/ylabonte/poolpilot-relay/internal/measure"
 	"github.com/ylabonte/poolpilot-relay/preset"
 	"github.com/ylabonte/poolpilot-relay/wire"
@@ -97,10 +98,10 @@ type Server struct {
 	// TunnelAddr is the loopback plain-HTTP bind the frp api proxy forwards to
 	// (TUNNEL_LISTEN). Empty disables the tunnel-facing listener.
 	TunnelAddr string
-	// CtrlFilter is the shared "view but don't touch" write filter (issue
-	// #27) every controller's ctrl-<GUID> proxy forwards to instead of the
-	// controller itself. Nil disables filtering — the ctrl-<GUID> proxy's
-	// LocalAddr falls back to the controller's raw LAN address, unfiltered
+	// CtrlFilter is the shared issue #27 authenticated tunnel gate every
+	// controller's ctrl-<GUID> proxy forwards to instead of the
+	// controller itself. Nil disables the gate — the ctrl-<GUID> proxy's
+	// LocalAddr falls back to the controller's raw LAN address, ungated
 	// (kept only for callers/tests that don't care about ctrlfilter; a real
 	// deployment always wires this in via main.go).
 	CtrlFilter *ctrlfilter.Server
@@ -119,11 +120,25 @@ type Server struct {
 	// local/metadata); tests stub it to allow their loopback mock controllers.
 	ValidateLan func(addr string, useHTTPS bool) error
 
+	// Updater backs /v1/update* (self-update management). Nil-safe: those
+	// endpoints answer 503 updater_unavailable when unset — handler tests and
+	// exotic builds. Wired in main.go for real deployments.
+	Updater UpdaterAPI
+
 	// controllerMu serializes controller upserts (PUT /v1/controllers) and
 	// deletes. Two concurrent upserts of the SAME new address would otherwise
 	// both miss dedup and double-register with the cloud; holding this across
 	// probe → cloud register → persist closes that race.
 	controllerMu sync.Mutex
+}
+
+// UpdaterAPI is what /v1/update* needs from the agent's updater subsystem
+// (internal/agent/updater.Updater). An interface so handler tests can stub it.
+type UpdaterAPI interface {
+	Status() wire.UpdateStatusResponse
+	CheckNow(ctx context.Context) wire.UpdateStatusResponse
+	Apply() error
+	SetAuto(auto bool) error
 }
 
 // cloudCtx detaches a cloud call from the request context (issue #71).
@@ -199,6 +214,14 @@ func (s *Server) baseMux() *http.ServeMux {
 	// Listing devices is identical on both legs; deleting differs (the last-
 	// device guard is LAN-only, D9), so DELETE is mounted per-leg by the callers.
 	mux.Handle("GET /v1/devices", s.authed(s.getDevices))
+	// Self-update management. Deliberately on BOTH legs: triggering a signed,
+	// health-checked update remotely is the feature, and none of these is a
+	// LAN-presence ceremony. The worst a stolen bearer can do here is install
+	// the newest official release — recoverable, unlike pair/factory-reset.
+	mux.Handle("GET /v1/update", s.authed(s.getUpdate))
+	mux.Handle("POST /v1/update/check", s.authed(s.checkUpdate))
+	mux.Handle("POST /v1/update/apply", s.authed(s.applyUpdate))
+	mux.Handle("PUT /v1/update", s.authed(s.putUpdate))
 	return mux
 }
 
@@ -1426,13 +1449,13 @@ func materializeFrpsCA(caPEM string) (string, error) {
 // materializeFrpsCA and populates tunnel.Config's FrpsCAFile/FrpsServerName —
 // centralizing the CA-pin so both entry points pin identically.
 //
-// filter is the issue #27 "view but don't touch" write filter. When non-nil
+// filter is the issue #27 authenticated tunnel gate. When non-nil
 // (and its Addr is set), every ctrl-<GUID> proxy's LocalAddr is redirected to
 // filter.Addr instead of the controller's own address — mirroring how every
 // api-<GUID> proxy already shares one loopback listener (apiLocalAddr) — and
 // filter's GUID -> Target registry is (re)populated in the same pass with
-// each controller's vendor preset and real base URL, so the shared listener
-// can pick the right per-vendor policy and reverse-proxy to the right
+// each controller's real base URL, so the shared listener can authenticate
+// and reverse-proxy to the right
 // backend per request (demuxed by the tunneled request's Host header — see
 // package ctrlfilter). filter == nil (or an empty Addr) falls back to the
 // pre-#27 passthrough behaviour: LocalAddr is the controller's raw address,
@@ -1651,6 +1674,81 @@ func (s *Server) factoryReset(w http.ResponseWriter, _ *http.Request) {
 }
 
 // ---- helpers ----
+
+// ---- self-update endpoints (/v1/update*) ----
+
+// updaterOr503 gates the /v1/update* handlers on a wired updater.
+func (s *Server) updaterOr503(w http.ResponseWriter) (UpdaterAPI, bool) {
+	if s.Updater == nil {
+		writeErr(w, http.StatusServiceUnavailable, "updater_unavailable")
+		return nil, false
+	}
+	return s.Updater, true
+}
+
+// getUpdate is GET /v1/update — cached status, no network I/O.
+func (s *Server) getUpdate(w http.ResponseWriter, _ *http.Request) {
+	u, ok := s.updaterOr503(w)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, u.Status())
+}
+
+// checkUpdate is POST /v1/update/check — one synchronous check, bounded so a
+// slow control plane cannot pin the request goroutine. A failed check is
+// 200 + check_error, not an error state of the relay.
+func (s *Server) checkUpdate(w http.ResponseWriter, r *http.Request) {
+	u, ok := s.updaterOr503(w)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	writeJSON(w, http.StatusOK, u.CheckNow(ctx))
+}
+
+// applyUpdate is POST /v1/update/apply — stage the available update for the
+// privileged helper. 202: the agent will restart shortly; clients poll
+// GET /v1/info until version flips (a rollback returns it to the old value).
+// Applying works regardless of the auto setting — this is how an auto-off owner
+// installs a security fix on demand.
+func (s *Server) applyUpdate(w http.ResponseWriter, _ *http.Request) {
+	u, ok := s.updaterOr503(w)
+	if !ok {
+		return
+	}
+	switch err := u.Apply(); {
+	case errors.Is(err, updater.ErrNoUpdate):
+		writeErr(w, http.StatusConflict, "no_update")
+	case errors.Is(err, updater.ErrInProgress):
+		writeErr(w, http.StatusConflict, "update_in_progress")
+	case err != nil:
+		slog.Error("stage update", "err", err)
+		writeErr(w, http.StatusInternalServerError, "apply_failed")
+	default:
+		writeJSON(w, http.StatusAccepted, u.Status())
+	}
+}
+
+// putUpdate is PUT /v1/update — the auto-update toggle (the opt-out mechanism).
+func (s *Server) putUpdate(w http.ResponseWriter, r *http.Request) {
+	u, ok := s.updaterOr503(w)
+	if !ok {
+		return
+	}
+	var req wire.UpdateSettingsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Auto == nil {
+		writeErr(w, http.StatusBadRequest, "bad_json")
+		return
+	}
+	if err := u.SetAuto(*req.Auto); err != nil {
+		slog.Error("persist update settings", "err", err)
+		writeErr(w, http.StatusInternalServerError, "persist_failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, u.Status())
+}
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")

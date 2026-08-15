@@ -1018,3 +1018,51 @@ type RcClaimObjectRequest struct {
 	// AttestChallenge — see DeviceRegisterRequest.AttestChallenge's doc.
 	AttestChallenge string `json:"attest_challenge,omitempty"`
 }
+
+// ---- Agent self-update (LAN API /v1/update) ----
+
+// UpdateAdvisory means the running version has a known security issue, fixed in
+// FixedIn. Informational only — it never triggers an install; a relay whose
+// owner disabled auto-update is escalated to (the app nags it), never
+// overridden (design doc §2.5). This is the app-facing wire shape surfaced
+// through GET /v1/update; the control plane's own advisory type lives in
+// internal/agent/cloud and is mapped onto this on the way out.
+type UpdateAdvisory struct {
+	Severity string `json:"severity"` // "security" today; treat unknown as security
+	Message  string `json:"message"`  // short, owner-readable, display as-is
+	FixedIn  string `json:"fixed_in"` // the version that resolves it; always > current
+}
+
+// UpdateResult is the outcome of the last update attempt, produced by the
+// privileged updater helper and surfaced verbatim through GET /v1/update.
+type UpdateResult struct {
+	Status     string `json:"status"` // "ok" | "rolled_back" | "rejected"
+	From       string `json:"from,omitempty"`
+	To         string `json:"to,omitempty"`
+	Error      string `json:"error,omitempty"`       // diagnostic on non-ok, not for display
+	FinishedAt string `json:"finished_at,omitempty"` // RFC 3339
+}
+
+// UpdateStatusResponse is GET /v1/update — and the body of every other
+// /v1/update response. It is cached state, no network I/O. After a 202 from
+// POST /v1/update/apply the agent restarts: clients should expect a short
+// disconnect and poll GET /v1/info until version changes (a rollback returns it
+// to the OLD value, with LastResult.Status = "rolled_back"). Treat every field
+// except Current, Auto and InProgress as optional — decode defensively.
+type UpdateStatusResponse struct {
+	Current    string          `json:"current"`
+	Available  string          `json:"available,omitempty"` // omitted when up to date — presence IS the "update available" signal
+	Auto       bool            `json:"auto"`
+	InProgress bool            `json:"in_progress"`
+	LastCheck  string          `json:"last_check,omitempty"`  // RFC 3339
+	CheckError string          `json:"check_error,omitempty"` // "cloud_unreachable" — informational, never an HTTP error
+	Advisory   *UpdateAdvisory `json:"advisory,omitempty"`
+	LastResult *UpdateResult   `json:"last_result,omitempty"`
+}
+
+// UpdateSettingsRequest is PUT /v1/update — the auto-update toggle, and the
+// whole opt-out mechanism. Auto is a pointer so an absent field is a 400
+// bad_json rather than silently meaning false.
+type UpdateSettingsRequest struct {
+	Auto *bool `json:"auto"`
+}
