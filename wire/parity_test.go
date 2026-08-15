@@ -96,6 +96,7 @@ func TestFixtureRoundTrips(t *testing.T) {
 		// ({"status":"objected"}); the app pins a distinct RcClaimObjectResponse,
 		// but the wire shape is identical, so the round-trip decodes cleanly here.
 		{"rc_claim_object_response", func() any { return &RcClaimStatusResponse{} }},
+		{"update_status", func() any { return &UpdateStatusResponse{} }},
 	}
 
 	seen := map[string]bool{"_comment": true} // documentation-only key

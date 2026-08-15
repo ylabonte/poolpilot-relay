@@ -19,6 +19,10 @@
 //	                 does not carry one (dev/e2e compose)
 //	PAIR_URL_BASE    Universal Link host for `show-pairing` (default
 //	                 https://pair.poolpilot.eu)
+//	UPDATE_DISABLED  "1" disables self-update (checks, staging, auto-apply); the
+//	                 health marker is still written so a manual update is safe
+//	REPO_DL_BASE     release-asset base URL for self-update downloads (default
+//	                 the GitHub releases URL) — symmetric with install.sh
 //
 // Deployment note: /v1/factory-reset wipes the state and EXITS — run under
 // systemd with Restart=always so the agent comes back with a fresh identity.
@@ -40,6 +44,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -55,6 +60,8 @@ import (
 	"github.com/ylabonte/poolpilot-relay/internal/agent/state"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/tlscert"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/tunnel"
+	"github.com/ylabonte/poolpilot-relay/internal/agent/updater"
+	"github.com/ylabonte/poolpilot-relay/internal/update"
 )
 
 // version is stamped via -ldflags "-X main.version=v1.2.3"; it feeds
@@ -128,6 +135,25 @@ func run() error {
 	cloudClient := cloud.New(store)
 	tun := tunnel.New()
 	poll := poller.New(store, cloudClient, interval)
+	// Self-update: the loop checks in via the control plane and stages verified
+	// releases for the privileged helper. Disabled when there is nothing to
+	// verify against (no embedded signing key — dev builds), on an arch no
+	// release is built for, or when the operator opts out via UPDATE_DISABLED.
+	arch, archErr := update.RuntimeArch()
+	if archErr != nil {
+		slog.Warn("self-update disabled: unsupported architecture", "err", archErr)
+	}
+	upd := updater.New(updater.Options{
+		Store:   store,
+		Version: version,
+		Dir:     filepath.Join(filepath.Dir(store.PathName()), "update"),
+		Arch:    arch,
+		PubKey:  update.PublicKey,
+		Checker: cloudClient,
+		DLBase:  os.Getenv("REPO_DL_BASE"),
+		Disabled: version == "dev" || os.Getenv("UPDATE_DISABLED") == "1" ||
+			archErr != nil || update.PublicKey == "",
+	})
 	announcer := announce.New(announce.Config{
 		AgentID:     st.AgentID,
 		Fingerprint: fingerprint,
@@ -153,6 +179,7 @@ func run() error {
 		CloudBaseURL: cloudBaseURL,
 		OnPaired:     announcer,
 		ExitFn:       func() { os.Exit(0) },
+		Updater:      upd,
 	}
 	// The ctrl vhost accepts the pairing bearer as an alternative to the browser
 	// session cookie, for the native polling clients and reachability probes
@@ -185,6 +212,7 @@ func run() error {
 	supervise(ctx, &wg, "tunnel", tun.Run)
 	supervise(ctx, &wg, "poller", poll.Run)
 	supervise(ctx, &wg, "announce", announcer.Run)
+	supervise(ctx, &wg, "updater", upd.Run)
 	wg.Wait()
 	return ctx.Err()
 }

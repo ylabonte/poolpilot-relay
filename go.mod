@@ -3,6 +3,7 @@ module github.com/ylabonte/poolpilot-relay
 go 1.26
 
 require (
+	aead.dev/minisign v0.3.0
 	github.com/brutella/dnssd v1.2.14
 	github.com/fatedier/frp v0.70.1
 	github.com/mdp/qrterminal/v3 v3.2.1
