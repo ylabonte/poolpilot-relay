@@ -10,3 +10,6 @@
 # go.work (local multi-module dev against a sibling checkout; never committed)
 go.work
 go.work.sum
+
+# Vendored Claude tooling (canonical in poolpilot-claude) — local-only, never committed here.
+.claude/
