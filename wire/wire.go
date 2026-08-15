@@ -1042,3 +1042,20 @@ type UpdateResult struct {
 	Error      string `json:"error,omitempty"`       // diagnostic on non-ok, not for display
 	FinishedAt string `json:"finished_at,omitempty"` // RFC 3339
 }
+
+// UpdateStatusResponse is GET /v1/update — and the body of every other
+// /v1/update response. It is cached state, no network I/O. After a 202 from
+// POST /v1/update/apply the agent restarts: clients should expect a short
+// disconnect and poll GET /v1/info until version changes (a rollback returns it
+// to the OLD value, with LastResult.Status = "rolled_back"). Treat every field
+// except Current, Auto and InProgress as optional — decode defensively.
+type UpdateStatusResponse struct {
+	Current    string          `json:"current"`
+	Available  string          `json:"available,omitempty"` // omitted when up to date — presence IS the "update available" signal
+	Auto       bool            `json:"auto"`
+	InProgress bool            `json:"in_progress"`
+	LastCheck  string          `json:"last_check,omitempty"`  // RFC 3339
+	CheckError string          `json:"check_error,omitempty"` // "cloud_unreachable" — informational, never an HTTP error
+	Advisory   *UpdateAdvisory `json:"advisory,omitempty"`
+	LastResult *UpdateResult   `json:"last_result,omitempty"`
+}
