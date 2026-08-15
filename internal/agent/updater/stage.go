@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -28,19 +29,30 @@ func (u *Updater) Apply() error {
 	}
 
 	u.mu.Lock()
-	if u.staging || u.inProgress() {
+	if u.staging || u.requestExists() {
 		u.mu.Unlock()
 		return ErrInProgress
 	}
 	u.staging = true
 	u.mu.Unlock()
-	defer func() {
-		u.mu.Lock()
-		u.staging = false
-		u.mu.Unlock()
-	}()
 
-	return u.stage(available)
+	// Stage in the background. A multi-MB download over a home uplink can take
+	// minutes, and neither POST /v1/update/apply (which must return 202 promptly
+	// so the app can poll /v1/info, per contract §3.3) nor the Run loop may block
+	// on it. A staging failure (bad signature, download error) surfaces on the
+	// next status poll — version unchanged, or a helper result — never as a
+	// synchronous error to the caller.
+	go func() {
+		defer func() {
+			u.mu.Lock()
+			u.staging = false
+			u.mu.Unlock()
+		}()
+		if err := u.stage(available); err != nil {
+			slog.Warn("stage update failed", "version", available, "err", err)
+		}
+	}()
+	return nil
 }
 
 // stage downloads and verifies a release under staging/, then atomically writes
@@ -69,10 +81,10 @@ func (u *Updater) stage(version string) error {
 	// 1. The signed manifest first — it decides which binaries to fetch.
 	sumsPath := filepath.Join(staging, "sha256sums.txt")
 	sigPath := filepath.Join(staging, "sha256sums.txt.minisig")
-	if err := u.download(ctx, u.assetURL(version, "sha256sums.txt"), sumsPath); err != nil {
+	if err := u.download(ctx, u.assetURL(version, "sha256sums.txt"), sumsPath, maxManifestBytes); err != nil {
 		return fail(err)
 	}
-	if err := u.download(ctx, u.assetURL(version, "sha256sums.txt.minisig"), sigPath); err != nil {
+	if err := u.download(ctx, u.assetURL(version, "sha256sums.txt.minisig"), sigPath, maxManifestBytes); err != nil {
 		return fail(err)
 	}
 	sums, err := os.ReadFile(sumsPath)
@@ -91,13 +103,13 @@ func (u *Updater) stage(version string) error {
 	// presence in the signed manifest is the authority — symmetric with the
 	// installer's own grep).
 	binAsset := update.AgentAsset(u.arch)
-	if err := u.download(ctx, u.assetURL(version, binAsset), filepath.Join(staging, binAsset)); err != nil {
+	if err := u.download(ctx, u.assetURL(version, binAsset), filepath.Join(staging, binAsset), maxBinaryBytes); err != nil {
 		return fail(err)
 	}
 	helperAsset := update.HelperAsset(u.arch)
 	stageHelper := false
 	if _, err := update.AssetSum(sums, helperAsset); err == nil {
-		if err := u.download(ctx, u.assetURL(version, helperAsset), filepath.Join(staging, helperAsset)); err != nil {
+		if err := u.download(ctx, u.assetURL(version, helperAsset), filepath.Join(staging, helperAsset), maxBinaryBytes); err != nil {
 			return fail(err)
 		}
 		stageHelper = true
@@ -133,7 +145,16 @@ func (u *Updater) assetURL(version, asset string) string {
 	return u.dlBase + "/" + version + "/" + asset
 }
 
-func (u *Updater) download(ctx context.Context, url, dest string) error {
+const (
+	// maxBinaryBytes caps a downloaded agent/helper binary; maxManifestBytes caps
+	// sha256sums.txt and its signature. Neither is a correctness gate (the
+	// signature + per-asset sha256 are) — they stop a hostile or broken download
+	// host from filling the disk before verification runs.
+	maxBinaryBytes   = 512 << 20 // 512 MiB
+	maxManifestBytes = 1 << 20   // 1 MiB
+)
+
+func (u *Updater) download(ctx context.Context, url, dest string, limit int64) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -150,9 +171,19 @@ func (u *Updater) download(ctx context.Context, url, dest string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(f, res.Body); err != nil {
+	// limit+1 lets us distinguish "exactly at the cap" from "over the cap" and
+	// fail loudly instead of silently truncating into a hash mismatch.
+	n, err := io.Copy(f, io.LimitReader(res.Body, limit+1))
+	if err != nil {
 		_ = f.Close()
 		return err
 	}
-	return f.Close()
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if n > limit {
+		_ = os.Remove(dest)
+		return fmt.Errorf("updater: download %s exceeds %d bytes", url, limit)
+	}
+	return nil
 }

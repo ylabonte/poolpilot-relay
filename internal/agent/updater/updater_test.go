@@ -29,6 +29,23 @@ func (f *fakeChecker) CheckUpdate(ctx context.Context, ver string) (cloud.Update
 	return f.fn(ctx, ver)
 }
 
+// waitIdle blocks until a background Apply has finished staging (success or
+// failure), so assertions see the settled state and the httptest download
+// server is not torn down under an in-flight request.
+func (u *Updater) waitIdle(t *testing.T) {
+	t.Helper()
+	for range 400 {
+		u.mu.Lock()
+		staging := u.staging
+		u.mu.Unlock()
+		if !staging {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("staging did not settle within 2s")
+}
+
 type relOpts struct {
 	current       string
 	tag           string
@@ -166,6 +183,7 @@ func TestApplyStagesAndWritesRequestLast(t *testing.T) {
 	if err := e.u.Apply(); err != nil {
 		t.Fatal(err)
 	}
+	e.u.waitIdle(t) // staging is async; wait for it to commit request.json
 	var req update.Request
 	if err := update.ReadJSON(filepath.Join(e.dir, update.RequestFile), &req); err != nil {
 		t.Fatal(err)
@@ -190,6 +208,7 @@ func TestApplyStagesHelperWhenInManifest(t *testing.T) {
 	if err := e.u.Apply(); err != nil {
 		t.Fatal(err)
 	}
+	e.u.waitIdle(t)
 	var req update.Request
 	if err := update.ReadJSON(filepath.Join(e.dir, update.RequestFile), &req); err != nil {
 		t.Fatal(err)
@@ -213,9 +232,10 @@ func TestApplyWithoutUpdate(t *testing.T) {
 func TestApplyRejectsTamperedBinaryAndLeavesNoRequest(t *testing.T) {
 	e := newEnv(t, relOpts{tag: "v1.4.0", tamperBinary: true})
 	e.u.CheckNow(context.Background())
-	if err := e.u.Apply(); err == nil {
-		t.Fatal("tampered binary must fail Apply")
+	if err := e.u.Apply(); err != nil {
+		t.Fatalf("Apply accepts and stages asynchronously; want nil, got %v", err)
 	}
+	e.u.waitIdle(t) // the async stage must fail verification and clean up
 	if _, err := os.Stat(filepath.Join(e.dir, update.RequestFile)); !os.IsNotExist(err) {
 		t.Fatal("no request.json may exist after a failed stage")
 	}
@@ -318,5 +338,59 @@ func TestAdvisoryPersistsAcrossRestart(t *testing.T) {
 	}
 	if got.Available != "v1.4.0" {
 		t.Fatalf("available must survive restart via state: %+v", got)
+	}
+}
+
+func TestCheckIgnoresNonNewerTarget(t *testing.T) {
+	// A hostile or buggy control plane offering the SAME or an OLDER version must
+	// never be treated as an update — isCandidate's strict-newer gate is the only
+	// thing standing between a signed-but-not-newer target and a needless
+	// (or downgrade-attempting) stage.
+	e := newEnv(t, relOpts{current: "v1.3.0"})
+	for _, target := range []string{"v1.3.0", "v1.2.0"} {
+		e.checker.fn = func(ctx context.Context, ver string) (cloud.UpdateCheckResult, error) {
+			return cloud.UpdateCheckResult{Target: target, RecheckAfter: 6 * 3600}, nil
+		}
+		if got := e.u.CheckNow(context.Background()); got.Available != "" {
+			t.Fatalf("non-newer target %q offered as update: %+v", target, got)
+		}
+	}
+}
+
+func TestApplyOnDisabledUpdaterRefuses(t *testing.T) {
+	e := newEnv(t, relOpts{tag: "v1.4.0"})
+	e.u.CheckNow(context.Background()) // populate LastAvailable
+	e.u.disabled = true
+	if err := e.u.Apply(); !errors.Is(err, ErrNoUpdate) {
+		t.Fatalf("a disabled updater must refuse Apply with ErrNoUpdate, got %v", err)
+	}
+}
+
+func TestBadVersionClearedByNewerRelease(t *testing.T) {
+	e := newEnv(t, relOpts{current: "v1.3.0", tag: "v1.5.0"})
+	if err := e.store.Update(func(s *state.State) { s.Update.BadVersion = "v1.4.0" }); err != nil {
+		t.Fatal(err)
+	}
+	// v1.5.0 is newer than the blocked v1.4.0, so the block clears and the update
+	// is offered (design §4).
+	if got := e.u.CheckNow(context.Background()); got.Available != "v1.5.0" {
+		t.Fatalf("newer release not offered: %+v", got)
+	}
+	if bv := e.store.Get().Update.BadVersion; bv != "" {
+		t.Fatalf("BadVersion should be cleared by a newer release, got %q", bv)
+	}
+}
+
+func TestUntilNextWindowIsAFutureSlotWithin24h(t *testing.T) {
+	e := newEnv(t, relOpts{current: "v1.3.0"})
+	agentID := e.store.Get().AgentID
+	e.u.now = func() time.Time { return time.Date(2026, 8, 15, 12, 0, 0, 0, time.Local) }
+	d := e.u.untilNextWindow()
+	if d <= 0 || d > 24*time.Hour {
+		t.Fatalf("untilNextWindow = %v, want (0, 24h]", d)
+	}
+	fire := e.u.now().Add(d)
+	if slot := e.u.slotStart(agentID, fire); !fire.Equal(slot) {
+		t.Fatalf("next window %v is not this device's slot start (%v)", fire, slot)
 	}
 }

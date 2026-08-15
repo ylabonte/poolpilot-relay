@@ -2,6 +2,7 @@ package updater
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,6 +10,31 @@ import (
 
 	"github.com/ylabonte/poolpilot-relay/internal/update"
 )
+
+func TestWindowOffsetSpreadsAcrossSpan(t *testing.T) {
+	// The nanosecond bug capped every offset at ~4.3s of the hour, collapsing the
+	// fleet decorrelation. A correct offset reaches deep into the span and lands
+	// on many distinct slots.
+	span := time.Hour
+	var maxOff time.Duration
+	seen := map[time.Duration]bool{}
+	for i := range 2000 {
+		off := windowOffset(fmt.Sprintf("agent-%d", i), span)
+		if off < 0 || off >= span {
+			t.Fatalf("offset %v out of [0,%v)", off, span)
+		}
+		if off > maxOff {
+			maxOff = off
+		}
+		seen[off] = true
+	}
+	if maxOff < span/2 {
+		t.Fatalf("offsets not spread across the window: max=%v, want >= %v", maxOff, span/2)
+	}
+	if len(seen) < 200 {
+		t.Fatalf("offsets too clustered: only %d distinct values across 2000 agents", len(seen))
+	}
+}
 
 func TestClampRecheck(t *testing.T) {
 	cases := []struct {
@@ -71,6 +97,7 @@ func TestMaybeAutoApplyInWindowStages(t *testing.T) {
 	e.u.CheckNow(context.Background()) // persists LastAvailable = v1.4.0
 	e.u.now = func() time.Time { return slotStart(e.store.Get().AgentID).Add(20 * time.Minute) }
 	e.u.maybeAutoApply()
+	e.u.waitIdle(t) // auto-apply stages asynchronously
 	if _, err := os.Stat(filepath.Join(e.dir, update.RequestFile)); err != nil {
 		t.Fatal("auto-apply inside the window must stage a request")
 	}

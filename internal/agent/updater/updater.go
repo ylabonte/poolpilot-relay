@@ -139,6 +139,13 @@ func (u *Updater) Run(ctx context.Context) error {
 	defer healthTimer.Stop()
 	checkTimer := time.NewTimer(u.startupDelay())
 	defer checkTimer.Stop()
+	// The window timer drives auto-apply on its own schedule: a check populates
+	// the known candidate at its ~6h cadence, and this fires at the device's
+	// nightly slot so the update actually installs within ~24h — instead of only
+	// when a check tick happens to land in the slot (which, at a 6h cadence, most
+	// devices would miss for weeks).
+	windowTimer := time.NewTimer(u.untilNextWindow())
+	defer windowTimer.Stop()
 
 	if u.disabled {
 		slog.Info("self-update disabled (dev build, unsupported arch, missing signing key, or UPDATE_DISABLED)")
@@ -163,9 +170,17 @@ func (u *Updater) Run(ctx context.Context) error {
 				checkCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 				_ = u.check(checkCtx)
 				cancel()
+				// Also apply here for the boot-into-window case: a startup check
+				// that finds a candidate while already inside the slot should not
+				// wait a whole day for the window timer.
 				u.maybeAutoApply()
 			}
 			checkTimer.Reset(u.nextInterval())
+		case <-windowTimer.C:
+			if !u.disabled {
+				u.maybeAutoApply()
+			}
+			windowTimer.Reset(u.untilNextWindow())
 		}
 	}
 }
@@ -221,9 +236,19 @@ func (u *Updater) check(ctx context.Context) error {
 		s.Update.LastAvailable = available
 		s.Update.LastAdvisory = adv
 		s.Update.LastCheck = now
+		// A strictly newer release clears a stale rollback block (design §4): the
+		// blocked version is behind us now, so drop the lingering veto on it.
+		if available != "" && s.Update.BadVersion != "" {
+			if cmp, cerr := update.CompareVersions(available, s.Update.BadVersion); cerr == nil && cmp > 0 {
+				s.Update.BadVersion = ""
+			}
+		}
 	}); err != nil {
+		// The control plane WAS reachable; a local persist failure (disk full,
+		// etc.) is not a network condition, so it must not surface as
+		// cloud_unreachable. Log it and treat the check as done.
 		slog.Error("persist update check", "err", err)
-		return err
+		return nil
 	}
 	return nil
 }
@@ -255,21 +280,49 @@ func (u *Updater) maybeAutoApply() {
 	}
 }
 
+// slotStart is this device's nightly auto-apply slot start on now's calendar day.
+func (u *Updater) slotStart(agentID string, now time.Time) time.Time {
+	off := windowOffset(agentID, windowLen-time.Hour)
+	return time.Date(now.Year(), now.Month(), now.Day(), windowStartHour, 0, 0, 0, now.Location()).Add(off)
+}
+
 // inWindow reports whether local time is within this device's one-hour slot of
-// the nightly window. The tick cadence (≥1h) is coarser than the slot, so a
-// device that misses its slot simply retries the next night.
+// the nightly window.
 func (u *Updater) inWindow(agentID string) bool {
 	now := u.now()
-	off := windowOffset(agentID, windowLen-time.Hour)
-	start := time.Date(now.Year(), now.Month(), now.Day(), windowStartHour, 0, 0, 0, now.Location()).Add(off)
+	start := u.slotStart(agentID, now)
 	return !now.Before(start) && now.Before(start.Add(time.Hour))
 }
 
-// windowOffset is the per-device deterministic slot inside the nightly window.
+// untilNextWindow is the duration until this device's next slot start, strictly
+// after now (so the loop re-arms for the following day once a slot has begun).
+// If not enrolled yet there is no AgentID; a short retry keeps the timer live
+// until enrollment lands.
+func (u *Updater) untilNextWindow() time.Duration {
+	now := u.now()
+	agentID := u.store.Get().AgentID
+	if agentID == "" {
+		return time.Hour
+	}
+	slot := u.slotStart(agentID, now)
+	for !slot.After(now) {
+		slot = slot.Add(24 * time.Hour)
+	}
+	return slot.Sub(now)
+}
+
+// windowOffset is the per-device deterministic offset into the nightly window,
+// spread across the whole span at one-second granularity. h.Sum32() is a plain
+// integer, not a duration: using it directly as nanoseconds would cap the
+// offset at ~4.3s and collapse the fleet decorrelation the window exists for.
 func windowOffset(agentID string, span time.Duration) time.Duration {
+	secs := int64(span / time.Second)
+	if secs <= 0 {
+		return 0
+	}
 	h := fnv.New32a()
 	h.Write([]byte(agentID))
-	return time.Duration(h.Sum32()) % span
+	return time.Duration(h.Sum32()%uint32(secs)) * time.Second
 }
 
 // Status is GET /v1/update — cached state, no network I/O. It lazily ingests a
@@ -313,9 +366,20 @@ func (u *Updater) SetAuto(auto bool) error {
 	return u.store.Update(func(s *state.State) { s.Update.AutoDisabled = !auto })
 }
 
-func (u *Updater) inProgress() bool {
+// requestExists reports whether a committed request.json is on disk. No lock —
+// safe to call from Apply's critical section, which already holds u.mu.
+func (u *Updater) requestExists() bool {
 	_, err := os.Stat(filepath.Join(u.dir, update.RequestFile))
 	return err == nil
+}
+
+// inProgress reports whether an update is being staged (download+verify running)
+// or already staged (request.json committed) — the app-facing in_progress.
+func (u *Updater) inProgress() bool {
+	u.mu.Lock()
+	staging := u.staging
+	u.mu.Unlock()
+	return staging || u.requestExists()
 }
 
 // ingestResult consumes result.json: persist it to state (a rollback poisons
