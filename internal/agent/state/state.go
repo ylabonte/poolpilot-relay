@@ -127,6 +127,28 @@ type TLS struct {
 	KeyPEM  string `json:"key_pem,omitempty"` // plaintext at rest — see the package doc's trust assumption
 }
 
+// UpdateSettings is the self-update configuration plus persisted memory.
+// AutoDisabled inverts the default deliberately: the zero value means
+// auto-update ON, so pre-feature state.json files need no migration (see
+// AutoUpdate). Additive with omitzero on State, so an older document simply
+// lacks it.
+type UpdateSettings struct {
+	AutoDisabled bool `json:"auto_disabled,omitempty"`
+	// BadVersion is a release tag that installed then failed its health check
+	// and rolled back ON THIS DEVICE; the updater never offers or applies it
+	// again. Cleared when a strictly newer tag appears.
+	BadVersion string             `json:"bad_version,omitempty"`
+	LastResult *wire.UpdateResult `json:"last_result,omitempty"`
+	// LastAvailable, LastAdvisory and LastCheck cache the most recent
+	// control-plane check so GET /v1/update serves current status immediately
+	// after a restart or self-update, instead of showing nothing until the next
+	// check ~6h later. The advisory is the only security channel to an auto-off
+	// relay, so it must survive a reboot.
+	LastAvailable string               `json:"last_available,omitempty"`
+	LastAdvisory  *wire.UpdateAdvisory `json:"last_advisory,omitempty"`
+	LastCheck     string               `json:"last_check,omitempty"` // RFC 3339
+}
+
 // State is the whole persisted document.
 type State struct {
 	Version     int                 `json:"v"`
@@ -158,6 +180,10 @@ type State struct {
 	// omitzero, so an older document simply starts at zero — which accepts the
 	// first code, as it must.
 	RecoveryWindowUsed int64 `json:"recovery_window_used,omitzero"`
+	// Update is the self-update configuration and memory. Additive with
+	// omitzero, so a pre-feature document simply lacks it and auto-update
+	// defaults ON (see UpdateSettings / AutoUpdate).
+	Update UpdateSettings `json:"update,omitzero"`
 }
 
 // Paired reports whether at least one device is active (has never been revoked).
@@ -184,6 +210,12 @@ func (s State) ActiveDevices() []Device {
 
 // Enrolled reports whether the relay holds a cloud bearer token.
 func (s State) Enrolled() bool { return s.Cloud.FrpcToken != "" }
+
+// AutoUpdate reports whether automatic update application is enabled. It is the
+// default (the zero value of Update.AutoDisabled); the app disables it via
+// PUT /v1/update. Auto-off relays still check in and surface advisories, but
+// never auto-install (design doc §2.5 — the opt-out is absolute).
+func (s State) AutoUpdate() bool { return !s.Update.AutoDisabled }
 
 // ControllerConfigured reports whether the (single, phase-1) controller has been
 // configured at least once.
