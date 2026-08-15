@@ -55,8 +55,25 @@ jobs:
             --jq '.content' | base64 -d > "$RUNNER_TEMP/relay-wire-parity.json"
           echo "PARITY_SOURCE_PATH=$RUNNER_TEMP/measurement-parity.json" >> "$GITHUB_ENV"
           echo "WIRE_PARITY_SOURCE_PATH=$RUNNER_TEMP/relay-wire-parity.json" >> "$GITHUB_ENV"
-      - name: Run tests
-        run: go test ./...
+      - name: Run tests (with coverage)
+        shell: bash
+        run: go test -coverprofile=coverage.raw.out ./... | tee test-output.txt
+      - name: Coverage summary + floor
+        shell: bash
+        run: |
+          { head -1 coverage.raw.out; grep -v '/internal/paritysrc/' coverage.raw.out | tail -n +2; } > coverage.out
+          go tool cover -html=coverage.out -o coverage.html
+          TOTAL=$(go tool cover -func=coverage.out | awk '/^total:/ {sub(/%/,"",$3); print $3}')
+          { echo "## Go coverage: ${TOTAL}% (floor 72%)"; echo '```'; grep -E 'coverage: ' test-output.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          awk -v t="$TOTAL" 'BEGIN { if (t+0 < 72) { printf "::error::coverage %.1f%% is below the 72%% floor\n", t; exit 1 } }'
+      - name: Upload coverage HTML report
+        uses: actions/upload-artifact@v7
+        if: always()
+        continue-on-error: true
+        with:
+          name: coverage-html
+          path: coverage.html
+          retention-days: 14
   build-agent:
     runs-on: ubuntu-latest
     steps:
