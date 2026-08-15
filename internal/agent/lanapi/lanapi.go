@@ -1462,7 +1462,7 @@ func ReconfigureTunnel(t tunnel.Tunnel, st state.State, apiLocalAddr string, fil
 			if ctrl.UseHTTPS {
 				scheme = "https"
 			}
-			targets[ctrl.GUID] = ctrlfilter.Target{Preset: ctrl.Preset, BaseURL: scheme + "://" + localAddr}
+			targets[ctrl.GUID] = ctrlfilter.Target{BaseURL: scheme + "://" + localAddr}
 			proxyLocalAddr = filter.Addr
 		}
 		specs = append(specs, tunnel.ProxySpec{GUID: ctrl.GUID, LocalAddr: proxyLocalAddr, Preset: ctrl.Preset})

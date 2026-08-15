@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/ylabonte/poolpilot-relay/preset"
 )
 
 func TestServerRoutesByHostGUID(t *testing.T) {
@@ -18,7 +16,7 @@ func TestServerRoutesByHostGUID(t *testing.T) {
 
 	srv := &Server{}
 	srv.SetTargets(map[string]Target{
-		"guid1": {Preset: preset.ProconIP, BaseURL: backend.URL},
+		"guid1": {BaseURL: backend.URL},
 	})
 	// Every request through Handler now needs a web session (issue #27); this
 	// test is about host-based routing, so it carries a valid one throughout.
@@ -96,7 +94,7 @@ func TestRequestWithoutSessionCookieIs403(t *testing.T) {
 	backend := newFakeController()
 	defer backend.Close()
 	srv := &Server{}
-	srv.SetTargets(map[string]Target{"guid1": {Preset: preset.ProconIP, BaseURL: backend.URL}})
+	srv.SetTargets(map[string]Target{"guid1": {BaseURL: backend.URL}})
 	srv.SetSessionKey(testKey)
 
 	req := httptest.NewRequest(http.MethodGet, "/GetState.csv", nil)
@@ -115,7 +113,7 @@ func TestUnauthenticatedWriteIsRefused(t *testing.T) {
 	backend := newFakeController()
 	defer backend.Close()
 	srv := &Server{}
-	srv.SetTargets(map[string]Target{"guid1": {Preset: preset.ProconIP, BaseURL: backend.URL}})
+	srv.SetTargets(map[string]Target{"guid1": {BaseURL: backend.URL}})
 	srv.SetSessionKey(testKey)
 	srv.SetBearerAuthorizer(func(string) bool { return false })
 
@@ -136,7 +134,7 @@ func TestNoSessionKeyFailsClosed(t *testing.T) {
 	backend := newFakeController()
 	defer backend.Close()
 	srv := &Server{}
-	srv.SetTargets(map[string]Target{"guid1": {Preset: preset.ProconIP, BaseURL: backend.URL}})
+	srv.SetTargets(map[string]Target{"guid1": {BaseURL: backend.URL}})
 
 	req := httptest.NewRequest(http.MethodGet, "/GetState.csv", nil)
 	req.Host = "guid1.remote.poolpilot.eu"
@@ -152,7 +150,7 @@ func TestSessionBootstrapSetsTheCookieAndRedirects(t *testing.T) {
 	backend := newFakeController()
 	defer backend.Close()
 	srv := &Server{}
-	srv.SetTargets(map[string]Target{"guid1": {Preset: preset.ProconIP, BaseURL: backend.URL}})
+	srv.SetTargets(map[string]Target{"guid1": {BaseURL: backend.URL}})
 	srv.SetSessionKey(testKey)
 
 	tok, err := MintToken(testKey, "guid1", time.Now(), TokenTTL)
@@ -191,7 +189,7 @@ func TestSessionCookieUnlocksReads(t *testing.T) {
 	backend := newFakeController()
 	defer backend.Close()
 	srv := &Server{}
-	srv.SetTargets(map[string]Target{"guid1": {Preset: preset.ProconIP, BaseURL: backend.URL}})
+	srv.SetTargets(map[string]Target{"guid1": {BaseURL: backend.URL}})
 	srv.SetSessionKey(testKey)
 
 	req := httptest.NewRequest(http.MethodGet, "/GetState.csv", nil)
@@ -211,7 +209,7 @@ func TestSessionUnlocksWrites(t *testing.T) {
 	backend := newFakeController()
 	defer backend.Close()
 	srv := &Server{}
-	srv.SetTargets(map[string]Target{"guid1": {Preset: preset.ProconIP, BaseURL: backend.URL}})
+	srv.SetTargets(map[string]Target{"guid1": {BaseURL: backend.URL}})
 	srv.SetSessionKey(testKey)
 
 	req := httptest.NewRequest(http.MethodGet, "/Command.htm", nil)
@@ -233,8 +231,8 @@ func TestSessionCookieIsBoundToItsController(t *testing.T) {
 	defer backend.Close()
 	srv := &Server{}
 	srv.SetTargets(map[string]Target{
-		"guid1": {Preset: preset.ProconIP, BaseURL: backend.URL},
-		"guid2": {Preset: preset.ProconIP, BaseURL: backend.URL},
+		"guid1": {BaseURL: backend.URL},
+		"guid2": {BaseURL: backend.URL},
 	})
 	srv.SetSessionKey(testKey)
 
@@ -273,7 +271,7 @@ func TestPairingBearerAuthorizesInsteadOfTheCookie(t *testing.T) {
 	backend := newFakeController()
 	defer backend.Close()
 	srv := &Server{}
-	srv.SetTargets(map[string]Target{"guid1": {Preset: preset.ProconIP, BaseURL: backend.URL}})
+	srv.SetTargets(map[string]Target{"guid1": {BaseURL: backend.URL}})
 	srv.SetSessionKey(testKey)
 	srv.SetBearerAuthorizer(func(tok string) bool { return tok == "live-pairing-bearer" })
 
@@ -291,7 +289,7 @@ func TestUnknownPairingBearerIsRefused(t *testing.T) {
 	backend := newFakeController()
 	defer backend.Close()
 	srv := &Server{}
-	srv.SetTargets(map[string]Target{"guid1": {Preset: preset.ProconIP, BaseURL: backend.URL}})
+	srv.SetTargets(map[string]Target{"guid1": {BaseURL: backend.URL}})
 	srv.SetSessionKey(testKey)
 	srv.SetBearerAuthorizer(func(tok string) bool { return tok == "live-pairing-bearer" })
 
@@ -311,7 +309,7 @@ func TestBearerPathClosedWithoutAnAuthorizer(t *testing.T) {
 	backend := newFakeController()
 	defer backend.Close()
 	srv := &Server{}
-	srv.SetTargets(map[string]Target{"guid1": {Preset: preset.ProconIP, BaseURL: backend.URL}})
+	srv.SetTargets(map[string]Target{"guid1": {BaseURL: backend.URL}})
 	srv.SetSessionKey(testKey)
 
 	req := httptest.NewRequest(http.MethodGet, "/GetState.csv", nil)
@@ -331,7 +329,7 @@ func TestPairingBearerUnlocksWrites(t *testing.T) {
 	backend := newFakeController()
 	defer backend.Close()
 	srv := &Server{}
-	srv.SetTargets(map[string]Target{"guid1": {Preset: preset.ProconIP, BaseURL: backend.URL}})
+	srv.SetTargets(map[string]Target{"guid1": {BaseURL: backend.URL}})
 	srv.SetSessionKey(testKey)
 	srv.SetBearerAuthorizer(func(string) bool { return true })
 
@@ -362,7 +360,7 @@ func TestRelayCredentialsAreStrippedBeforeProxying(t *testing.T) {
 	defer backend.Close()
 
 	srv := &Server{}
-	srv.SetTargets(map[string]Target{"guid1": {Preset: preset.ProconIP, BaseURL: backend.URL}})
+	srv.SetTargets(map[string]Target{"guid1": {BaseURL: backend.URL}})
 	srv.SetSessionKey(testKey)
 	srv.SetBearerAuthorizer(func(string) bool { return true })
 

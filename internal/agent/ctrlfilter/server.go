@@ -28,10 +28,8 @@ func Listen() string {
 
 // Target is what one controller's ctrl-<GUID> proxy resolves to behind the
 // filter: BaseURL ("scheme://lan_address") is where authenticated requests are
-// reverse-proxied. Preset is retained for callers/telemetry — the filter no
-// longer switches on vendor (see the package doc).
+// reverse-proxied.
 type Target struct {
-	Preset  string
 	BaseURL string
 }
 
@@ -280,7 +278,7 @@ func (s *Server) Handler() http.Handler {
 			http.Error(w, "bad controller target", http.StatusInternalServerError)
 			return
 		}
-		New(target.Preset, u).ServeHTTP(w, r)
+		New(u).ServeHTTP(w, r)
 	})
 }
 
@@ -324,10 +322,9 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 // New returns the reverse-proxy handler for ONE controller: target is the
-// controller's real base URL. (vendor is retained for the caller and any
-// future per-vendor handling; it no longer gates anything — an authenticated
-// caller gets full transparent read+write access; see the package doc for why
-// the "view but don't touch" write filter was removed.)
+// controller's real base URL. An authenticated caller gets full transparent
+// read+write access; see the package doc for why the "view but don't touch"
+// write filter was removed.
 //
 // Every request's path is FIRST checked with isCanonicalPath (canonical.go);
 // anything non-canonical — a dot-segment, a doubled slash, or a
@@ -346,7 +343,7 @@ func (s *Server) Run(ctx context.Context) error {
 // + bidirectional byte copy) since Go 1.12, and FlushInterval: -1 below
 // disables output buffering so a controller's live chart/telemetry endpoint
 // streams through promptly instead of waiting for a full buffer.
-func New(vendor string, target *url.URL) http.Handler {
+func New(target *url.URL) http.Handler {
 	rp := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetXForwarded()
