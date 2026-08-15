@@ -28,35 +28,51 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
-      - name: Cross-compile agent binaries
+      - name: Cross-compile binaries
         run: |
           mkdir -p dist
           VERSION="${GITHUB_REF_NAME}"
-          # build <goos> <goarch> <goarm> <asset-suffix> — the relay agent is
-          # pure Go (CGO_ENABLED=0), so it cross-compiles to any platform.
-          # darwin/windows are binary-only (no installer, no systemd unit).
+          # The signing pubkey is stamped into BOTH binaries via ldflags: without
+          # it update.PublicKey is empty and self-update fails closed (the agent
+          # disables the updater, the helper refuses to run). Fail the build if
+          # the key is missing — a keyless release could never verify an update.
+          test -f deploy/relay/minisign.pub \
+            || { echo "::error::deploy/relay/minisign.pub missing — run the key ceremony before releasing."; exit 1; }
+          PUBKEY="$(grep -v '^untrusted comment:' deploy/relay/minisign.pub | tr -d '[:space:]')"
+          LDFLAGS="-s -w -X main.version=${VERSION} -X github.com/ylabonte/poolpilot-relay/internal/update.PublicKey=${PUBKEY}"
+          # build <goos> <goarch> <goarm> <label> <cmd> <out-prefix> — pure Go
+          # (CGO_ENABLED=0) cross-compiles anywhere. The `env` prefix is required,
+          # not decorative: a bare assignment-prefix list (`FOO=bar cmd`) is
+          # recognized by the shell PARSER before expansion, so when $3 is
+          # non-empty the expanded ${3:+GOARM=$3} would become the COMMAND word
+          # ("GOARM=7: command not found") instead of a prefix assignment. Words
+          # after `env` are just environment entries — no such parse-time trap.
           build() {
             EXT=""; [ "$1" = "windows" ] && EXT=".exe"
-            # `env` is required, not decorative: a bare assignment-prefix list
-            # (`FOO=bar cmd`) is recognized by the shell PARSER before any
-            # expansion runs, so when $3 is non-empty the expanded
-            # ${3:+GOARM=$3} becomes the COMMAND word itself ("GOARM=7: command
-            # not found") instead of another prefix assignment. Expanded words
-            # after `env` are just environment entries — env has no such
-            # parse-time restriction.
             env GOOS="$1" GOARCH="$2" ${3:+GOARM=$3} CGO_ENABLED=0 \
-              go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
-              -o "dist/poolpilot-relay_$1_$4${EXT}" ./cmd/poolpilot-relay
+              go build -trimpath -ldflags "$LDFLAGS" \
+              -o "dist/$6_$1_$4${EXT}" "./cmd/$5"
           }
-          build linux arm64 "" arm64
-          build linux arm 7 armv7
-          build linux amd64 "" amd64
-          build linux 386 "" 386
-          build linux riscv64 "" riscv64
-          build darwin arm64 "" arm64
-          build darwin amd64 "" amd64
-          build windows amd64 "" amd64
+          # Agent: every shipped platform. darwin/windows are binary-only — no
+          # installer, no systemd unit, and RuntimeArch refuses non-linux GOOS.
+          build linux   arm64   ""  arm64   poolpilot-relay poolpilot-relay
+          build linux   arm     7   armv7   poolpilot-relay poolpilot-relay
+          build linux   amd64   ""  amd64   poolpilot-relay poolpilot-relay
+          build linux   386     ""  386     poolpilot-relay poolpilot-relay
+          build linux   riscv64 ""  riscv64 poolpilot-relay poolpilot-relay
+          build darwin  arm64   ""  arm64   poolpilot-relay poolpilot-relay
+          build darwin  amd64   ""  amd64   poolpilot-relay poolpilot-relay
+          build windows amd64   ""  amd64   poolpilot-relay poolpilot-relay
+          # Helper: the five Linux/systemd targets only, so every installable
+          # relay can self-update.
+          build linux   arm64   ""  arm64   poolpilot-relay-updater poolpilot-relay-updater
+          build linux   arm     7   armv7   poolpilot-relay-updater poolpilot-relay-updater
+          build linux   amd64   ""  amd64   poolpilot-relay-updater poolpilot-relay-updater
+          build linux   386     ""  386     poolpilot-relay-updater poolpilot-relay-updater
+          build linux   riscv64 ""  riscv64 poolpilot-relay-updater poolpilot-relay-updater
           cp deploy/relay/poolpilot-relay.service dist/
+          cp deploy/relay/poolpilot-relay-updater.service dist/
+          cp deploy/relay/poolpilot-relay-updater.path dist/
           (cd dist && sha256sum * > sha256sums.txt)
 
       - name: Sign checksums
@@ -101,6 +117,10 @@ jobs:
           for f in poolpilot-relay_linux_arm64 poolpilot-relay_linux_armv7 \
                    poolpilot-relay_linux_amd64 poolpilot-relay_linux_386 \
                    poolpilot-relay_linux_riscv64 poolpilot-relay.service \
+                   poolpilot-relay-updater_linux_arm64 poolpilot-relay-updater_linux_armv7 \
+                   poolpilot-relay-updater_linux_amd64 poolpilot-relay-updater_linux_386 \
+                   poolpilot-relay-updater_linux_riscv64 \
+                   poolpilot-relay-updater.service poolpilot-relay-updater.path \
                    sha256sums.txt sha256sums.txt.minisig; do
             [ -f "dist/$f" ] || { echo "::error::release asset dist/$f is missing — the build step and the installer have diverged."; exit 1; }
           done
