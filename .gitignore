@@ -2,6 +2,11 @@
 /poolpilot-relay
 *.test
 *.out
+# coverage-gate artifacts a local dry run leaves in the tree (*.out covers the
+# profiles; these two don't match it): the rendered HTML report and the tee'd
+# test log.
+coverage.html
+test-output.txt
 
 # local env
 .env

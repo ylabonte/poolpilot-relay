@@ -55,8 +55,70 @@ jobs:
             --jq '.content' | base64 -d > "$RUNNER_TEMP/relay-wire-parity.json"
           echo "PARITY_SOURCE_PATH=$RUNNER_TEMP/measurement-parity.json" >> "$GITHUB_ENV"
           echo "WIRE_PARITY_SOURCE_PATH=$RUNNER_TEMP/relay-wire-parity.json" >> "$GITHUB_ENV"
-      - name: Run tests
-        run: go test ./...
+      - name: Run tests (with coverage)
+        shell: bash
+        run: |
+          # pipefail is load-bearing here, not decoration: without it
+          # `go test | tee` reports tee's exit status, so a FAILING suite would
+          # leave this REQUIRED `test` job green. The runner's implicit default
+          # shell is `bash -e` with NO pipefail (the go vet / go build steps
+          # above run under exactly that); only an explicit `shell: bash` OR an
+          # explicit `set -o pipefail` turns it on. We set BOTH, so neither one
+          # alone is a single tidy-up edit away from a fail-open test gate.
+          set -o pipefail
+          go test -coverprofile=coverage.raw.out ./... | tee test-output.txt
+      - name: Coverage summary + floor
+        shell: bash
+        env:
+          # Coverage floor, in percent — single source of truth for the three
+          # places 72 would otherwise be repeated (heading, comparison, error).
+          # Measured total when this gate landed: ~75% (jitters 75.0-75.2% —
+          # internal/agent/lanapi pairWithVoucher covers extra TOCTOU branches
+          # only when the concurrency tests win their race). 72 leaves ~3pp of
+          # slack for legitimate churn. Ratchet it UP once the measured total
+          # has sat comfortably higher; never lower it to make CI pass — that is
+          # a decision, not a fix.
+          COVERAGE_FLOOR: 72
+        run: |
+          # Fail loudly if the floor went missing. Consolidating 72 into an env
+          # (instead of an inline `< 72` literal) means awk reads the floor from
+          # the environment, and an EMPTY value makes `floor+0` 0 — i.e. `t < 0`
+          # is false at any coverage and the gate would pass silently at 0%. The
+          # old literal could not degrade that way, so the consolidation gets
+          # these two guards to strictly dominate what it replaced: `:?` catches
+          # empty/unset here, and the awk check below catches a non-numeric or
+          # zero value (which `:?` would happily accept).
+          : "${COVERAGE_FLOOR:?coverage floor not configured}"
+          [ -s coverage.raw.out ] || { echo "::error::go test produced no coverage profile"; exit 1; }
+          # internal/paritysrc is dev-only glue (it locates the pool-apps sibling
+          # checkout for the wire/bands drift guards), executed only from OTHER
+          # packages' tests, so without -coverpkg it always reports 0% and would
+          # drag the total down ~0.7pp for no signal. Post-filter it out of the
+          # PROFILE — not the `go test` invocation — so the package still builds
+          # and runs. The mode line (`mode: set`) can't match the pattern, so
+          # keeping it as line 1 via `head -1` is safe. Drop this line if
+          # paritysrc ever grows tests of its own.
+          { head -1 coverage.raw.out; grep -v '/internal/paritysrc/' coverage.raw.out | tail -n +2; } > coverage.out
+          go tool cover -html=coverage.out -o coverage.html
+          TOTAL=$(go tool cover -func=coverage.out | awk '/^total:/ {sub(/%/,"",$3); print $3}')
+          { echo "## Go coverage: ${TOTAL}% (floor ${COVERAGE_FLOOR}%)"
+            echo "_excludes internal/paritysrc (dev-only, no tests of its own)_"
+            echo '```'
+            grep -E 'coverage: ' test-output.txt | grep -v '/internal/paritysrc' || echo '(no per-package coverage lines in test output)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          awk -v t="$TOTAL" -v floor="$COVERAGE_FLOOR" 'BEGIN {
+            if (floor+0 <= 0) { print "::error::COVERAGE_FLOOR is not a positive number: [" floor "]"; exit 1 }
+            if (t+0 < floor+0) { printf "::error::coverage %.1f%% is below the %s%% floor\n", t, floor; exit 1 }
+          }'
+      - name: Upload coverage HTML report
+        uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        with:
+          name: coverage-html
+          path: coverage.html
+          retention-days: 14
   build-agent:
     runs-on: ubuntu-latest
     steps:
