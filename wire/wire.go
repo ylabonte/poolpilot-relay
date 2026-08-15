@@ -1059,3 +1059,10 @@ type UpdateStatusResponse struct {
 	Advisory   *UpdateAdvisory `json:"advisory,omitempty"`
 	LastResult *UpdateResult   `json:"last_result,omitempty"`
 }
+
+// UpdateSettingsRequest is PUT /v1/update — the auto-update toggle, and the
+// whole opt-out mechanism. Auto is a pointer so an absent field is a 400
+// bad_json rather than silently meaning false.
+type UpdateSettingsRequest struct {
+	Auto *bool `json:"auto"`
+}
