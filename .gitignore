@@ -15,3 +15,6 @@ test-output.txt
 # go.work (local multi-module dev against a sibling checkout; never committed)
 go.work
 go.work.sum
+
+# Vendored Claude tooling — gitignored, do not commit
+.claude/
