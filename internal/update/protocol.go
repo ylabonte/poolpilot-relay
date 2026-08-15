@@ -114,7 +114,13 @@ func archLabel(goarch string) (string, error) {
 }
 
 // RuntimeArch maps this binary's runtime.GOARCH onto the release asset arch
-// label, or errors on an architecture no release asset is built for.
+// label, or errors on an architecture no release asset is built for. Self-update
+// targets Linux/systemd relays only: a darwin or windows build (release.yml also
+// ships those) must never enable the updater, or it would stage a linux binary
+// and wedge on a host with no helper or systemd path unit.
 func RuntimeArch() (string, error) {
+	if runtime.GOOS != "linux" {
+		return "", fmt.Errorf("update: self-update is linux-only, not %s", runtime.GOOS)
+	}
 	return archLabel(runtime.GOARCH)
 }
