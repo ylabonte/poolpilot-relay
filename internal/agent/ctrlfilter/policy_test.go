@@ -46,14 +46,6 @@ func doRequest(h http.Handler, method, target string) *httptest.ResponseRecorder
 	return rec
 }
 
-// New is a transparent reverse proxy for a controller: issue #27's "view but
-// don't touch" write deny-list was removed (owner decision — remote access is
-// app-paired-only and a paired device gets the same access it has on the LAN),
-// so every method and path a caller sends is forwarded. WHO reaches this
-// handler is decided by the credential gate in Handler (covered in
-// server_test.go); the only thing New still refuses before forwarding is a
-// non-canonical path (covered in bypass_test.go).
-
 // TestWriteMethodsAreProxied: POST — the shape every real config write takes
 // (ProCon.IP /usrcfg.cgi; VIOLET /setConfig, /triggerManualDosing,
 // /setCanAmount) — now reaches the controller instead of being blocked.

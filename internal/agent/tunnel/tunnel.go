@@ -23,8 +23,8 @@ import (
 
 // ProxySpec is one controller's tunnel: GUID names the proxy ("ctrl-<GUID>")
 // and the public subdomain, LocalAddr is the host:port the proxy forwards to
-// (the controller itself, or — once issue #27's write filter is wired in —
-// the loopback ctrlfilter.Server that stands in front of it). Preset is the
+// (the controller itself, or — once issue #27's authenticated proxy is wired
+// in — the loopback ctrlfilter.Server that stands in front of it). Preset is the
 // controller's vendor identifier (internal/preset); package tunnel itself
 // never reads it (frp doesn't care about vendor), it rides along purely so
 // lanapi.ReconfigureTunnel can hand it, in the same pass that builds these
