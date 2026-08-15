@@ -272,6 +272,26 @@ func TestVersionMismatchRejected(t *testing.T) {
 	w.requestGone(t)
 }
 
+func TestPrePlantedHealthMarkerDoesNotSuppressRollback(t *testing.T) {
+	// A compromised agent pre-plants a health marker for the CORRECT (signed)
+	// version, hoping to fake health for a subtly-broken signed release and
+	// suppress the rollback. The helper clears the marker before restart, so only
+	// a marker the freshly-booted agent writes counts — here nobody writes one,
+	// so the watch times out and rolls back.
+	w := newWorld(t, "v1.4.0")
+	update.WriteJSONAtomic(filepath.Join(w.cfg.UpdateDir, update.HealthFile),
+		update.Health{Version: "v1.4.0", At: time.Now()})
+	if err := Run(w.cfg, w.runner); err != nil {
+		t.Fatal(err)
+	}
+	if res := w.result(t); res.Status != "rolled_back" {
+		t.Fatalf("a pre-planted health marker suppressed rollback: %+v", res)
+	}
+	if got, _ := os.ReadFile(w.cfg.AgentBin); string(got) != "old-agent" {
+		t.Fatal("rollback did not restore old binary")
+	}
+}
+
 func TestReentryPreservesBackup(t *testing.T) {
 	// A crash mid-update that already happened: the NEW binary is installed, the
 	// good OLD binary sits in previous/, and request.json + staging survived so

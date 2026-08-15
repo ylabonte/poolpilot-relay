@@ -107,7 +107,7 @@ func Run(cfg Config, r Runner) error {
 		// first update — nothing to compare against
 	default:
 		slog.Error("read installed-version", "err", err)
-		return reject(cfg, req, "install_failed")
+		return reject(cfg, req, "records_unreadable")
 	}
 	from := installed // best-effort provenance for the result
 
@@ -137,6 +137,12 @@ func Run(cfg Config, r Runner) error {
 			return reject(cfg, req, "install_failed")
 		}
 	}
+	// Clear any pre-existing health marker before restarting: only a marker the
+	// freshly-restarted agent writes (matching req.Version) may satisfy the watch.
+	// The new agent removes it again on boot and rewrites it after 10s, so this is
+	// safe — it just denies a compromised agent a passively pre-planted marker
+	// that would otherwise suppress the rollback safety net.
+	_ = os.Remove(filepath.Join(cfg.UpdateDir, update.HealthFile))
 	if err := r.Restart(cfg.AgentUnit); err != nil {
 		return rollback(cfg, r, req, from, "restart_failed")
 	}
