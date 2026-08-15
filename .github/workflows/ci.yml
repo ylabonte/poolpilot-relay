@@ -80,6 +80,15 @@ jobs:
           # a decision, not a fix.
           COVERAGE_FLOOR: 72
         run: |
+          # Fail loudly if the floor went missing. Consolidating 72 into an env
+          # (instead of an inline `< 72` literal) means awk reads the floor from
+          # the environment, and an EMPTY value makes `floor+0` 0 — i.e. `t < 0`
+          # is false at any coverage and the gate would pass silently at 0%. The
+          # old literal could not degrade that way, so the consolidation gets
+          # these two guards to strictly dominate what it replaced: `:?` catches
+          # empty/unset here, and the awk check below catches a non-numeric or
+          # zero value (which `:?` would happily accept).
+          : "${COVERAGE_FLOOR:?coverage floor not configured}"
           [ -s coverage.raw.out ] || { echo "::error::go test produced no coverage profile"; exit 1; }
           # internal/paritysrc is dev-only glue (it locates the pool-apps sibling
           # checkout for the wire/bands drift guards), executed only from OTHER
@@ -98,7 +107,10 @@ jobs:
             grep -E 'coverage: ' test-output.txt | grep -v '/internal/paritysrc' || echo '(no per-package coverage lines in test output)'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          awk -v t="$TOTAL" -v floor="$COVERAGE_FLOOR" 'BEGIN { if (t+0 < floor+0) { printf "::error::coverage %.1f%% is below the %s%% floor\n", t, floor; exit 1 } }'
+          awk -v t="$TOTAL" -v floor="$COVERAGE_FLOOR" 'BEGIN {
+            if (floor+0 <= 0) { print "::error::COVERAGE_FLOOR is not a positive number: [" floor "]"; exit 1 }
+            if (t+0 < floor+0) { printf "::error::coverage %.1f%% is below the %s%% floor\n", t, floor; exit 1 }
+          }'
       - name: Upload coverage HTML report
         uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
