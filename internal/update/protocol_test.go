@@ -3,8 +3,22 @@ package update
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
+
+// RuntimeArch must refuse every non-Linux GOOS (self-update targets
+// linux/systemd relays only) and accept Linux. Runnable on any platform, so it
+// pins the guard whether CI runs on a Linux container or a macOS host.
+func TestRuntimeArchLinuxOnly(t *testing.T) {
+	_, err := RuntimeArch()
+	if runtime.GOOS == "linux" && err != nil {
+		t.Fatalf("linux must be supported, got error: %v", err)
+	}
+	if runtime.GOOS != "linux" && err == nil {
+		t.Fatalf("non-linux GOOS %q must be refused", runtime.GOOS)
+	}
+}
 
 func TestWriteJSONAtomicAndReadJSON(t *testing.T) {
 	dir := t.TempDir()

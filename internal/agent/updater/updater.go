@@ -405,6 +405,25 @@ func (u *Updater) ingestResult() {
 	_ = os.Remove(path)
 }
 
+// recordStageFailure surfaces an agent-side staging rejection (bad signature,
+// checksum, or download) to the app via GET /v1/update's last_result. Without
+// it a failed POST /v1/update/apply is invisible: no request.json is written so
+// the helper never runs and never produces a result, and the app's /v1/info
+// poll would just time out indistinguishably from "never tried". "rejected"
+// matches the contract's pre-install-refusal status (§2.2).
+func (u *Updater) recordStageFailure(version string) {
+	if err := u.store.Update(func(s *state.State) {
+		s.Update.LastResult = &wire.UpdateResult{
+			Status:     "rejected",
+			To:         version,
+			Error:      "stage_failed",
+			FinishedAt: u.now().UTC().Format(time.RFC3339),
+		}
+	}); err != nil {
+		slog.Error("persist stage failure", "err", err)
+	}
+}
+
 // mapAdvisory converts the control-plane advisory to the app-facing wire shape.
 func mapAdvisory(a *cloud.UpdateAdvisory) *wire.UpdateAdvisory {
 	if a == nil {

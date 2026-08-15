@@ -242,6 +242,11 @@ func TestApplyRejectsTamperedBinaryAndLeavesNoRequest(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(e.dir, update.StagingDir)); !os.IsNotExist(err) {
 		t.Fatal("staging dir must be removed after a failed stage")
 	}
+	// The failure must be visible to the app, or a manual "Update now" 202s and
+	// then silently dies.
+	if got := e.u.Status(); got.LastResult == nil || got.LastResult.Status != "rejected" || got.LastResult.To != "v1.4.0" {
+		t.Fatalf("a failed stage must surface a rejected last_result: %+v", got.LastResult)
+	}
 }
 
 func TestBadVersionIsSkipped(t *testing.T) {

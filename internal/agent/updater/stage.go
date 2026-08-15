@@ -39,9 +39,10 @@ func (u *Updater) Apply() error {
 	// Stage in the background. A multi-MB download over a home uplink can take
 	// minutes, and neither POST /v1/update/apply (which must return 202 promptly
 	// so the app can poll /v1/info, per contract §3.3) nor the Run loop may block
-	// on it. A staging failure (bad signature, download error) surfaces on the
-	// next status poll — version unchanged, or a helper result — never as a
-	// synchronous error to the caller.
+	// on it. The staging context is deliberately detached from the request/Run
+	// context so it outlives the call that triggered it; a shutdown mid-stage is
+	// safe — request.json is committed atomically, the helper is independent, and
+	// a partial staging dir is removed at the start of the next stage.
 	go func() {
 		defer func() {
 			u.mu.Lock()
@@ -49,7 +50,10 @@ func (u *Updater) Apply() error {
 			u.mu.Unlock()
 		}()
 		if err := u.stage(available); err != nil {
+			// Surface the failure to the app (it cannot see the goroutine), then
+			// leave no request so nothing installs.
 			slog.Warn("stage update failed", "version", available, "err", err)
+			u.recordStageFailure(available)
 		}
 	}()
 	return nil
