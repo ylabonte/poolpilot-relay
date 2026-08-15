@@ -60,7 +60,10 @@ func newWorld(t *testing.T, tag string) *world {
 	newBin := []byte("new-agent-" + tag)
 	os.WriteFile(filepath.Join(staging, "poolpilot-relay_linux_arm64"), newBin, 0o600)
 	sum := sha(t, newBin)
-	sums := []byte(sum + "  poolpilot-relay_linux_arm64\n")
+	// The release version rides in the SIGNED manifest (release.yml appends this
+	// line), so the helper reads an authenticated version instead of trusting
+	// request.json.
+	sums := []byte(sum + "  poolpilot-relay_linux_arm64\n# poolpilot-relay-version " + tag + "\n")
 	os.WriteFile(filepath.Join(staging, "sha256sums.txt"), sums, 0o600)
 	os.WriteFile(filepath.Join(staging, "sha256sums.txt.minisig"), minisign.Sign(sk, sums), 0o600)
 	update.WriteJSONAtomic(filepath.Join(upd, update.RequestFile),
@@ -238,5 +241,56 @@ func TestUnitFailedRollsBackImmediately(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(w.cfg.AgentBin); string(got) != "old-agent" {
 		t.Fatal("rollback did not restore old binary")
+	}
+}
+
+func TestVersionMismatchRejected(t *testing.T) {
+	// A compromised agent stages a genuinely-signed OLD release but lies in
+	// request.json (a higher version) to bypass the monotonicity floor and force
+	// a downgrade. The version is bound into the SIGNED manifest, so the lie is
+	// caught — even with a pre-planted health marker to try to win the race.
+	w := newWorld(t, "v1.4.0")
+	update.WriteJSONAtomic(filepath.Join(w.cfg.UpdateDir, update.RequestFile),
+		update.Request{Version: "v9.9.9", Binary: "poolpilot-relay_linux_arm64"})
+	update.WriteJSONAtomic(filepath.Join(w.cfg.UpdateDir, update.HealthFile),
+		update.Health{Version: "v9.9.9", At: time.Now()})
+	if err := Run(w.cfg, w.runner); err != nil {
+		t.Fatal(err)
+	}
+	if res := w.result(t); res.Status != "rejected" {
+		t.Fatalf("version lie accepted: %+v", res)
+	}
+	if got, _ := os.ReadFile(w.cfg.AgentBin); string(got) != "old-agent" {
+		t.Fatal("binary must be untouched when request.version != the signed release version")
+	}
+	if len(w.runner.restarts) != 0 {
+		t.Fatal("no restart on a version-mismatch reject")
+	}
+	if _, err := os.Stat(filepath.Join(w.cfg.RecordsDir, "installed-version")); !os.IsNotExist(err) {
+		t.Fatal("a rejected version lie must not poison the monotonicity floor")
+	}
+	w.requestGone(t)
+}
+
+func TestReentryPreservesBackup(t *testing.T) {
+	// A crash mid-update that already happened: the NEW binary is installed, the
+	// good OLD binary sits in previous/, and request.json + staging survived so
+	// the .path unit re-fires on reboot. The re-entry must NOT re-back-up (which
+	// would overwrite the good backup with the new binary), so a subsequent
+	// health failure still rolls back to the GOOD old binary.
+	w := newWorld(t, "v1.4.0")
+	os.WriteFile(w.cfg.AgentBin, []byte("new-agent-v1.4.0"), 0o755) // already installed
+	prev := filepath.Join(w.cfg.RecordsDir, "previous")
+	os.MkdirAll(prev, 0o755)
+	os.WriteFile(filepath.Join(prev, "poolpilot-relay"), []byte("old-agent"), 0o755) // good backup
+	// Nobody writes health.json → the already-installed binary fails its watch.
+	if err := Run(w.cfg, w.runner); err != nil {
+		t.Fatal(err)
+	}
+	if res := w.result(t); res.Status != "rolled_back" {
+		t.Fatalf("expected rollback: %+v", res)
+	}
+	if got, _ := os.ReadFile(w.cfg.AgentBin); string(got) != "old-agent" {
+		t.Fatalf("rollback restored the wrong binary — the good backup was clobbered on re-entry: %q", got)
 	}
 }

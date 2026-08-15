@@ -74,6 +74,14 @@ jobs:
           cp deploy/relay/poolpilot-relay-updater.service dist/
           cp deploy/relay/poolpilot-relay-updater.path dist/
           (cd dist && sha256sum * > sha256sums.txt)
+          # Bind the release version into the SIGNED manifest so the privileged
+          # helper reads an AUTHENTICATED version instead of trusting the
+          # agent-written request.json — otherwise a compromised agent lies about
+          # the version to bypass the roll-forward monotonicity gate and force a
+          # downgrade to a signed-but-vulnerable release. Appended after the
+          # checksums: AssetSum ignores this non-"<hash>  <name>" line and the
+          # installer greps per-asset, so sha256sum -c never sees it.
+          echo "# poolpilot-relay-version ${VERSION}" >> dist/sha256sums.txt
 
       - name: Sign checksums
         env:

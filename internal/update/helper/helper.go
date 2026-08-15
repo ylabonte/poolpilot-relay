@@ -80,30 +80,62 @@ func Run(cfg Config, r Runner) error {
 		return reject(cfg, req, "verify_failed")
 	}
 
-	// Monotonicity: refuse anything not strictly newer than the recorded install
-	// (roll-forward only). Absent record → first update, accept and seed.
-	installed, err := installedVersion(cfg)
-	if err == nil && !newer(req.Version, installed) {
-		return reject(cfg, req, "not_newer")
+	// Bind the requested version to the SIGNED manifest. request.json is written
+	// by the sandboxed (possibly compromised) agent, but the version rides in
+	// sha256sums.txt, which the release key signs — so a version that does not
+	// match the signed release is a lying agent trying to bypass the roll-forward
+	// floor (a downgrade to a signed-but-vulnerable release). Refuse it; this is
+	// what makes the monotonicity check the real defense the design (§3) claims.
+	sv, verr := signedVersion(work)
+	if verr != nil || req.Version != sv {
+		slog.Error("request version does not match the signed release",
+			"requested", req.Version, "signed", sv, "err", verr)
+		return reject(cfg, req, "version_mismatch")
 	}
 
-	// Self-replace the helper first when a newer one shipped.
-	if req.Helper != "" {
-		if err := installAtomic(filepath.Join(work, req.Helper), cfg.HelperBin); err != nil {
-			slog.Error("install helper", "err", err)
+	// Monotonicity: refuse anything not strictly newer than the recorded install
+	// (roll-forward only). Absent record → first update, accept and seed. An
+	// unreadable record fails CLOSED — skipping the guard on an I/O glitch would
+	// let a downgrade through.
+	installed, err := installedVersion(cfg)
+	switch {
+	case err == nil:
+		if !newer(req.Version, installed) {
+			return reject(cfg, req, "not_newer")
+		}
+	case errors.Is(err, os.ErrNotExist):
+		// first update — nothing to compare against
+	default:
+		slog.Error("read installed-version", "err", err)
+		return reject(cfg, req, "install_failed")
+	}
+	from := installed // best-effort provenance for the result
+
+	// Re-entry guard: if a prior attempt already installed this exact binary (the
+	// helper died between install and health, and the surviving request.json
+	// re-fired the .path unit on reboot), the current agent binary IS the new
+	// one. Backing it up now would overwrite the good previous/ backup with the
+	// new binary and defeat rollback — so skip backup + install and re-run only
+	// the restart + health watch, preserving the backup the first attempt took.
+	if alreadyInstalled(cfg.AgentBin, filepath.Join(work, req.Binary)) {
+		slog.Warn("update already installed (re-entry after an interrupted attempt) — re-running restart + health watch")
+	} else {
+		// Self-replace the helper first when a newer one shipped.
+		if req.Helper != "" {
+			if err := installAtomic(filepath.Join(work, req.Helper), cfg.HelperBin); err != nil {
+				slog.Error("install helper", "err", err)
+				return reject(cfg, req, "install_failed")
+			}
+		}
+		if err := backupAgent(cfg); err != nil {
+			slog.Error("backup agent", "err", err)
 			return reject(cfg, req, "install_failed")
 		}
-	}
-
-	from := installed // best-effort provenance for the result
-	if err := backupAgent(cfg); err != nil {
-		slog.Error("backup agent", "err", err)
-		return reject(cfg, req, "install_failed")
-	}
-	if err := installAtomic(filepath.Join(work, req.Binary), cfg.AgentBin); err != nil {
-		// installAtomic is write-then-rename, so the old binary is still in place.
-		slog.Error("install agent", "err", err)
-		return reject(cfg, req, "install_failed")
+		if err := installAtomic(filepath.Join(work, req.Binary), cfg.AgentBin); err != nil {
+			// installAtomic is write-then-rename, so the old binary is still in place.
+			slog.Error("install agent", "err", err)
+			return reject(cfg, req, "install_failed")
+		}
 	}
 	if err := r.Restart(cfg.AgentUnit); err != nil {
 		return rollback(cfg, r, req, from, "restart_failed")
@@ -144,6 +176,37 @@ func installedVersion(cfg Config) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(b)), nil
+}
+
+// signedVersion extracts the release version from the (already
+// signature-verified) manifest: release.yml appends a
+// "# poolpilot-relay-version vX.Y.Z" line to sha256sums.txt, so the version is
+// authenticated by the same key as the binaries. The helper never trusts the
+// agent-written request.json version for a security decision.
+func signedVersion(work string) (string, error) {
+	sums, err := os.ReadFile(filepath.Join(work, "sha256sums.txt"))
+	if err != nil {
+		return "", err
+	}
+	const marker = "# poolpilot-relay-version "
+	for _, line := range strings.Split(string(sums), "\n") {
+		if v, ok := strings.CutPrefix(line, marker); ok {
+			if v = strings.TrimSpace(v); v != "" {
+				return v, nil
+			}
+			return "", fmt.Errorf("helper: empty version in signed manifest")
+		}
+	}
+	return "", fmt.Errorf("helper: no version line in signed manifest")
+}
+
+// alreadyInstalled reports whether the installed binary is byte-identical to the
+// staged one (same sha256) — i.e. a prior attempt already installed it. Any read
+// error means "not the same", so the caller falls through to a normal install.
+func alreadyInstalled(installedBin, stagedBin string) bool {
+	a, err1 := update.FileSHA256(installedBin)
+	b, err2 := update.FileSHA256(stagedBin)
+	return err1 == nil && err2 == nil && a == b
 }
 
 // copyStaging copies ONLY the allowlisted names into a fresh private dir, opening
@@ -268,7 +331,16 @@ func installAtomic(src, dst string) error {
 		_ = os.Remove(tmp)
 		return err
 	}
-	return os.Rename(tmp, dst)
+	if err := os.Rename(tmp, dst); err != nil {
+		return err
+	}
+	// fsync the containing directory so the rename itself (not just the file
+	// bytes) survives a crash.
+	if d, derr := os.Open(filepath.Dir(dst)); derr == nil {
+		_ = d.Sync()
+		_ = d.Close()
+	}
+	return nil
 }
 
 // healthy polls for a health.json whose Version matches want — an existence
