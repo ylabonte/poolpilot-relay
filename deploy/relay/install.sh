@@ -224,11 +224,13 @@ main() {
   fi
   echo "  - install the verified binary to ${BIN}"
   echo "  - write a default config to ${CONFIG} (only if none exists yet)"
-  echo "  - install + enable the systemd service ${UNIT}"
+  echo "  - install the systemd service ${UNIT}"
   if [ -n "$UPDATER_ASSETS" ]; then
     echo "  - install the self-update helper to /usr/local/bin/poolpilot-relay-updater"
-    echo "  - install + enable its systemd path/oneshot units (auto-update; opt out in ${CONFIG})"
+    echo "  - install its systemd path/oneshot units (auto-update; opt out in ${CONFIG})"
   fi
+  echo "  - reload systemd, then enable + start the service (and the update watcher)"
+  echo "  - run '${BIN} show-pairing' once to print this device's pairing QR (read-only)"
   if [ -n "$SUDO" ] && [ -z "$HAVE_TTY" ]; then
     echo "No terminal is available for sudo's password prompt — re-run this script as root." >&2
     exit 1
