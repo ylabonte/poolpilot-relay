@@ -3,6 +3,7 @@ package proconip
 import (
 	"context"
 	"io"
+	"log/slog"
 	"math"
 	"net/http"
 	"strconv"
@@ -66,10 +67,16 @@ func (c *Client) FetchControlConfig(ctx context.Context) (map[string]measure.Con
 // fromIni reads the configured setpoint/limits regardless of regulation state,
 // so gating here would silently diverge — the relay would fall back to default
 // bands while the app still shows the configured gauge bands. A degenerate or
-// parked config still fails safely downstream via bandsFromControl's Validate.
+// parked config (all-zero, or Min == Max) is still handled safely downstream:
+// alert.bandsFromControl rejects a non-positive range (Min >= Max), so the
+// caller falls back to default bands — bands.BandsConfig.Validate alone would
+// NOT catch it (a collapsed band is monotonic). Each per-channel drop is logged
+// so an operator can see a flaky INI read (the ProCon.IP's weak-CPU weakness the
+// 250ms spacing guards against), which the whole-fetch error path never surfaces.
 func (c *Client) fetchChannelControl(ctx context.Context, httpClient *http.Client, path string) (measure.ControlConfig, bool) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
 	if err != nil {
+		slog.Warn("control config channel skipped", "path", path, "reason", "build request", "err", err)
 		return measure.ControlConfig{}, false
 	}
 	if c.Username != "" || c.Password != "" {
@@ -77,14 +84,17 @@ func (c *Client) fetchChannelControl(ctx context.Context, httpClient *http.Clien
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
+		slog.Warn("control config channel skipped", "path", path, "reason", "transport", "err", err)
 		return measure.ControlConfig{}, false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		slog.Warn("control config channel skipped", "path", path, "reason", "status", "status", resp.StatusCode)
 		return measure.ControlConfig{}, false
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
+		slog.Warn("control config channel skipped", "path", path, "reason", "read body", "err", err)
 		return measure.ControlConfig{}, false
 	}
 	kv := parseINI(decodeBody(body))
@@ -92,6 +102,8 @@ func (c *Client) fetchChannelControl(ctx context.Context, httpClient *http.Clien
 	min, mok := humanValue(kv["MIN_VAL"])
 	max, xok := humanValue(kv["MAX_VAL"])
 	if !tok || !mok || !xok {
+		slog.Warn("control config channel skipped", "path", path, "reason", "unparseable limits",
+			"target_ok", tok, "min_ok", mok, "max_ok", xok)
 		return measure.ControlConfig{}, false
 	}
 	return measure.ControlConfig{Target: target, Min: min, Max: max}, true
