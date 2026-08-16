@@ -56,28 +56,30 @@ func chemistryTypesFor(presetID string) []string {
 	}
 }
 
-// SeedDefaults returns the factory rule set for a controller preset: one
-// measurement_band rule per banded type the preset measures (notify on "bad"
-// only, OK tolerance pre-filled from DefaultOkTolerance) plus one stale_data
-// watchdog. IDs are stable so app-side edits survive re-seeding decisions later.
-func SeedDefaults(presetID string) []wire.AlertRule {
-	types := chemistryTypesFor(presetID)
-	rules := make([]wire.AlertRule, 0, len(types)+1)
-	for _, t := range types {
-		rules = append(rules, wire.AlertRule{
-			ID:               "default-" + t,
-			Kind:             wire.RuleKindMeasurementBand,
-			Enabled:          true,
-			Source:           "default",
-			MeasurementType:  t,
-			OkTolerance:      DefaultOkTolerance[t],
-			NotifySeverities: []string{string(bands.SeverityBad)},
-			DebouncePolls:    DefaultDebouncePolls,
-			CooldownSeconds:  DefaultCooldownSeconds,
-			NotifyRecovery:   true,
-		})
+// defaultBandRule builds the factory measurement_band rule for one banded type
+// (notify on "bad" only, OK tolerance pre-filled from DefaultOkTolerance). The
+// ID is stable ("default-"+type) so app-side edits and re-seeding decisions can
+// find it later. Shared by SeedDefaults and ReconcileSeed so a rule appended by
+// a reconcile is byte-identical to one produced by a fresh seed.
+func defaultBandRule(t string) wire.AlertRule {
+	return wire.AlertRule{
+		ID:               "default-" + t,
+		Kind:             wire.RuleKindMeasurementBand,
+		Enabled:          true,
+		Source:           "default",
+		MeasurementType:  t,
+		OkTolerance:      DefaultOkTolerance[t],
+		NotifySeverities: []string{string(bands.SeverityBad)},
+		DebouncePolls:    DefaultDebouncePolls,
+		CooldownSeconds:  DefaultCooldownSeconds,
+		NotifyRecovery:   true,
 	}
-	rules = append(rules, wire.AlertRule{
+}
+
+// defaultStaleRule builds the factory stale_data watchdog. Shared by
+// SeedDefaults and ReconcileSeed for the same shape-stability reason.
+func defaultStaleRule() wire.AlertRule {
+	return wire.AlertRule{
 		ID:                "default-stale",
 		Kind:              wire.RuleKindStaleData,
 		Enabled:           true,
@@ -85,8 +87,88 @@ func SeedDefaults(presetID string) []wire.AlertRule {
 		StaleAfterSeconds: DefaultStaleAfterSeconds,
 		CooldownSeconds:   DefaultStaleCooldownSeconds,
 		NotifyRecovery:    true,
-	})
-	return rules
+	}
+}
+
+// SeedDefaults returns the factory rule set for a controller preset: one
+// measurement_band rule per banded type the preset measures (notify on "bad"
+// only, OK tolerance pre-filled from DefaultOkTolerance) plus one stale_data
+// watchdog. IDs are stable so app-side edits survive re-seeding decisions later.
+// It is the nil-input special case of ReconcileSeed, used by the boot/main.go
+// path where a controller has no rules yet.
+func SeedDefaults(presetID string) []wire.AlertRule {
+	return ReconcileSeed(nil, presetID)
+}
+
+// ReconcileSeed brings a controller's rule set in line with the chemistry its
+// preset actually measures, WITHOUT disturbing user edits. Given the current
+// rules and the preset, it:
+//
+//   - keeps every existing rule, EXCEPT it PRUNES a source=="default"
+//     measurement_band rule whose type the preset does not measure (so a
+//     ProCon.IP adopted from a pH+ORP phantom, or converted from a VIOLET,
+//     drops a now-inapplicable default chlorine rule);
+//   - APPENDS a default measurement_band rule for any measured type not already
+//     covered by some rule (so a VIOLET registered into a pH+ORP phantom gains
+//     its chlorine rule — the regression this fixes);
+//   - ensures the stale_data watchdog exists.
+//
+// source=="app" rules are never added, removed, or modified — only the factory
+// "default" band rules are reconciled. Appended rules are byte-identical to a
+// fresh SeedDefaults. Callers that prune must also drop the pruned rules'
+// persisted RuleState (see DropOrphanState) so no orphaned latched alert state
+// remains. Call it at controller registration and on an in-place preset change.
+func ReconcileSeed(rules []wire.AlertRule, presetID string) []wire.AlertRule {
+	types := chemistryTypesFor(presetID)
+	measured := make(map[string]bool, len(types))
+	for _, t := range types {
+		measured[t] = true
+	}
+
+	out := make([]wire.AlertRule, 0, len(rules)+len(types)+1)
+	present := make(map[string]bool, len(types)) // measured types already covered by a band rule
+	haveStale := false
+	for _, r := range rules {
+		if r.Kind == wire.RuleKindMeasurementBand && r.Source == "default" && !measured[r.MeasurementType] {
+			continue // prune a default band rule for a type this preset no longer measures
+		}
+		if r.Kind == wire.RuleKindMeasurementBand && measured[r.MeasurementType] {
+			present[r.MeasurementType] = true // covered by an app OR default rule; don't append a duplicate
+		}
+		if r.Kind == wire.RuleKindStaleData {
+			haveStale = true
+		}
+		out = append(out, r)
+	}
+	for _, t := range types {
+		if !present[t] {
+			out = append(out, defaultBandRule(t))
+		}
+	}
+	if !haveStale {
+		out = append(out, defaultStaleRule())
+	}
+	return out
+}
+
+// DropOrphanState deletes RuleState entries whose rule ID is no longer present
+// in rules, so a rule pruned by ReconcileSeed leaves no latched alert state
+// behind (a former chlorine alert must not stay "active" after its rule is
+// gone). Safe to call with a nil map. Call it right after ReconcileSeed at the
+// same site, on the same controller's AlertState.
+func DropOrphanState(states map[string]*RuleState, rules []wire.AlertRule) {
+	if len(states) == 0 {
+		return
+	}
+	live := make(map[string]struct{}, len(rules))
+	for _, r := range rules {
+		live[r.ID] = struct{}{}
+	}
+	for id := range states {
+		if _, ok := live[id]; !ok {
+			delete(states, id)
+		}
+	}
 }
 
 // ValidateRules enforces the PUT /v1/alert-rules contract (full replace, all

@@ -2,6 +2,7 @@ package alert
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 
@@ -98,6 +99,128 @@ func TestSeedDefaultsVioletIncludesChlorine(t *testing.T) {
 	}
 	if !hasChlorine {
 		t.Error("VIOLET measures free chlorine — its seed must include a chlorine rule")
+	}
+}
+
+func rulesByID(rules []wire.AlertRule) map[string]wire.AlertRule {
+	m := make(map[string]wire.AlertRule, len(rules))
+	for _, r := range rules {
+		m[r.ID] = r
+	}
+	return m
+}
+
+// The blocking finding: a VIOLET registered as the FIRST controller fills the
+// boot-seeded phantom, which pre-VIOLET only ever held pH+ORP defaults. The old
+// `if len(rules)==0` guard then never re-seeded, so the VIOLET silently lacked
+// its chlorine rule. ReconcileSeed must adopt the phantom's rules AND append the
+// missing chlorine band — without duplicating the adopted stale watchdog.
+func TestReconcileSeedVioletIntoPhantomGainsChlorine(t *testing.T) {
+	phantom := SeedDefaults(preset.ProconIP) // what boot seeds for a pre-VIOLET/"" preset: pH, ORP, stale
+	got := ReconcileSeed(phantom, preset.Violet)
+	if err := ValidateRules(got); err != nil {
+		t.Fatalf("reconciled set must validate: %v", err)
+	}
+	by := rulesByID(got)
+	for _, id := range []string{"default-" + bands.TypePH, "default-" + bands.TypeORP, "default-" + bands.TypeChlorine, "default-stale"} {
+		if _, ok := by[id]; !ok {
+			t.Errorf("reconciled VIOLET set missing %q: %+v", id, got)
+		}
+	}
+	// The appended chlorine rule is identical to a fresh seed's.
+	if !reflect.DeepEqual(by["default-"+bands.TypeChlorine], defaultBandRule(bands.TypeChlorine)) {
+		t.Errorf("appended chlorine rule not identical to fresh seed: %+v", by["default-"+bands.TypeChlorine])
+	}
+	// Exactly one stale rule — the adopted one, not a duplicate.
+	stale := 0
+	for _, r := range got {
+		if r.Kind == wire.RuleKindStaleData {
+			stale++
+		}
+	}
+	if stale != 1 {
+		t.Errorf("stale watchdog duplicated by reconcile: %+v", got)
+	}
+}
+
+// The converse: a ProCon.IP adopted/converted from a VIOLET (or from a phantom
+// that somehow carries a default chlorine rule) must DROP the now-inapplicable
+// default chlorine band, and its latched alert state must go with it so no
+// orphaned chlorine alert stays "active".
+func TestReconcileSeedProconPrunesDefaultChlorineAndState(t *testing.T) {
+	rules := SeedDefaults(preset.Violet) // pH, ORP, chlorine, stale
+	states := map[string]*RuleState{
+		"default-" + bands.TypeChlorine: {LastSeverity: "bad", Notified: true, LastNotifiedAt: t0, ActiveSince: t0},
+		"default-" + bands.TypePH:       {LastSeverity: "ok"},
+	}
+
+	got := ReconcileSeed(rules, preset.ProconIP)
+	DropOrphanState(states, got)
+
+	by := rulesByID(got)
+	if _, ok := by["default-"+bands.TypeChlorine]; ok {
+		t.Errorf("ProCon.IP must not keep a default chlorine rule: %+v", got)
+	}
+	for _, id := range []string{"default-" + bands.TypePH, "default-" + bands.TypeORP, "default-stale"} {
+		if _, ok := by[id]; !ok {
+			t.Errorf("reconciled ProCon.IP set missing %q: %+v", id, got)
+		}
+	}
+	// The pruned rule's latched state is gone; a surviving rule's state stays.
+	if _, ok := states["default-"+bands.TypeChlorine]; ok {
+		t.Errorf("orphaned chlorine alert state not dropped: %+v", states)
+	}
+	if _, ok := states["default-"+bands.TypePH]; !ok {
+		t.Errorf("surviving pH rule's state was wrongly dropped: %+v", states)
+	}
+}
+
+// App-authored rules are never added, removed, or modified — reconcile only ever
+// touches source=="default" band rules. An app chlorine rule on a ProCon.IP is
+// kept (the user opted in), and an app rule already covering a measured type
+// suppresses appending a duplicate default for it.
+func TestReconcileSeedNeverTouchesAppRules(t *testing.T) {
+	appPH := wire.AlertRule{ID: "app-ph", Kind: wire.RuleKindMeasurementBand, Enabled: true, Source: "app",
+		MeasurementType: bands.TypePH, NotifySeverities: []string{"bad"}, DebouncePolls: 3, CooldownSeconds: 3600}
+	appORP := wire.AlertRule{ID: "app-orp", Kind: wire.RuleKindMeasurementBand, Enabled: true, Source: "app",
+		MeasurementType: bands.TypeORP, NotifySeverities: []string{"bad"}, DebouncePolls: 3, CooldownSeconds: 3600}
+	appCl := wire.AlertRule{ID: "app-cl", Kind: wire.RuleKindMeasurementBand, Enabled: true, Source: "app",
+		MeasurementType: bands.TypeChlorine, NotifySeverities: []string{"bad"}, DebouncePolls: 3, CooldownSeconds: 3600}
+
+	got := ReconcileSeed([]wire.AlertRule{appPH, appORP, appCl}, preset.ProconIP)
+	by := rulesByID(got)
+
+	// Every app rule survives byte-for-byte.
+	if !reflect.DeepEqual(by["app-ph"], appPH) || !reflect.DeepEqual(by["app-orp"], appORP) || !reflect.DeepEqual(by["app-cl"], appCl) {
+		t.Errorf("app rules mutated by reconcile: %+v", got)
+	}
+	// No default BAND rule was appended — pH+ORP are covered by app rules, and
+	// chlorine is not measured by ProCon.IP so no default chlorine is added.
+	for _, r := range got {
+		if r.Kind == wire.RuleKindMeasurementBand && r.Source == "default" {
+			t.Errorf("reconcile appended a default band rule despite app coverage: %+v", r)
+		}
+	}
+	// The stale watchdog is still ensured.
+	if _, ok := by["default-stale"]; !ok {
+		t.Errorf("stale watchdog not ensured: %+v", got)
+	}
+}
+
+// Reconcile is idempotent: applying it to an already-consistent set is a no-op,
+// so re-registration or a repeated preset write does not churn the rules.
+func TestReconcileSeedIdempotent(t *testing.T) {
+	for _, presetID := range []string{preset.ProconIP, preset.Violet} {
+		once := ReconcileSeed(nil, presetID)
+		twice := ReconcileSeed(once, presetID)
+		if len(once) != len(twice) {
+			t.Fatalf("%s: reconcile not idempotent (len %d → %d)", presetID, len(once), len(twice))
+		}
+		for i := range once {
+			if !reflect.DeepEqual(once[i], twice[i]) {
+				t.Errorf("%s: rule %d changed on second reconcile: %+v vs %+v", presetID, i, once[i], twice[i])
+			}
+		}
 	}
 }
 
