@@ -411,9 +411,23 @@ func TestPutControllersFillsPhantomSlot(t *testing.T) {
 	if ctrls[0].GUID != g1 || ctrls[0].LanAddress != f.controllerAddr() {
 		t.Errorf("filled controller = %+v", ctrls[0])
 	}
-	// The boot-seeded rules are adopted, not replaced by a fresh SeedDefaults.
-	if len(ctrls[0].AlertRules) != 1 || ctrls[0].AlertRules[0].ID != "default-stale" {
-		t.Errorf("phantom slot's boot-seeded rules were not adopted: %+v", ctrls[0].AlertRules)
+	// The phantom's boot-seeded stale rule is ADOPTED (reused, not duplicated),
+	// and the band rules the registered preset measures but the phantom lacked
+	// are RECONCILED in — filling a phantom must never leave a controller
+	// under-seeded (finding #1). ProCon.IP measures pH + ORP, so the filled
+	// controller ends with the adopted stale watchdog plus two band rules.
+	rules := ctrls[0].AlertRules
+	staleCount, bandCount := 0, 0
+	for _, r := range rules {
+		switch r.Kind {
+		case wire.RuleKindStaleData:
+			staleCount++
+		case wire.RuleKindMeasurementBand:
+			bandCount++
+		}
+	}
+	if staleCount != 1 || bandCount != 2 {
+		t.Errorf("phantom fill must adopt the 1 stale rule and reconcile in 2 band rules, got stale=%d band=%d: %+v", staleCount, bandCount, rules)
 	}
 }
 

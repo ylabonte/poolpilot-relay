@@ -923,6 +923,12 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 			c.Password = cfg.Password
 			c.UseHTTPS = cfg.UseHTTPS
 			c.Label = cfg.Label
+			// A preset change (e.g. ProCon.IP↔VIOLET on the same address) changes
+			// which chemistry is measured: reconcile the default band rules to the
+			// new preset and drop any pruned rule's latched state. App rules are
+			// left untouched.
+			c.AlertRules = alert.ReconcileSeed(c.AlertRules, c.Preset)
+			alert.DropOrphanState(c.AlertState, c.AlertRules)
 		})
 		if err != nil {
 			slog.Error("persist controller (dedup update)", "err", err)
@@ -966,9 +972,13 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 		c.GUID = guid
 		c.RemoteURL = remoteURL
 		c.RemoteAPIURL = remoteAPIURL
-		if len(c.AlertRules) == 0 {
-			c.AlertRules = alert.SeedDefaults()
-		}
+		// Reconcile (not just "seed when empty"): filling the boot-seeded phantom
+		// adopts its pH+ORP defaults, and a bare `len==0` guard would then leave a
+		// VIOLET registered as the first controller without its chlorine rule.
+		// ReconcileSeed keeps adopted/app rules, appends the preset's missing band
+		// rules, and prunes now-inapplicable default rules; drop their state too.
+		c.AlertRules = alert.ReconcileSeed(c.AlertRules, c.Preset)
+		alert.DropOrphanState(c.AlertState, c.AlertRules)
 	})
 	if err != nil {
 		slog.Error("persist controller (new)", "err", err)
@@ -1618,7 +1628,7 @@ func (s *Server) controllerStatus(st state.State, c state.Controller, ps tunnel.
 	}
 	for _, r := range snap.Readings {
 		m := wire.Measurement{Type: r.Type, Value: r.Value, Unit: r.Unit, Label: r.Label}
-		if sev, ok := alert.EffectiveSeverity(c.AlertRules, r); ok {
+		if sev, ok := alert.EffectiveSeverity(c.AlertRules, snap.Control, r); ok {
 			m.Severity = sev
 		}
 		cs.Measurements = append(cs.Measurements, m)

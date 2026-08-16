@@ -3,6 +3,7 @@ package poller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,7 +15,10 @@ import (
 	"github.com/ylabonte/poolpilot-relay/bands"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/alert"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/cloud"
+	"github.com/ylabonte/poolpilot-relay/internal/agent/driver"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/state"
+	"github.com/ylabonte/poolpilot-relay/internal/measure"
+	"github.com/ylabonte/poolpilot-relay/preset"
 	"github.com/ylabonte/poolpilot-relay/wire"
 )
 
@@ -144,7 +148,7 @@ func TestTickUnreachableMarksSnapshotAndKeepsStalePipeline(t *testing.T) {
 	if err := st.Update(func(s *state.State) {
 		s.Controllers = []state.Controller{{
 			Preset: "procon-ip", LanAddress: "127.0.0.1:1", GUID: "g1",
-			AlertRules: alert.SeedDefaults(),
+			AlertRules: alert.SeedDefaults(preset.ProconIP),
 		}}
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -389,7 +393,7 @@ func TestTickUnknownPersistedPresetFailsGracefully(t *testing.T) {
 	if err := st.Update(func(s *state.State) {
 		s.Controllers = []state.Controller{{
 			Preset: "frog", LanAddress: lanAddr, GUID: "g1",
-			AlertRules: alert.SeedDefaults(),
+			AlertRules: alert.SeedDefaults(preset.ProconIP),
 		}}
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -436,7 +440,7 @@ func TestTickLegacyEmptyPresetDefaultsToProconIP(t *testing.T) {
 	if err := st.Update(func(s *state.State) {
 		s.Controllers = []state.Controller{{
 			// Preset deliberately left unset, mirroring a migrated v1 document.
-			LanAddress: lanAddr, GUID: "g1", AlertRules: alert.SeedDefaults(),
+			LanAddress: lanAddr, GUID: "g1", AlertRules: alert.SeedDefaults(preset.ProconIP),
 		}}
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -454,3 +458,131 @@ func TestTickLegacyEmptyPresetDefaultsToProconIP(t *testing.T) {
 // bands where every plausible pH value lands in "bad" — forces the fixture's
 // real reading into the bad band deterministically.
 var bandsOverrideAlwaysBad = bands.BandsConfig{Min: -3, OkMin: -2, OkMax: -1, Max: 0}
+
+// fakeDriver is a stand-in controller driver for wiring tests. It returns canned
+// readings and — as a driver.ControlConfigReader — a canned control config or
+// error, so a test can drive the poll → control-fetch → snapshot → Evaluate path
+// deterministically without a real controller (and can make the control fetch
+// error on demand, which the real fail-soft fetch only does on ctx cancel).
+type fakeDriver struct {
+	readings   []measure.Reading
+	control    map[string]measure.ControlConfig
+	controlErr error
+}
+
+func (f fakeDriver) Readings(context.Context) ([]measure.Reading, error) { return f.readings, nil }
+func (f fakeDriver) Probe(context.Context) error                         { return nil }
+func (f fakeDriver) ControlConfig(context.Context) (map[string]measure.ControlConfig, error) {
+	return f.control, f.controlErr
+}
+
+// stubDriver swaps the poller's driver factory to always return drv, restoring
+// the real factory when the test ends.
+func stubDriver(t *testing.T, drv driver.Driver) {
+	t.Helper()
+	prev := newDriver
+	newDriver = func(string, driver.Config) (driver.Driver, error) { return drv, nil }
+	t.Cleanup(func() { newDriver = prev })
+}
+
+// Finding #5: the ControlConfigReader wiring. The poller must type-assert the
+// driver for driver.ControlConfigReader, fetch its control config, stash it on
+// the snapshot, and hand it to Evaluate — so push bands come from the controller
+// rather than the parity defaults. The ORP reading (830) and control here are
+// chosen where the two DISAGREE: controller-derived → bad (past the 820 limit),
+// parity default → warn (< 850). A single tick must therefore emit exactly one
+// "bad" enter alert; deleting `snap.Control = control` in the poller would make
+// Evaluate see nil control, classify 830 as warn, and emit nothing — failing.
+func TestTickUsesControllerDerivedBands(t *testing.T) {
+	control := map[string]measure.ControlConfig{bands.TypeORP: {Target: 700, Min: 600, Max: 820}}
+	stubDriver(t, fakeDriver{
+		readings: []measure.Reading{{Type: bands.TypeORP, Value: 830, Unit: "mV", Label: "Redox"}},
+		control:  control,
+	})
+
+	var alerts []wire.AlertRequest
+	cloudSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req wire.AlertRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		alerts = append(alerts, req)
+		_ = json.NewEncoder(w).Encode(wire.AlertResponse{Delivered: 1})
+	}))
+	defer cloudSrv.Close()
+
+	st, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatalf("state: %v", err)
+	}
+	// An ORP band rule with NO explicit override and the researched default
+	// tolerance — its band is whatever the controller config derives.
+	rule := wire.AlertRule{
+		ID: "r-orp", Kind: wire.RuleKindMeasurementBand, Enabled: true, Source: "default",
+		MeasurementType: bands.TypeORP, OkTolerance: 75, NotifySeverities: []string{"bad"},
+		DebouncePolls: 1, CooldownSeconds: 3600, NotifyRecovery: true,
+	}
+	if err := st.Update(func(s *state.State) {
+		s.Cloud = state.Cloud{BaseURL: cloudSrv.URL, FrpcToken: "tok"}
+		s.Controllers = []state.Controller{{
+			Preset: "procon-ip", LanAddress: "192.0.2.10:80", GUID: "g1",
+			AlertRules: []wire.AlertRule{rule},
+		}}
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	p := New(st, cloud.New(st), time.Minute)
+	p.tick(context.Background())
+
+	// The control config reached the snapshot.
+	if snap := p.Snapshot("g1"); snap.Control[bands.TypeORP] != control[bands.TypeORP] {
+		t.Fatalf("controller control not stashed on snapshot: %+v", snap.Control)
+	}
+	// And Evaluate used it: 830 is bad under the controller band (parity default
+	// would be warn, which this rule does not notify).
+	if len(alerts) != 1 || alerts[0].Transition != wire.TransitionEnter ||
+		alerts[0].Severity != "bad" || alerts[0].MeasurementType != bands.TypeORP {
+		t.Fatalf("want one controller-band bad enter alert, got %+v", alerts)
+	}
+}
+
+// Finding #3: a transient control-config fetch error on an otherwise-successful
+// poll must NOT wipe the last-known-good bands. Tick 1 fetches a good config;
+// tick 2's fetch errors (readings still succeed) and must retain tick 1's
+// Control rather than reset it to nil (which would flap the bands to parity
+// defaults for that poll).
+func TestTickRetainsLastKnownGoodControlOnFetchError(t *testing.T) {
+	configA := map[string]measure.ControlConfig{bands.TypePH: {Target: 7.2, Min: 7.0, Max: 7.6}}
+	readings := []measure.Reading{{Type: bands.TypePH, Value: 7.2, Unit: "pH", Label: "pH"}}
+
+	st, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatalf("state: %v", err)
+	}
+	if err := st.Update(func(s *state.State) {
+		s.Controllers = []state.Controller{{
+			Preset: "procon-ip", LanAddress: "192.0.2.11:80", GUID: "g1",
+		}}
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	p := New(st, cloud.New(st), time.Minute)
+
+	// Tick 1: a healthy control fetch populates the snapshot.
+	stubDriver(t, fakeDriver{readings: readings, control: configA})
+	p.tick(context.Background())
+	if snap := p.Snapshot("g1"); snap.Control[bands.TypePH] != configA[bands.TypePH] {
+		t.Fatalf("tick 1 did not stash control: %+v", snap.Control)
+	}
+
+	// Tick 2: readings still succeed, but the control fetch ERRORS. The previous
+	// good control must survive, not be wiped to nil.
+	stubDriver(t, fakeDriver{readings: readings, controlErr: errors.New("procon INI dropped")})
+	p.tick(context.Background())
+	snap := p.Snapshot("g1")
+	if !snap.Reachable {
+		t.Fatalf("readings succeeded — controller must stay reachable: %+v", snap)
+	}
+	if snap.Control[bands.TypePH] != configA[bands.TypePH] {
+		t.Fatalf("transient control-fetch error wiped last-known-good bands: %+v", snap.Control)
+	}
+}

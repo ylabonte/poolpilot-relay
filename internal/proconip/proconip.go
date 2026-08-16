@@ -132,8 +132,12 @@ func Parse(csv string) (Data, error) {
 }
 
 // Readings extracts the alert-relevant measurements: active electrode and
-// analog columns that classify to a banded measurement type (pH, ORP, chlorine).
-// Temperatures are informational in the apps and carry no alert bands in cut 1.
+// analog columns that classify to a banded measurement type. The ProCon.IP
+// measures only pH and Redox/ORP — its "Chlor" analog input (unit "ppm") is a
+// bare, usually-unwired input that has no real free-chlorine probe behind it,
+// so classifying it as a chlorine reading only ever surfaced a garbage value
+// and a spurious chlorine alert band. Chlorine is a VIOLET measurement, not a
+// ProCon.IP one, so it is excluded here. Temperatures carry no alert bands.
 func (d Data) Readings() []measure.Reading {
 	var out []measure.Reading
 	for _, o := range d.Objects {
@@ -146,6 +150,9 @@ func (d Data) Readings() []measure.Reading {
 		t := bands.Classify(o.Unit, o.Label)
 		if _, banded := bands.Defaults[t]; !banded {
 			continue
+		}
+		if t == bands.TypeChlorine {
+			continue // no real free-chlorine probe on ProCon.IP (see doc above)
 		}
 		out = append(out, measure.Reading{Type: t, Value: o.Value(), Unit: o.Unit, Label: o.Label, Key: strconv.Itoa(o.ID)})
 	}
