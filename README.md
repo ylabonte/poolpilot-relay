@@ -27,3 +27,17 @@ a privileged root helper (`cmd/poolpilot-relay-updater`) independently verifies
 and applies them with automatic rollback, on a nightly schedule you manage from
 the app (or opt out of per device with `UPDATE_DISABLED=1`). Operator runbook:
 [docs/self-update.md](docs/self-update.md).
+
+## Testing
+
+Unit and wire-parity tests use the standard Go toolchain:
+
+```
+go test ./...
+```
+
+The self-update path additionally has a manual, per-architecture end-to-end
+harness — QEMU/cloud-init VMs on amd64/386/armv7/riscv64 that drive the real
+`.path`→helper→install→health-watch→rollback chain. It is run by hand (a
+compensating control for the deliberate no-systemd-e2e gap in CI) and documented
+in [test/self-update-e2e/README.md](test/self-update-e2e/README.md).
