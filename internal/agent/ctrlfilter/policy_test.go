@@ -30,13 +30,13 @@ func newFakeController() *fakeController {
 	return fc
 }
 
-func newFilter(t *testing.T, vendor string, backend *httptest.Server) http.Handler {
+func newFilter(t *testing.T, backend *httptest.Server) http.Handler {
 	t.Helper()
 	u, err := url.Parse(backend.URL)
 	if err != nil {
 		t.Fatalf("parse backend URL: %v", err)
 	}
-	return New(vendor, u)
+	return New(u)
 }
 
 func doRequest(h http.Handler, method, target string) *httptest.ResponseRecorder {
@@ -58,7 +58,7 @@ func TestWriteMethodsAreProxied(t *testing.T) {
 		t.Run(c.vendor+" "+c.method+" "+c.path, func(t *testing.T) {
 			backend := newFakeController()
 			defer backend.Close()
-			h := newFilter(t, c.vendor, backend.Server)
+			h := newFilter(t, backend.Server)
 
 			rec := doRequest(h, c.method, c.path)
 			if rec.Code != http.StatusOK {
@@ -83,7 +83,7 @@ func TestGetBasedControlWritesAreProxied(t *testing.T) {
 		t.Run(c.vendor+" "+c.path, func(t *testing.T) {
 			backend := newFakeController()
 			defer backend.Close()
-			h := newFilter(t, c.vendor, backend.Server)
+			h := newFilter(t, backend.Server)
 
 			rec := doRequest(h, http.MethodGet, c.path)
 			if rec.Code != http.StatusOK {
@@ -99,7 +99,7 @@ func TestGetBasedControlWritesAreProxied(t *testing.T) {
 func TestProconReadEndpointProxied(t *testing.T) {
 	backend := newFakeController()
 	defer backend.Close()
-	h := newFilter(t, preset.ProconIP, backend.Server)
+	h := newFilter(t, backend.Server)
 
 	rec := doRequest(h, http.MethodGet, "/GetState.csv")
 	if rec.Code != http.StatusOK {
@@ -117,7 +117,7 @@ func TestProconReadEndpointProxied(t *testing.T) {
 func TestVioletReadEndpointProxied(t *testing.T) {
 	backend := newFakeController()
 	defer backend.Close()
-	h := newFilter(t, preset.Violet, backend.Server)
+	h := newFilter(t, backend.Server)
 
 	rec := doRequest(h, http.MethodGet, "/getReadings?ALL")
 	if rec.Code != http.StatusOK {
@@ -128,28 +128,26 @@ func TestVioletReadEndpointProxied(t *testing.T) {
 	}
 }
 
-func TestUIRootProxiedForBothVendors(t *testing.T) {
-	for _, vendor := range []string{preset.ProconIP, preset.Violet} {
-		t.Run(vendor, func(t *testing.T) {
-			backend := newFakeController()
-			defer backend.Close()
-			h := newFilter(t, vendor, backend.Server)
+// The proxy is vendor-agnostic (New takes no preset), so the UI root behaves
+// identically for every controller — one case, not one subtest per vendor.
+func TestUIRootProxied(t *testing.T) {
+	backend := newFakeController()
+	defer backend.Close()
+	h := newFilter(t, backend.Server)
 
-			rec := doRequest(h, http.MethodGet, "/")
-			if rec.Code != http.StatusOK {
-				t.Fatalf("GET / = %d, want 200 (view UI must keep working)", rec.Code)
-			}
-			if len(backend.hits) != 1 {
-				t.Fatalf("backend hits = %v, want exactly one", backend.hits)
-			}
-		})
+	rec := doRequest(h, http.MethodGet, "/")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET / = %d, want 200 (view UI must keep working)", rec.Code)
+	}
+	if len(backend.hits) != 1 {
+		t.Fatalf("backend hits = %v, want exactly one", backend.hits)
 	}
 }
 
 func TestHeadIsProxied(t *testing.T) {
 	backend := newFakeController()
 	defer backend.Close()
-	h := newFilter(t, preset.ProconIP, backend.Server)
+	h := newFilter(t, backend.Server)
 
 	if rec := doRequest(h, http.MethodHead, "/GetState.csv"); rec.Code != http.StatusOK {
 		t.Errorf("HEAD /GetState.csv = %d, want 200", rec.Code)

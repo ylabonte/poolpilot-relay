@@ -564,22 +564,18 @@ func TestReconfigureTunnelWithCtrlFilterRewiresLocalAddr(t *testing.T) {
 	if len(cfg.Controllers) != 2 {
 		t.Fatalf("want 2 proxy specs, got %d: %+v", len(cfg.Controllers), cfg.Controllers)
 	}
-	wantPreset := map[string]string{"g1": "procon-ip", "g2": "violet"}
 	for _, spec := range cfg.Controllers {
 		if spec.LocalAddr != filter.Addr {
 			t.Errorf("spec %q local = %q, want the filter's shared addr %q", spec.GUID, spec.LocalAddr, filter.Addr)
 		}
-		if spec.Preset != wantPreset[spec.GUID] {
-			t.Errorf("spec %q preset = %q, want %q", spec.GUID, spec.Preset, wantPreset[spec.GUID])
-		}
 	}
 
 	g1, ok := filter.Lookup("g1")
-	if !ok || g1.Preset != "procon-ip" || g1.BaseURL != "http://192.168.2.3:80" {
+	if !ok || g1.BaseURL != "http://192.168.2.3:80" {
 		t.Errorf("filter target g1 = %+v, ok=%v", g1, ok)
 	}
 	g2, ok := filter.Lookup("g2")
-	if !ok || g2.Preset != "violet" || g2.BaseURL != "https://192.168.2.9:443" {
+	if !ok || g2.BaseURL != "https://192.168.2.9:443" {
 		t.Errorf("filter target g2 = %+v, ok=%v", g2, ok)
 	}
 }
@@ -909,7 +905,7 @@ func TestWebSessionTokenIsRedeemableByTheFilter(t *testing.T) {
 	f.srv.CtrlFilter = filter
 	token := f.pair(t)
 	g1 := putControllerOK(t, f, token, wire.ControllerConfig{Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: "Pool 1"})
-	filter.SetTargets(map[string]ctrlfilter.Target{g1: {Preset: "procon-ip", BaseURL: "http://" + f.controllerAddr()}})
+	filter.SetTargets(map[string]ctrlfilter.Target{g1: {BaseURL: "http://" + f.controllerAddr()}})
 
 	resp, raw := f.do(t, "POST", "/v1/controllers/"+g1+"/web-session", token, nil)
 	if resp.StatusCode != http.StatusOK {
@@ -1010,7 +1006,7 @@ func TestDeviceRevokeKillsLiveWebSessions(t *testing.T) {
 	f.srv.CtrlFilter = filter
 	token, dev1 := f.pairFirst(t)
 	g1 := putControllerOK(t, f, token, wire.ControllerConfig{Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: "Pool 1"})
-	filter.SetTargets(map[string]ctrlfilter.Target{g1: {Preset: "procon-ip", BaseURL: "http://" + f.controllerAddr()}})
+	filter.SetTargets(map[string]ctrlfilter.Target{g1: {BaseURL: "http://" + f.controllerAddr()}})
 
 	// Establish a session the way the app does, and capture the cookie.
 	resp, raw := f.do(t, "POST", "/v1/controllers/"+g1+"/web-session", token, nil)

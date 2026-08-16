@@ -54,7 +54,7 @@ func TestPathNormalizationBypassesAreRejected(t *testing.T) {
 			t.Run(c.vendor+" "+target, func(t *testing.T) {
 				backend := newFakeController()
 				defer backend.Close()
-				h := newFilter(t, c.vendor, backend.Server)
+				h := newFilter(t, backend.Server)
 
 				rec := doRawRequest(t, h, http.MethodGet, target)
 				if rec.Code != http.StatusBadRequest {
@@ -73,14 +73,14 @@ func TestPathNormalizationBypassesAreRejected(t *testing.T) {
 func TestLegitimateReadsStillWorkAfterTheFix(t *testing.T) {
 	backend := newFakeController()
 	defer backend.Close()
-	h := newFilter(t, preset.ProconIP, backend.Server)
+	h := newFilter(t, backend.Server)
 	if rec := doRequest(h, http.MethodGet, "/GetState.csv"); rec.Code != http.StatusOK {
 		t.Errorf("GET /GetState.csv = %d, want 200", rec.Code)
 	}
 
 	backend2 := newFakeController()
 	defer backend2.Close()
-	h2 := newFilter(t, preset.Violet, backend2.Server)
+	h2 := newFilter(t, backend2.Server)
 	if rec := doRequest(h2, http.MethodGet, "/getReadings?ALL"); rec.Code != http.StatusOK {
 		t.Errorf("GET /getReadings?ALL = %d, want 200", rec.Code)
 	}
@@ -93,7 +93,7 @@ func TestLegitimateReadsStillWorkAfterTheFix(t *testing.T) {
 func TestNonCanonicalReadIsAlsoRejected(t *testing.T) {
 	backend := newFakeController()
 	defer backend.Close()
-	h := newFilter(t, preset.ProconIP, backend.Server)
+	h := newFilter(t, backend.Server)
 
 	rec := doRawRequest(t, h, http.MethodGet, "/foo/../GetState.csv")
 	if rec.Code != http.StatusBadRequest {
