@@ -83,6 +83,25 @@ func main() {
 	}
 }
 
+// reconcileControllerSeeds brings every controller's DEFAULT alert rules in line
+// with its own preset and drops any pruned rule's latched state. On a brand-new
+// install it first creates Controller0 so first-boot seeding lands (an empty
+// preset resolves to ProCon.IP's pH+ORP set). It is a store.Update mutator run
+// at boot: ReconcileSeed only ever touches source==default rules (app edits
+// survive) and is idempotent, so an already-consistent set is left unchanged
+// while a legacy install self-heals — e.g. a ProCon.IP still carrying the pre-PR
+// default chlorine rule has it (and its AlertState entry) removed.
+func reconcileControllerSeeds(s *state.State) {
+	if len(s.Controllers) == 0 {
+		s.EnsureController0()
+	}
+	for i := range s.Controllers {
+		c := &s.Controllers[i]
+		c.AlertRules = alert.ReconcileSeed(c.AlertRules, c.Preset)
+		alert.DropOrphanState(c.AlertState, c.AlertRules)
+	}
+}
+
 func run() error {
 	cloudBaseURL := os.Getenv("CLOUD_BASE_URL")
 	if cloudBaseURL == "" {
@@ -102,7 +121,7 @@ func run() error {
 	st := store.Get()
 	slog.Info("agent starting", "version", version, "agent_id", st.AgentID, "state", store.PathName())
 
-	// First boot housekeeping: TLS material + default alert rules.
+	// First boot housekeeping: TLS material.
 	if st.TLS.CertPEM == "" {
 		certPEM, keyPEM, err := tlscert.Generate(st.AgentID)
 		if err != nil {
@@ -114,13 +133,13 @@ func run() error {
 			return err
 		}
 	}
-	if len(st.Controller0().AlertRules) == 0 {
-		if err := store.Update(func(s *state.State) {
-			c0 := s.EnsureController0()
-			c0.AlertRules = alert.SeedDefaults(c0.Preset)
-		}); err != nil {
-			return err
-		}
+	// Reconcile every controller's default alert rules against its own preset on
+	// every boot (a third ReconcileSeed call site beside controller registration
+	// and the in-place preset change). This self-heals a legacy install that
+	// upgraded WITHOUT re-registering: e.g. a pre-PR ProCon.IP still carrying the
+	// dead default chlorine rule gets it pruned and its latched state dropped.
+	if err := store.Update(reconcileControllerSeeds); err != nil {
+		return err
 	}
 	st = store.Get()
 
