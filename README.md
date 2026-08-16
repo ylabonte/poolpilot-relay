@@ -21,3 +21,9 @@ Binaries are published as signed [GitHub Release](https://github.com/ylabonte/po
 assets; the installer verifies each download's SHA-256 checksum (plus a minisign
 signature when `minisign` is present). Which version installs is decided by the
 PoolPilot control plane — so halting a bad release stops fresh installs too.
+
+Once installed, the relay **self-updates**: the agent stages signed releases and
+a privileged root helper (`cmd/poolpilot-relay-updater`) independently verifies
+and applies them with automatic rollback, on a nightly schedule you manage from
+the app (or opt out of per device with `UPDATE_DISABLED=1`). Operator runbook:
+[docs/self-update.md](docs/self-update.md).

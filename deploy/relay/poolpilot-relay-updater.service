@@ -1,0 +1,12 @@
+[Unit]
+Description=PoolPilot Relay privileged update installer
+Documentation=https://github.com/ylabonte/poolpilot-relay
+# Started by poolpilot-relay-updater.path when request.json appears.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/poolpilot-relay-updater
+# Deliberately root and NOT sandboxed: this unit's whole job is to write
+# /usr/local/bin and restart the agent. Its security boundary is the embedded
+# minisign key + the fixed file protocol, not systemd confinement — do not add
+# DynamicUser/ProtectSystem here (that is the AGENT unit's hardening, not this).
