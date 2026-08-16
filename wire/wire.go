@@ -298,7 +298,11 @@ type AlertRule struct {
 	NotifyRecovery  bool  `json:"notify_recovery"`
 }
 
-// AlertRules is the GET/PUT /v1/alert-rules payload.
+// AlertRules is the GET/PUT /v1/alert-rules payload. PUT is a full replace, but
+// source=="default" rules are reconciled against the controller's preset at boot
+// and at registration: dropping a default rule from the PUT list resets it to the
+// factory default on the next reconcile rather than removing it permanently — to
+// suppress a default durably, keep it in the list with enabled:false.
 type AlertRules struct {
 	Rules []AlertRule `json:"rules"`
 }
