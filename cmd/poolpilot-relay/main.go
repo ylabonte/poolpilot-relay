@@ -10,9 +10,9 @@
 //	TUNNEL_LISTEN    loopback HTTP bind the frp api proxy forwards to
 //	                 (default 127.0.0.1:8480) — the tunneled LAN API
 //	CTRL_FILTER_LISTEN loopback HTTP bind every ctrl-<GUID> frp proxy forwards
-//	                 to (default 127.0.0.1:8481) — the "view but don't touch"
-//	                 write filter (issue #27) standing in front of every
-//	                 controller's real address
+//	                 to (default 127.0.0.1:8481) — the authenticated,
+//	                 credential-gated proxy (issue #27) standing in front of
+//	                 every controller's real address
 //	POLL_INTERVAL    controller poll cadence, Go duration (default 60s; e2e: 1s)
 //	MDNS_DISABLED    "1" disables the mDNS announcer (docker/e2e)
 //	FRPS_AUTH_TOKEN  fallback frps transport token when the redeem response
@@ -161,8 +161,8 @@ func run() error {
 		Paired:      st.Paired(),
 		Disabled:    os.Getenv("MDNS_DISABLED") == "1",
 	})
-	// ctrlFilter is the issue #27 "view but don't touch" write filter every
-	// ctrl-<GUID> proxy forwards to instead of the controller itself — see
+	// ctrlFilter is the issue #27 authenticated tunnel gate every ctrl-<GUID>
+	// proxy forwards to instead of the controller itself — see
 	// lanapi.ReconfigureTunnel and package ctrlfilter.
 	ctrlFilter := &ctrlfilter.Server{Addr: ctrlfilter.Listen()}
 	api := &lanapi.Server{

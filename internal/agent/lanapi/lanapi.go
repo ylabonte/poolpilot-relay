@@ -98,10 +98,10 @@ type Server struct {
 	// TunnelAddr is the loopback plain-HTTP bind the frp api proxy forwards to
 	// (TUNNEL_LISTEN). Empty disables the tunnel-facing listener.
 	TunnelAddr string
-	// CtrlFilter is the shared "view but don't touch" write filter (issue
-	// #27) every controller's ctrl-<GUID> proxy forwards to instead of the
-	// controller itself. Nil disables filtering — the ctrl-<GUID> proxy's
-	// LocalAddr falls back to the controller's raw LAN address, unfiltered
+	// CtrlFilter is the shared issue #27 authenticated tunnel gate every
+	// controller's ctrl-<GUID> proxy forwards to instead of the
+	// controller itself. Nil disables the gate — the ctrl-<GUID> proxy's
+	// LocalAddr falls back to the controller's raw LAN address, ungated
 	// (kept only for callers/tests that don't care about ctrlfilter; a real
 	// deployment always wires this in via main.go).
 	CtrlFilter *ctrlfilter.Server
@@ -1449,13 +1449,13 @@ func materializeFrpsCA(caPEM string) (string, error) {
 // materializeFrpsCA and populates tunnel.Config's FrpsCAFile/FrpsServerName —
 // centralizing the CA-pin so both entry points pin identically.
 //
-// filter is the issue #27 "view but don't touch" write filter. When non-nil
+// filter is the issue #27 authenticated tunnel gate. When non-nil
 // (and its Addr is set), every ctrl-<GUID> proxy's LocalAddr is redirected to
 // filter.Addr instead of the controller's own address — mirroring how every
 // api-<GUID> proxy already shares one loopback listener (apiLocalAddr) — and
 // filter's GUID -> Target registry is (re)populated in the same pass with
-// each controller's vendor preset and real base URL, so the shared listener
-// can pick the right per-vendor policy and reverse-proxy to the right
+// each controller's real base URL, so the shared listener can authenticate
+// and reverse-proxy to the right
 // backend per request (demuxed by the tunneled request's Host header — see
 // package ctrlfilter). filter == nil (or an empty Addr) falls back to the
 // pre-#27 passthrough behaviour: LocalAddr is the controller's raw address,
