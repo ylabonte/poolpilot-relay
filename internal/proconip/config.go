@@ -76,7 +76,7 @@ func (c *Client) FetchControlConfig(ctx context.Context) (map[string]measure.Con
 func (c *Client) fetchChannelControl(ctx context.Context, httpClient *http.Client, path string) (measure.ControlConfig, bool) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
 	if err != nil {
-		slog.Warn("control config channel skipped", "path", path, "reason", "build request", "err", err)
+		slog.Warn("control config channel skipped", "base_url", c.BaseURL, "path", path, "reason", "build request", "err", err)
 		return measure.ControlConfig{}, false
 	}
 	if c.Username != "" || c.Password != "" {
@@ -84,17 +84,17 @@ func (c *Client) fetchChannelControl(ctx context.Context, httpClient *http.Clien
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		slog.Warn("control config channel skipped", "path", path, "reason", "transport", "err", err)
+		slog.Warn("control config channel skipped", "base_url", c.BaseURL, "path", path, "reason", "transport", "err", err)
 		return measure.ControlConfig{}, false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		slog.Warn("control config channel skipped", "path", path, "reason", "status", "status", resp.StatusCode)
+		slog.Warn("control config channel skipped", "base_url", c.BaseURL, "path", path, "reason", "status", "status", resp.StatusCode)
 		return measure.ControlConfig{}, false
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		slog.Warn("control config channel skipped", "path", path, "reason", "read body", "err", err)
+		slog.Warn("control config channel skipped", "base_url", c.BaseURL, "path", path, "reason", "read body", "err", err)
 		return measure.ControlConfig{}, false
 	}
 	kv := parseINI(decodeBody(body))
@@ -102,7 +102,7 @@ func (c *Client) fetchChannelControl(ctx context.Context, httpClient *http.Clien
 	min, mok := humanValue(kv["MIN_VAL"])
 	max, xok := humanValue(kv["MAX_VAL"])
 	if !tok || !mok || !xok {
-		slog.Warn("control config channel skipped", "path", path, "reason", "unparseable limits",
+		slog.Warn("control config channel skipped", "base_url", c.BaseURL, "path", path, "reason", "unparseable limits",
 			"target_ok", tok, "min_ok", mok, "max_ok", xok)
 		return measure.ControlConfig{}, false
 	}
