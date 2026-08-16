@@ -116,7 +116,8 @@ func run() error {
 	}
 	if len(st.Controller0().AlertRules) == 0 {
 		if err := store.Update(func(s *state.State) {
-			s.EnsureController0().AlertRules = alert.SeedDefaults()
+			c0 := s.EnsureController0()
+			c0.AlertRules = alert.SeedDefaults(c0.Preset)
 		}); err != nil {
 			return err
 		}

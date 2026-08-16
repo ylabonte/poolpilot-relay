@@ -12,6 +12,7 @@ import (
 
 	"github.com/ylabonte/poolpilot-relay/bands"
 	"github.com/ylabonte/poolpilot-relay/internal/measure"
+	"github.com/ylabonte/poolpilot-relay/preset"
 	"github.com/ylabonte/poolpilot-relay/wire"
 )
 
@@ -27,16 +28,40 @@ const (
 // the banded ones).
 const SeverityStale = "stale"
 
-// SeedDefaults returns the factory rule set: one measurement_band rule per
-// banded type (notify on "bad" only) plus one stale_data watchdog. IDs are
-// stable so app-side edits survive re-seeding decisions later.
-func SeedDefaults() []wire.AlertRule {
-	types := make([]string, 0, len(bands.Defaults))
-	for t := range bands.Defaults {
-		types = append(types, t)
-	}
-	slices.Sort(types) // map order is random; rule order must be deterministic
+// DefaultOkTolerance is the researched per-type "tolerated deviation from
+// setpoint" the agent applies when a rule carries no explicit OkTolerance. The
+// OK zone around the controller's live setpoint is TARGET ± this value; only
+// crossing the controller's own warn limits pushes an alarm. Sources: pH ±0.2
+// (the "hold pH within 0.2 of target" operating rule — DIN 19643 / PHTA-11);
+// ORP ±75 mV (above the ~±50 mV normal daily swing, and a 75 mV drop from a
+// ~720–750 mV setpoint lands near the WHO ~650 mV adequacy floor — ORP is
+// device-relative, which is why the value is user-tunable per rule); chlorine
+// ±0.5 mg/l (VIOLET; should scale with setpoint — see follow-up).
+var DefaultOkTolerance = map[string]float64{
+	bands.TypePH:       0.2,
+	bands.TypeORP:      75,
+	bands.TypeChlorine: 0.5,
+}
 
+// chemistryTypesFor lists the banded measurement types a controller preset
+// actually measures, so a ProCon.IP is never seeded a chlorine rule it has no
+// probe for. Empty/unknown resolves to ProCon.IP's set, matching the poller's
+// ""→ProCon.IP fallback for pre-VIOLET state files.
+func chemistryTypesFor(presetID string) []string {
+	switch presetID {
+	case preset.Violet:
+		return []string{bands.TypePH, bands.TypeORP, bands.TypeChlorine}
+	default:
+		return []string{bands.TypePH, bands.TypeORP}
+	}
+}
+
+// SeedDefaults returns the factory rule set for a controller preset: one
+// measurement_band rule per banded type the preset measures (notify on "bad"
+// only, OK tolerance pre-filled from DefaultOkTolerance) plus one stale_data
+// watchdog. IDs are stable so app-side edits survive re-seeding decisions later.
+func SeedDefaults(presetID string) []wire.AlertRule {
+	types := chemistryTypesFor(presetID)
 	rules := make([]wire.AlertRule, 0, len(types)+1)
 	for _, t := range types {
 		rules = append(rules, wire.AlertRule{
@@ -45,6 +70,7 @@ func SeedDefaults() []wire.AlertRule {
 			Enabled:          true,
 			Source:           "default",
 			MeasurementType:  t,
+			OkTolerance:      DefaultOkTolerance[t],
 			NotifySeverities: []string{string(bands.SeverityBad)},
 			DebouncePolls:    DefaultDebouncePolls,
 			CooldownSeconds:  DefaultCooldownSeconds,
@@ -85,6 +111,9 @@ func ValidateRules(rules []wire.AlertRule) error {
 					return fmt.Errorf("rule %q: %w", r.ID, err)
 				}
 			}
+			if r.OkTolerance < 0 {
+				return fmt.Errorf("rule %q: ok_tolerance must not be negative", r.ID)
+			}
 			if r.DebouncePolls <= 0 {
 				return fmt.Errorf("rule %q: debounce_polls must be positive", r.ID)
 			}
@@ -110,7 +139,7 @@ func ValidateRules(rules []wire.AlertRule) error {
 // Evaluate runs every enabled measurement_band rule against one poll's
 // readings. It mutates states in place (creating entries as needed) and
 // returns the alerts to push. guid stamps ControllerGUID on the way out.
-func Evaluate(rules []wire.AlertRule, states map[string]*RuleState, readings []measure.Reading, guid string, now time.Time) []wire.AlertRequest {
+func Evaluate(rules []wire.AlertRule, states map[string]*RuleState, readings []measure.Reading, control map[string]measure.ControlConfig, guid string, now time.Time) []wire.AlertRequest {
 	var out []wire.AlertRequest
 	for _, rule := range rules {
 		if rule.Kind != wire.RuleKindMeasurementBand || !rule.Enabled {
@@ -120,7 +149,7 @@ func Evaluate(rules []wire.AlertRule, states map[string]*RuleState, readings []m
 		if !ok {
 			continue // no data for this type — the stale_data rule covers silence
 		}
-		cfg, ok := effectiveBands(rule)
+		cfg, ok := effectiveBands(rule, control)
 		if !ok {
 			continue
 		}
@@ -252,12 +281,13 @@ func EvaluateStale(rules []wire.AlertRule, states map[string]*RuleState, lastSuc
 	return out
 }
 
-// EffectiveSeverity classifies a reading with a rule's bands override (falling
-// back to the parity defaults) — shared with /v1/status measurement rendering.
-func EffectiveSeverity(rules []wire.AlertRule, r measure.Reading) (string, bool) {
+// EffectiveSeverity classifies a reading through the same band precedence as
+// Evaluate (app override → controller-derived → parity defaults) — shared with
+// /v1/status measurement rendering so the status colour matches what would push.
+func EffectiveSeverity(rules []wire.AlertRule, control map[string]measure.ControlConfig, r measure.Reading) (string, bool) {
 	for _, rule := range rules {
 		if rule.Kind == wire.RuleKindMeasurementBand && rule.MeasurementType == r.Type {
-			if cfg, ok := effectiveBands(rule); ok {
+			if cfg, ok := effectiveBands(rule, control); ok {
 				return string(cfg.Banded().SeverityAt(r.Value)), true
 			}
 		}
@@ -268,12 +298,54 @@ func EffectiveSeverity(rules []wire.AlertRule, r measure.Reading) (string, bool)
 	return "", false
 }
 
-func effectiveBands(rule wire.AlertRule) (bands.BandsConfig, bool) {
+// effectiveBands resolves the band a rule evaluates against, in precedence
+// order: an explicit app override (rule.Bands) wins; else the controller's live
+// config derives min/max = its warn limits and ok = setpoint ± tolerance; else
+// the parity defaults are the last resort (controller config unavailable).
+func effectiveBands(rule wire.AlertRule, control map[string]measure.ControlConfig) (bands.BandsConfig, bool) {
 	if rule.Bands != nil {
 		return *rule.Bands, true
 	}
+	if cc, ok := control[rule.MeasurementType]; ok {
+		if cfg, ok := bandsFromControl(cc, toleranceFor(rule)); ok {
+			return cfg, true
+		}
+	}
 	cfg, ok := bands.Defaults[rule.MeasurementType]
 	return cfg, ok
+}
+
+// toleranceFor is the rule's OK tolerance, or the researched per-type default
+// when the rule sets none (0/absent).
+func toleranceFor(rule wire.AlertRule) float64 {
+	if rule.OkTolerance > 0 {
+		return rule.OkTolerance
+	}
+	return DefaultOkTolerance[rule.MeasurementType]
+}
+
+// bandsFromControl derives the bad/warn/ok/warn/bad band from a controller's
+// live config: min/max are the controller's own warn limits, and the OK zone is
+// setpoint ± tol clamped inside those limits. It returns false for an unusable
+// config (non-positive tolerance, inverted limits, or a setpoint so far outside
+// the limits that the clamp degenerates) so the caller falls back to defaults.
+func bandsFromControl(cc measure.ControlConfig, tol float64) (bands.BandsConfig, bool) {
+	if tol <= 0 || cc.Min > cc.Max {
+		return bands.BandsConfig{}, false
+	}
+	okMin := cc.Target - tol
+	if okMin < cc.Min {
+		okMin = cc.Min
+	}
+	okMax := cc.Target + tol
+	if okMax > cc.Max {
+		okMax = cc.Max
+	}
+	cfg := bands.BandsConfig{Min: cc.Min, OkMin: okMin, OkMax: okMax, Max: cc.Max}
+	if cfg.Validate() != nil {
+		return bands.BandsConfig{}, false
+	}
+	return cfg, true
 }
 
 func ensureState(states map[string]*RuleState, id string) *RuleState {

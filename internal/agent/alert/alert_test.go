@@ -7,6 +7,7 @@ import (
 
 	"github.com/ylabonte/poolpilot-relay/bands"
 	"github.com/ylabonte/poolpilot-relay/internal/measure"
+	"github.com/ylabonte/poolpilot-relay/preset"
 	"github.com/ylabonte/poolpilot-relay/wire"
 )
 
@@ -32,13 +33,15 @@ func phReading(v float64) []measure.Reading {
 // poll runs one Evaluate step and returns the emitted alerts.
 func poll(t *testing.T, rules []wire.AlertRule, states map[string]*RuleState, v float64, n int) []wire.AlertRequest {
 	t.Helper()
-	return Evaluate(rules, states, phReading(v), guid, tick(n))
+	return Evaluate(rules, states, phReading(v), nil, guid, tick(n))
 }
 
 func TestSeedDefaults(t *testing.T) {
-	rules := SeedDefaults()
-	if len(rules) != len(bands.Defaults)+1 {
-		t.Fatalf("rule count = %d, want one per banded type + stale", len(rules))
+	rules := SeedDefaults(preset.ProconIP)
+	// ProCon.IP measures pH + Redox only — no chlorine probe, so no chlorine
+	// rule — plus the stale watchdog.
+	if len(rules) != 3 {
+		t.Fatalf("rule count = %d, want pH + ORP + stale for ProCon.IP", len(rules))
 	}
 	if err := ValidateRules(rules); err != nil {
 		t.Fatalf("seeded defaults must validate: %v", err)
@@ -46,6 +49,9 @@ func TestSeedDefaults(t *testing.T) {
 	byID := map[string]wire.AlertRule{}
 	for _, r := range rules {
 		byID[r.ID] = r
+	}
+	if _, ok := byID["default-"+bands.TypeChlorine]; ok {
+		t.Error("ProCon.IP must not be seeded a chlorine rule")
 	}
 	ph, ok := byID["default-"+bands.TypePH]
 	if !ok {
@@ -57,7 +63,10 @@ func TestSeedDefaults(t *testing.T) {
 		t.Errorf("pH default shape: %+v", ph)
 	}
 	if ph.Bands != nil {
-		t.Error("default rules derive bands from the parity table, not a frozen copy")
+		t.Error("default rules derive bands from the controller/parity table, not a frozen copy")
+	}
+	if ph.OkTolerance != DefaultOkTolerance[bands.TypePH] {
+		t.Errorf("pH OkTolerance = %v, want researched default %v", ph.OkTolerance, DefaultOkTolerance[bands.TypePH])
 	}
 	stale, ok := byID["default-stale"]
 	if !ok {
@@ -67,12 +76,28 @@ func TestSeedDefaults(t *testing.T) {
 		stale.CooldownSeconds != 86400 || !stale.NotifyRecovery {
 		t.Errorf("stale default shape: %+v", stale)
 	}
-	// Determinism (map iteration must not leak into rule order).
-	again := SeedDefaults()
+	// Determinism (rule order must be stable across calls).
+	again := SeedDefaults(preset.ProconIP)
 	for i := range rules {
 		if rules[i].ID != again[i].ID {
 			t.Fatalf("rule order not deterministic: %v vs %v", rules[i].ID, again[i].ID)
 		}
+	}
+}
+
+func TestSeedDefaultsVioletIncludesChlorine(t *testing.T) {
+	rules := SeedDefaults(preset.Violet)
+	if err := ValidateRules(rules); err != nil {
+		t.Fatalf("VIOLET seeded defaults must validate: %v", err)
+	}
+	var hasChlorine bool
+	for _, r := range rules {
+		if r.MeasurementType == bands.TypeChlorine {
+			hasChlorine = true
+		}
+	}
+	if !hasChlorine {
+		t.Error("VIOLET measures free chlorine — its seed must include a chlorine rule")
 	}
 }
 
@@ -254,7 +279,7 @@ func TestDisabledRuleAndMissingReadingAreSilent(t *testing.T) {
 	states := map[string]*RuleState{}
 
 	for n := 1; n <= 5; n++ {
-		got := Evaluate([]wire.AlertRule{disabled, orp}, states, phReading(7.9), guid, tick(n))
+		got := Evaluate([]wire.AlertRule{disabled, orp}, states, phReading(7.9), nil, guid, tick(n))
 		if len(got) != 0 {
 			t.Fatalf("disabled/missing-reading rules emitted: %+v", got)
 		}
@@ -357,11 +382,11 @@ func TestRebootSafetyRoundTrip(t *testing.T) {
 
 	// Still bad right after reboot: must NOT re-enter or renotify (cooldown
 	// timestamp survived the round trip).
-	if got := Evaluate(rules, restored, phReading(7.9), guid, tick(10)); len(got) != 0 {
+	if got := Evaluate(rules, restored, phReading(7.9), nil, guid, tick(10)); len(got) != 0 {
 		t.Fatalf("reboot re-notified early: %+v", got)
 	}
 	// Cooldown continuity: renotify fires relative to the pre-reboot notify.
-	got := Evaluate(rules, restored, phReading(7.9), guid, tick(3).Add(21601*time.Second))
+	got := Evaluate(rules, restored, phReading(7.9), nil, guid, tick(3).Add(21601*time.Second))
 	if len(got) != 1 || got[0].Transition != wire.TransitionRenotify {
 		t.Fatalf("cooldown lost across reboot: %+v", got)
 	}
@@ -376,7 +401,7 @@ func TestRebootSafetyRoundTrip(t *testing.T) {
 	raw2, _ := json.Marshal(states2)
 	restored2 := map[string]*RuleState{}
 	_ = json.Unmarshal(raw2, &restored2)
-	got = Evaluate(rules, restored2, phReading(7.2), guid, tick(6))
+	got = Evaluate(rules, restored2, phReading(7.2), nil, guid, tick(6))
 	if len(got) != 1 || got[0].Transition != wire.TransitionRecover {
 		t.Fatalf("pending debounce count lost across reboot: %+v", got)
 	}
@@ -389,7 +414,8 @@ func TestValidateRules(t *testing.T) {
 		rules   []wire.AlertRule
 		wantErr bool
 	}{
-		{"valid defaults", SeedDefaults(), false},
+		{"valid defaults", SeedDefaults(preset.ProconIP), false},
+		{"negative ok_tolerance", []wire.AlertRule{func() wire.AlertRule { r := valid; r.OkTolerance = -1; return r }()}, true},
 		{"valid single", []wire.AlertRule{valid}, false},
 		{"empty set is a valid full replace", nil, false},
 		{"missing id", []wire.AlertRule{func() wire.AlertRule { r := valid; r.ID = ""; return r }()}, true},
@@ -425,14 +451,87 @@ func TestEffectiveSeverity(t *testing.T) {
 	override.Bands = &bands.BandsConfig{Min: 6.0, OkMin: 6.5, OkMax: 8.5, Max: 9.0}
 	r := measure.Reading{Type: bands.TypePH, Value: 7.9}
 
-	if sev, ok := EffectiveSeverity([]wire.AlertRule{override}, r); !ok || sev != "ok" {
+	if sev, ok := EffectiveSeverity([]wire.AlertRule{override}, nil, r); !ok || sev != "ok" {
 		t.Errorf("override severity = %q, %v", sev, ok)
 	}
-	if sev, ok := EffectiveSeverity(nil, r); !ok || sev != "bad" {
+	if sev, ok := EffectiveSeverity(nil, nil, r); !ok || sev != "bad" {
 		t.Errorf("default severity = %q, %v", sev, ok)
 	}
-	if _, ok := EffectiveSeverity(nil, measure.Reading{Type: "generic", Value: 1}); ok {
+	if _, ok := EffectiveSeverity(nil, nil, measure.Reading{Type: "generic", Value: 1}); ok {
 		t.Error("unbanded type must report no severity")
+	}
+}
+
+func TestBandsFromControl(t *testing.T) {
+	cc := measure.ControlConfig{Target: 760, Min: 200, Max: 900}
+	got, ok := bandsFromControl(cc, 75)
+	if want := (bands.BandsConfig{Min: 200, OkMin: 685, OkMax: 835, Max: 900}); !ok || got != want {
+		t.Errorf("derived band = %+v,%v want %+v", got, ok, want)
+	}
+	// A tolerance wider than the limits clamps the OK zone to [min,max].
+	if b, ok := bandsFromControl(cc, 1000); !ok || b.OkMin != 200 || b.OkMax != 900 {
+		t.Errorf("wide-tolerance clamp = %+v,%v", b, ok)
+	}
+	// Unusable configs report false so the caller falls back to defaults.
+	if _, ok := bandsFromControl(measure.ControlConfig{Min: 900, Max: 200}, 75); ok {
+		t.Error("inverted limits must not derive a band")
+	}
+	if _, ok := bandsFromControl(cc, 0); ok {
+		t.Error("non-positive tolerance must not derive a band")
+	}
+	if _, ok := bandsFromControl(measure.ControlConfig{Target: 100, Min: 200, Max: 900}, 1); ok {
+		t.Error("setpoint far outside the limits must degrade to fallback")
+	}
+}
+
+func TestToleranceFor(t *testing.T) {
+	if got := toleranceFor(wire.AlertRule{MeasurementType: bands.TypePH, OkTolerance: 0.3}); got != 0.3 {
+		t.Errorf("explicit tolerance = %v, want 0.3", got)
+	}
+	if got := toleranceFor(wire.AlertRule{MeasurementType: bands.TypePH}); got != DefaultOkTolerance[bands.TypePH] {
+		t.Errorf("default tolerance = %v, want %v", got, DefaultOkTolerance[bands.TypePH])
+	}
+}
+
+func TestEffectiveBandsPrecedence(t *testing.T) {
+	control := map[string]measure.ControlConfig{
+		bands.TypeORP: {Target: 760, Min: 200, Max: 900},
+	}
+	rule := wire.AlertRule{Kind: wire.RuleKindMeasurementBand, MeasurementType: bands.TypeORP, OkTolerance: 75}
+
+	// Controller-derived when no explicit override and control is present.
+	if got, ok := effectiveBands(rule, control); !ok || got != (bands.BandsConfig{Min: 200, OkMin: 685, OkMax: 835, Max: 900}) {
+		t.Errorf("controller-derived band = %+v,%v", got, ok)
+	}
+	// An explicit Bands override wins over the controller.
+	override := rule
+	override.Bands = &bands.BandsConfig{Min: 1, OkMin: 2, OkMax: 3, Max: 4}
+	if got, _ := effectiveBands(override, control); got != *override.Bands {
+		t.Errorf("explicit override must win, got %+v", got)
+	}
+	// No control for the type → parity defaults are the last resort.
+	if got, ok := effectiveBands(rule, nil); !ok || got != bands.Defaults[bands.TypeORP] {
+		t.Errorf("fallback to defaults = %+v,%v", got, ok)
+	}
+}
+
+func TestEffectiveSeverityUsesControllerBands(t *testing.T) {
+	// Controller ORP setpoint 700, limits 600/820, tolerance 75 → ok 625..775.
+	// The parity default is {600,650,800,850}; the values below are chosen where
+	// the two disagree, so a correct verdict proves the controller band is used.
+	control := map[string]measure.ControlConfig{bands.TypeORP: {Target: 700, Min: 600, Max: 820}}
+	rule := wire.AlertRule{ID: "orp", Kind: wire.RuleKindMeasurementBand, Enabled: true, MeasurementType: bands.TypeORP, OkTolerance: 75}
+	rules := []wire.AlertRule{rule}
+
+	// 630: inside the controller ok zone (≥625) → ok; the default ok zone starts
+	// at 650, so the default would call this warn.
+	if sev, ok := EffectiveSeverity(rules, control, measure.Reading{Type: bands.TypeORP, Value: 630}); !ok || sev != "ok" {
+		t.Errorf("630 severity = %q,%v want ok (controller ok zone)", sev, ok)
+	}
+	// 830: past the controller's tighter max limit (820) → bad; the default max
+	// is 850, so the default would call this warn.
+	if sev, _ := EffectiveSeverity(rules, control, measure.Reading{Type: bands.TypeORP, Value: 830}); sev != "bad" {
+		t.Errorf("830 severity = %q want bad (past controller max limit)", sev)
 	}
 }
 

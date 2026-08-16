@@ -26,6 +26,20 @@ type Reading struct {
 	Key string
 }
 
+// ControlConfig is a controller's live regulation config for one measurement
+// type: the dosing setpoint (Target) and the hard warn limits (Min/Max) the
+// controller itself stores. ProCon.IP reads these from its dosing INI files
+// (/usr/rdxcntrl.ini, /usr/phcntrl.ini → TARGET/MIN_VAL/MAX_VAL); the alert
+// engine derives push bands from them — min/max = the controller's limits,
+// ok_min/ok_max = Target ± a tolerance — so the push thresholds track the
+// controller instead of hard-coded defaults. Values are in the reading's own
+// unit (pH units, mV), so they compare directly against Reading.Value.
+type ControlConfig struct {
+	Target float64
+	Min    float64
+	Max    float64
+}
+
 // Sentinel errors every controller driver maps its transport failures onto,
 // regardless of wire format. internal/agent/lanapi's writeProbeErr keys its
 // 422 controller-probe contract directly on these three values — errors.Is

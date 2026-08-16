@@ -46,6 +46,10 @@ type Snapshot struct {
 	LastSuccess time.Time
 	Reachable   bool
 	Readings    []measure.Reading
+	// Control is the controller's live regulation config per measurement type
+	// (setpoint + warn limits) captured this poll, or nil when the driver does
+	// not expose it. /v1/status uses it so its severities match what would push.
+	Control map[string]measure.ControlConfig
 }
 
 // Poller owns the poll loop. Zero-value is not usable; use New.
@@ -84,6 +88,13 @@ func (p *Poller) Snapshot(guid string) Snapshot {
 	defer p.mu.Unlock()
 	snap := p.snaps[guid]
 	snap.Readings = append([]measure.Reading(nil), snap.Readings...)
+	if snap.Control != nil {
+		control := make(map[string]measure.ControlConfig, len(snap.Control))
+		for k, v := range snap.Control {
+			control[k] = v
+		}
+		snap.Control = control
+	}
 	return snap
 }
 
@@ -167,6 +178,20 @@ func (p *Poller) pollController(ctx context.Context, ctrl state.Controller) int 
 	if err == nil {
 		readings, err = drv.Readings(ctx)
 	}
+	// Fetch the controller's live regulation config (setpoint + warn limits)
+	// when the driver exposes it, so the alert engine derives push bands from
+	// the controller instead of hard-coded defaults. Best-effort: a failure
+	// just falls this poll back to default bands for the affected types.
+	var control map[string]measure.ControlConfig
+	if err == nil {
+		if cr, ok := drv.(driver.ControlConfigReader); ok {
+			if cc, cerr := cr.ControlConfig(ctx); cerr != nil {
+				slog.Debug("control config fetch failed", "guid", ctrl.GUID, "err", cerr)
+			} else {
+				control = cc
+			}
+		}
+	}
 
 	p.mu.Lock()
 	snap := p.snaps[ctrl.GUID]
@@ -175,10 +200,12 @@ func (p *Poller) pollController(ctx context.Context, ctrl state.Controller) int 
 	if err == nil {
 		snap.LastSuccess = now
 		snap.Readings = readings
+		snap.Control = control
 	}
 	p.snaps[ctrl.GUID] = snap
 	lastSuccess := snap.LastSuccess
 	readings = snap.Readings
+	control = snap.Control
 	p.mu.Unlock()
 
 	if err != nil {
@@ -193,7 +220,7 @@ func (p *Poller) pollController(ctx context.Context, ctrl state.Controller) int 
 	}
 	var requests []wire.AlertRequest
 	if err == nil {
-		requests = append(requests, alert.Evaluate(ctrl.AlertRules, states, readings, ctrl.GUID, now)...)
+		requests = append(requests, alert.Evaluate(ctrl.AlertRules, states, readings, control, ctrl.GUID, now)...)
 	}
 	requests = append(requests, alert.EvaluateStale(ctrl.AlertRules, states, lastSuccess, ctrl.GUID, now)...)
 

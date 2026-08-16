@@ -15,6 +15,7 @@ import (
 	"github.com/ylabonte/poolpilot-relay/internal/agent/alert"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/cloud"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/state"
+	"github.com/ylabonte/poolpilot-relay/preset"
 	"github.com/ylabonte/poolpilot-relay/wire"
 )
 
@@ -144,7 +145,7 @@ func TestTickUnreachableMarksSnapshotAndKeepsStalePipeline(t *testing.T) {
 	if err := st.Update(func(s *state.State) {
 		s.Controllers = []state.Controller{{
 			Preset: "procon-ip", LanAddress: "127.0.0.1:1", GUID: "g1",
-			AlertRules: alert.SeedDefaults(),
+			AlertRules: alert.SeedDefaults(preset.ProconIP),
 		}}
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -389,7 +390,7 @@ func TestTickUnknownPersistedPresetFailsGracefully(t *testing.T) {
 	if err := st.Update(func(s *state.State) {
 		s.Controllers = []state.Controller{{
 			Preset: "frog", LanAddress: lanAddr, GUID: "g1",
-			AlertRules: alert.SeedDefaults(),
+			AlertRules: alert.SeedDefaults(preset.ProconIP),
 		}}
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -436,7 +437,7 @@ func TestTickLegacyEmptyPresetDefaultsToProconIP(t *testing.T) {
 	if err := st.Update(func(s *state.State) {
 		s.Controllers = []state.Controller{{
 			// Preset deliberately left unset, mirroring a migrated v1 document.
-			LanAddress: lanAddr, GUID: "g1", AlertRules: alert.SeedDefaults(),
+			LanAddress: lanAddr, GUID: "g1", AlertRules: alert.SeedDefaults(preset.ProconIP),
 		}}
 	}); err != nil {
 		t.Fatalf("seed: %v", err)

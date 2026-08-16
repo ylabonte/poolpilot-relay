@@ -967,7 +967,7 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 		c.RemoteURL = remoteURL
 		c.RemoteAPIURL = remoteAPIURL
 		if len(c.AlertRules) == 0 {
-			c.AlertRules = alert.SeedDefaults()
+			c.AlertRules = alert.SeedDefaults(c.Preset)
 		}
 	})
 	if err != nil {
@@ -1618,7 +1618,7 @@ func (s *Server) controllerStatus(st state.State, c state.Controller, ps tunnel.
 	}
 	for _, r := range snap.Readings {
 		m := wire.Measurement{Type: r.Type, Value: r.Value, Unit: r.Unit, Label: r.Label}
-		if sev, ok := alert.EffectiveSeverity(c.AlertRules, r); ok {
+		if sev, ok := alert.EffectiveSeverity(c.AlertRules, snap.Control, r); ok {
 			m.Severity = sev
 		}
 		cs.Measurements = append(cs.Measurements, m)

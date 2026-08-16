@@ -279,10 +279,17 @@ type AlertRule struct {
 	Source string `json:"source"`
 
 	// measurement_band fields.
-	MeasurementType  string             `json:"measurement_type,omitempty"`
-	Bands            *bands.BandsConfig `json:"bands,omitempty"`
-	NotifySeverities []string           `json:"notify_severities,omitempty"` // subset of "warn","bad"
-	DebouncePolls    int                `json:"debounce_polls,omitempty"`
+	MeasurementType string             `json:"measurement_type,omitempty"`
+	Bands           *bands.BandsConfig `json:"bands,omitempty"`
+	// OkTolerance is the user's "tolerated deviation from setpoint" (in the
+	// reading's own unit: pH units, mV). When the agent derives bands from the
+	// controller's live config, the OK zone is setpoint ± OkTolerance; the
+	// controller's own warn limits stay the hard min/max. Zero/absent means the
+	// agent uses its researched per-type default. Ignored when Bands is set (an
+	// explicit full override wins).
+	OkTolerance      float64  `json:"ok_tolerance,omitempty"`
+	NotifySeverities []string `json:"notify_severities,omitempty"` // subset of "warn","bad"
+	DebouncePolls    int      `json:"debounce_polls,omitempty"`
 
 	// stale_data fields.
 	StaleAfterSeconds int64 `json:"stale_after_seconds,omitempty"`

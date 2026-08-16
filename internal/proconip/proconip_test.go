@@ -95,9 +95,12 @@ func TestReadingsClassifyAndGrade(t *testing.T) {
 		t.Errorf("ORP Key: got %q, want %q (CSV column index of the redox object)", orp.Key, "6")
 	}
 
-	// Analog column 4: unit "ppm" + label "Chlor" classifies to chlorine.
-	if _, ok := byType[bands.TypeChlorine]; !ok {
-		t.Error("no chlorine reading extracted from the ppm/Chlor analog column")
+	// Analog column 4 (unit "ppm", label "Chlor") is a bare, usually-unwired
+	// input with no real free-chlorine probe behind it — the ProCon.IP measures
+	// only pH and Redox. It must NOT surface as a chlorine reading (that only
+	// ever produced a garbage value and a spurious chlorine alert band).
+	if _, ok := byType[bands.TypeChlorine]; ok {
+		t.Error("ProCon.IP ppm/Chlor analog column must not surface as a chlorine reading")
 	}
 }
 

@@ -71,6 +71,18 @@ type Driver interface {
 	Probe(ctx context.Context) error
 }
 
+// ControlConfigReader is the optional capability a Driver implements when its
+// controller exposes live regulation config (setpoint + warn limits) the alert
+// engine can derive push bands from. Only the ProCon.IP driver implements it
+// today; the poller type-asserts for it and falls back to the parity default
+// bands for drivers that do not.
+type ControlConfigReader interface {
+	// ControlConfig fetches the controller's live dosing config keyed by
+	// measurement type. It is fail-soft: types the controller does not report
+	// are simply absent from the map.
+	ControlConfig(ctx context.Context) (map[string]measure.ControlConfig, error)
+}
+
 // New builds the Driver for preset p. It returns an error wrapping
 // ErrUnsupportedPreset when p is not a preset.Supported() value.
 func New(p string, cfg Config) (Driver, error) {
@@ -125,6 +137,13 @@ func (d *proconDriver) Readings(ctx context.Context) ([]measure.Reading, error) 
 func (d *proconDriver) Probe(ctx context.Context) error {
 	_, err := d.client.FetchState(ctx)
 	return err
+}
+
+// ControlConfig reads the ProCon.IP's dosing INI files for the live setpoint +
+// warn limits per measurement (see proconip.Client.FetchControlConfig). This
+// is what makes proconDriver a driver.ControlConfigReader.
+func (d *proconDriver) ControlConfig(ctx context.Context) (map[string]measure.ControlConfig, error) {
+	return d.client.FetchControlConfig(ctx)
 }
 
 // violetDriver wraps violet.Client behind the Driver interface.
