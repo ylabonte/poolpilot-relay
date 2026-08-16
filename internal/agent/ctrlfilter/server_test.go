@@ -139,7 +139,7 @@ func TestCrossSiteCookieRequestIsRefused(t *testing.T) {
 	backend := newFakeController()
 	defer backend.Close()
 	srv := &Server{}
-	srv.SetTargets(map[string]Target{"guid1": {Preset: preset.ProconIP, BaseURL: backend.URL}})
+	srv.SetTargets(map[string]Target{"guid1": {BaseURL: backend.URL}})
 	srv.SetSessionKey(testKey)
 
 	// The CSRF vector: a GET control write with a valid Lax cookie, cross-site.
