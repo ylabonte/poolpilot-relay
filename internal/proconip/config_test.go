@@ -39,6 +39,10 @@ func TestParseINIAndHumanValue(t *testing.T) {
 		{"", 0, false, "blank"},
 		{"12160,", 0, false, "empty human half"},
 		{"a,b", 0, false, "non-numeric human half"},
+		{"0,Inf", 0, false, "Inf is non-finite → rejected (would yield an alarm-free band)"},
+		{"Infinity", 0, false, "Infinity is non-finite → rejected"},
+		{"0,-Inf", 0, false, "-Inf is non-finite → rejected"},
+		{"NaN", 0, false, "NaN → rejected"},
 	} {
 		got, ok := humanValue(tc.raw)
 		if ok != tc.wantOK || (ok && got != tc.want) {
@@ -89,14 +93,11 @@ func TestFetchControlConfigFailSoft(t *testing.T) {
 	controlConfigSpacing = 0
 	defer func() { controlConfigSpacing = old }()
 
-	// Redox: auto-regulation OFF (TYPE=0) → omitted. pH: MAX_VAL missing → omitted.
-	rdx := "[RDXCNTRL]\nTYPE=0\nTARGET=12160,760\nMIN_VAL=3200,200\nMAX_VAL=14400,900\n"
+	// A genuinely unparseable channel is omitted: pH here is missing MAX_VAL.
 	ph := "[PHCNTRL]\nTYPE=1\nTARGET=922,7.2\nMIN_VAL=896,7.0\n"
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/usr/rdxcntrl.ini":
-			_, _ = w.Write([]byte(rdx))
 		case "/usr/phcntrl.ini":
 			_, _ = w.Write([]byte(ph))
 		default:
@@ -111,9 +112,45 @@ func TestFetchControlConfigFailSoft(t *testing.T) {
 		t.Fatalf("FetchControlConfig: %v", err)
 	}
 	if _, ok := got[bands.TypeORP]; ok {
-		t.Error("disabled channel (TYPE=0) must be omitted")
+		t.Error("unreachable channel (404) must be omitted")
 	}
 	if _, ok := got[bands.TypePH]; ok {
 		t.Error("channel missing MAX_VAL must be omitted")
+	}
+}
+
+// Finding #2: the relay must NOT gate on TYPE (auto-regulation on/off). The apps'
+// ProconIpControlConfig.fromIni reads the configured setpoint/limits regardless
+// of regulation state, so a TYPE=0 channel with valid limits must still yield a
+// band — gating here would silently diverge from the app's gauge bands.
+func TestFetchControlConfigIgnoresTypeGate(t *testing.T) {
+	old := controlConfigSpacing
+	controlConfigSpacing = 0
+	defer func() { controlConfigSpacing = old }()
+
+	// Auto-regulation OFF (TYPE=0) but the setpoint/limits are all present + valid.
+	rdx := "[RDXCNTRL]\nTYPE=0\nTARGET=12160,760\nMIN_VAL=3200,200\nMAX_VAL=14400,900\n"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/usr/rdxcntrl.ini":
+			_, _ = w.Write([]byte(rdx))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	c := &Client{BaseURL: srv.URL}
+	got, err := c.FetchControlConfig(context.Background())
+	if err != nil {
+		t.Fatalf("FetchControlConfig: %v", err)
+	}
+	orp, ok := got[bands.TypeORP]
+	if !ok {
+		t.Fatal("TYPE=0 channel with valid limits must still yield a band (no TYPE gate)")
+	}
+	if orp.Target != 760 || orp.Min != 200 || orp.Max != 900 {
+		t.Errorf("ORP config = %+v, want {Target:760 Min:200 Max:900}", orp)
 	}
 }

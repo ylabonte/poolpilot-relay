@@ -3,6 +3,7 @@ package proconip
 import (
 	"context"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -33,10 +34,10 @@ var controlChannels = []struct {
 
 // FetchControlConfig reads the controller's live dosing config and returns the
 // setpoint + warn limits per measurement type. It is fail-soft: a channel whose
-// INI is unreachable, disabled (TYPE≠1), or missing TARGET/MIN_VAL/MAX_VAL is
-// simply omitted from the map (the caller falls back to default bands for it),
-// so a partial or empty map is a normal result rather than an error. The only
-// error returned is ctx cancellation during the inter-channel spacing.
+// INI is unreachable or missing/unparseable TARGET/MIN_VAL/MAX_VAL is simply
+// omitted from the map (the caller falls back to default bands for it), so a
+// partial or empty map is a normal result rather than an error. The only error
+// returned is ctx cancellation during the inter-channel spacing.
 func (c *Client) FetchControlConfig(ctx context.Context) (map[string]measure.ControlConfig, error) {
 	httpClient := c.HTTPClient
 	if httpClient == nil {
@@ -60,7 +61,12 @@ func (c *Client) FetchControlConfig(ctx context.Context) (map[string]measure.Con
 
 // fetchChannelControl GETs one dosing INI and extracts its control config,
 // reporting ok=false for any reason the channel should not contribute a band
-// (transport/HTTP error, regulation disabled, or unparseable limits).
+// (transport/HTTP error, or missing/unparseable limits). It deliberately does
+// NOT gate on TYPE (auto-regulation on/off): the apps' ProconIpControlConfig.
+// fromIni reads the configured setpoint/limits regardless of regulation state,
+// so gating here would silently diverge — the relay would fall back to default
+// bands while the app still shows the configured gauge bands. A degenerate or
+// parked config still fails safely downstream via bandsFromControl's Validate.
 func (c *Client) fetchChannelControl(ctx context.Context, httpClient *http.Client, path string) (measure.ControlConfig, bool) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
 	if err != nil {
@@ -82,9 +88,6 @@ func (c *Client) fetchChannelControl(ctx context.Context, httpClient *http.Clien
 		return measure.ControlConfig{}, false
 	}
 	kv := parseINI(decodeBody(body))
-	if kv["TYPE"] != "1" {
-		return measure.ControlConfig{}, false // auto-regulation off → no meaningful band
-	}
 	target, tok := humanValue(kv["TARGET"])
 	min, mok := humanValue(kv["MIN_VAL"])
 	max, xok := humanValue(kv["MAX_VAL"])
@@ -116,7 +119,11 @@ func parseINI(body string) map[string]string {
 
 // humanValue parses the human half of a ProCon.IP "raw,human" tuple (e.g.
 // "12160,760" → 760). A value with no comma is taken whole. Mirrors the apps'
-// humanValue = raw.substringAfterLast(",").toDoubleOrNull().
+// humanValue = raw.substringAfterLast(",").toDoubleOrNull(), and additionally
+// rejects a non-finite result: strconv.ParseFloat accepts "Inf"/"Infinity"/
+// "NaN", which would survive bands.BandsConfig.Validate (±Inf is still
+// monotonic) and yield an alarm-free band. Mirror the finiteOr guard in
+// proconip.go so a garbled INI degrades to the default band instead.
 func humanValue(raw string) (float64, bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -126,7 +133,7 @@ func humanValue(raw string) (float64, bool) {
 		raw = raw[i+1:]
 	}
 	v, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
-	if err != nil {
+	if err != nil || math.IsInf(v, 0) || math.IsNaN(v) {
 		return 0, false
 	}
 	return v, true

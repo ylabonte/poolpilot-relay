@@ -27,6 +27,12 @@ import (
 // POLL_INTERVAL=1s.
 const DefaultInterval = 60 * time.Second
 
+// newDriver builds the controller driver for a preset. It is a package var (not
+// a direct driver.New call) so tests can substitute a fake Driver — optionally
+// one that also implements driver.ControlConfigReader — to exercise the poll →
+// control-fetch → snapshot → Evaluate wiring without standing up a controller.
+var newDriver = driver.New
+
 // Interval resolves POLL_INTERVAL (Go duration syntax, e.g. "60s").
 func Interval() (time.Duration, error) {
 	raw := os.Getenv("POLL_INTERVAL")
@@ -166,7 +172,7 @@ func (p *Poller) pollController(ctx context.Context, ctrl state.Controller) int 
 	if presetID == "" {
 		presetID = preset.ProconIP
 	}
-	drv, err := driver.New(presetID, driver.Config{
+	drv, err := newDriver(presetID, driver.Config{
 		BaseURL:  ControllerBaseURL(ctrl),
 		Username: ctrl.Username,
 		Password: ctrl.Password,
@@ -180,13 +186,19 @@ func (p *Poller) pollController(ctx context.Context, ctrl state.Controller) int 
 	}
 	// Fetch the controller's live regulation config (setpoint + warn limits)
 	// when the driver exposes it, so the alert engine derives push bands from
-	// the controller instead of hard-coded defaults. Best-effort: a failure
-	// just falls this poll back to default bands for the affected types.
+	// the controller instead of hard-coded defaults. A config fetch that ERRORS
+	// (cerr != nil) — the ProCon.IP's weak CPU can drop a rapid INI read, the
+	// exact weakness the 250ms spacing guards against — must NOT wipe the
+	// last-known-good bands to parity defaults for a single poll: retain the
+	// previous snapshot's Control instead. A non-error result (even an empty
+	// map) DOES replace it, since that is the controller's current truth.
 	var control map[string]measure.ControlConfig
+	retainControl := false
 	if err == nil {
 		if cr, ok := drv.(driver.ControlConfigReader); ok {
 			if cc, cerr := cr.ControlConfig(ctx); cerr != nil {
-				slog.Debug("control config fetch failed", "guid", ctrl.GUID, "err", cerr)
+				slog.Warn("control config fetch failed; retaining last-known-good bands", "guid", ctrl.GUID, "err", cerr)
+				retainControl = true
 			} else {
 				control = cc
 			}
@@ -200,7 +212,9 @@ func (p *Poller) pollController(ctx context.Context, ctrl state.Controller) int 
 	if err == nil {
 		snap.LastSuccess = now
 		snap.Readings = readings
-		snap.Control = control
+		if !retainControl {
+			snap.Control = control
+		}
 	}
 	p.snaps[ctrl.GUID] = snap
 	lastSuccess := snap.LastSuccess
