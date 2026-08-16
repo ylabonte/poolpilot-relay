@@ -18,3 +18,7 @@ go.work.sum
 
 # Vendored Claude tooling — gitignored, do not commit
 .claude/
+
+# Local-only mistakes log (the "log mistakes in MISTAKES.md" convention) — kept
+# out of this public repo; the running log stays on each maintainer's machine.
+MISTAKES.md

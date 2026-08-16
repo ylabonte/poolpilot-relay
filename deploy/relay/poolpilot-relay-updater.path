@@ -1,0 +1,12 @@
+[Unit]
+Description=Watch for staged PoolPilot Relay updates
+Documentation=https://github.com/ylabonte/poolpilot-relay
+
+[Path]
+# The agent writes request.json ATOMICALLY as the last step of staging; its
+# existence is the complete "please install" signal, which starts the oneshot
+# installer below.
+PathExists=/var/lib/poolpilot-relay/update/request.json
+
+[Install]
+WantedBy=multi-user.target
