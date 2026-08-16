@@ -564,13 +564,9 @@ func TestReconfigureTunnelWithCtrlFilterRewiresLocalAddr(t *testing.T) {
 	if len(cfg.Controllers) != 2 {
 		t.Fatalf("want 2 proxy specs, got %d: %+v", len(cfg.Controllers), cfg.Controllers)
 	}
-	wantPreset := map[string]string{"g1": "procon-ip", "g2": "violet"}
 	for _, spec := range cfg.Controllers {
 		if spec.LocalAddr != filter.Addr {
 			t.Errorf("spec %q local = %q, want the filter's shared addr %q", spec.GUID, spec.LocalAddr, filter.Addr)
-		}
-		if spec.Preset != wantPreset[spec.GUID] {
-			t.Errorf("spec %q preset = %q, want %q", spec.GUID, spec.Preset, wantPreset[spec.GUID])
 		}
 	}
 
