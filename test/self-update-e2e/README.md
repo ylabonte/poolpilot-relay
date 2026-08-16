@@ -27,7 +27,7 @@ are served from a local HTTP server to disposable VMs.
 
 ## Prerequisites
 
-- **Build host** (where `build-stage3.sh` runs): Go toolchain (matches `go.mod`) and
+- **Build host** (where `build-test-releases.sh` runs): Go toolchain (matches `go.mod`) and
   `minisign`. Cross-compiles are pure Go (`CGO_ENABLED=0`), so any OS works.
 - **VM host**: a Linux/KVM machine with `qemu-system-x86_64`, `qemu-system-arm`,
   `qemu-system-riscv64`, `qemu-img`, `cloud-localds`, `genisoimage`, and an
@@ -48,7 +48,7 @@ release server at `http://10.0.2.2:8000` — `10.0.2.2` is QEMU's standard user-
 
 | Script | Runs on | Purpose |
 | --- | --- | --- |
-| `build-stage3.sh` | build host | Build + sign the 3 test releases (v0.2.0/v0.2.1 real, v0.2.2 broken) for amd64/386/armv7/riscv64, with the version-binding line. |
+| `build-test-releases.sh` | build host | Build + sign the 3 test releases (v0.2.0/v0.2.1 real, v0.2.2 broken) for amd64/386/armv7/riscv64, with the version-binding line. |
 | `provision-seed.sh` | VM host | Generate a host-local VM ssh key + a cloud-init NoCloud `seed.iso`. |
 | `vm-up.sh <arch>` | VM host | Boot a per-arch cloud VM (amd64 KVM; armv7/riscv64 TCG with the right firmware), daemonized, serial→log, ssh via host-forwarded port. |
 | `vmssh.sh <arch> [cmd]` | VM host | ssh into a VM (right port + key). |
@@ -61,7 +61,7 @@ release server at `http://10.0.2.2:8000` — `10.0.2.2` is QEMU's standard user-
 
 ```sh
 # 1) Build + sign the test releases (build host):
-./build-stage3.sh                      # → $OUT/rel/{v0.2.0,v0.2.1,v0.2.2}
+./build-test-releases.sh                      # → $OUT/rel/{v0.2.0,v0.2.1,v0.2.2}
 
 # 2) On the VM host: put the release tree + install.sh under $PPR_DIR/release/rel,
 #    download the Ubuntu cloud images into $PPR_DIR/images/<arch>.img, then:
@@ -78,7 +78,7 @@ python3 -m http.server 8000 --bind 0.0.0.0 --directory "$PPR_DIR/release/rel" &
 
 (`guest-*.sh` and `install.sh` are fetched into the guest from the same HTTP server.)
 
-## Results — Stage-3 virtualized matrix
+## Results — virtualized matrix
 
 Run against Ubuntu 24.04 cloud images. `v0.2.0` install → `v0.2.1` update (with helper
 self-replace) → `v0.2.2` rollback drill. Every leg green:

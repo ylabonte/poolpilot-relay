@@ -12,7 +12,7 @@ set -euo pipefail
 # Override with REPO_ROOT=/path when building outside a checkout.
 REPO_ROOT="${REPO_ROOT:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel)}"
 # Scratch output for the test key + built release trees. Override with OUT=/path.
-OUT="${OUT:-${TMPDIR:-/tmp}/ppr-stage3}"
+OUT="${OUT:-${TMPDIR:-/tmp}/ppr-test-releases}"
 HANG="$OUT/hang"
 mkdir -p "$OUT" "$HANG"
 

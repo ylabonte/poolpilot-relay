@@ -1,7 +1,7 @@
 # Belt-and-suspenders: this harness writes ALL scratch OUTSIDE the tree by
 # default — VM overlay disks, the cloud-init seed.iso, downloaded cloud images,
 # built release blobs, serial-console logs, and the throwaway test minisign key
-# live under PPR_DIR (default /var/tmp/ppr) and OUT (default $TMPDIR/ppr-stage3).
+# live under PPR_DIR (default /var/tmp/ppr) and OUT (default $TMPDIR/ppr-test-releases).
 # These patterns only matter if someone repoints PPR_DIR/OUT into the tree: run
 # artifacts and keys must never be committed. The scripts + README below are the
 # only tracked files here.
@@ -15,7 +15,7 @@
 *.minisig
 sha256sums.txt*
 rel/
-stage3/
+ppr-test-releases/
 hang/
 ppr/
 _artifacts/
