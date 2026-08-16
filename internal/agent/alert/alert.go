@@ -409,10 +409,15 @@ func toleranceFor(rule wire.AlertRule) float64 {
 // bandsFromControl derives the bad/warn/ok/warn/bad band from a controller's
 // live config: min/max are the controller's own warn limits, and the OK zone is
 // setpoint ± tol clamped inside those limits. It returns false for an unusable
-// config (non-positive tolerance, inverted limits, or a setpoint so far outside
-// the limits that the clamp degenerates) so the caller falls back to defaults.
+// config (non-positive tolerance; inverted or EMPTY limits where Min >= Max; or
+// a setpoint so far outside the limits that the clamp degenerates) so the caller
+// falls back to defaults. Rejecting Min == Max matters because a parked/all-zero
+// channel ({0,0,0}) would otherwise pass bands.BandsConfig.Validate (monotonic
+// non-decreasing ALLOWS equality) as a collapsed band that classifies every
+// reading "bad" — perpetual alarm spam. Newly reachable since the TYPE gate was
+// dropped, so a disabled/parked channel now reaches here.
 func bandsFromControl(cc measure.ControlConfig, tol float64) (bands.BandsConfig, bool) {
-	if tol <= 0 || cc.Min > cc.Max {
+	if tol <= 0 || cc.Min >= cc.Max {
 		return bands.BandsConfig{}, false
 	}
 	okMin := cc.Target - tol

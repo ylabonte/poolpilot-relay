@@ -605,6 +605,16 @@ func TestBandsFromControl(t *testing.T) {
 	if _, ok := bandsFromControl(measure.ControlConfig{Target: 100, Min: 200, Max: 900}, 1); ok {
 		t.Error("setpoint far outside the limits must degrade to fallback")
 	}
+	// A parked / all-zero channel has an EMPTY range (Min == Max). The collapsed
+	// band would classify every reading "bad" (perpetual alarm), so it must fall
+	// back to defaults instead of deriving a band — newly reachable now that the
+	// TYPE gate is gone, so a disabled channel's {0,0,0} config arrives here.
+	if _, ok := bandsFromControl(measure.ControlConfig{}, 75); ok {
+		t.Error("all-zero config (Min == Max == 0) must not derive a collapsed band")
+	}
+	if _, ok := bandsFromControl(measure.ControlConfig{Target: 700, Min: 700, Max: 700}, 75); ok {
+		t.Error("Min == Max (empty range) must not derive a collapsed band")
+	}
 }
 
 func TestToleranceFor(t *testing.T) {
