@@ -27,12 +27,20 @@
 #   - Verification: sha256 against the release's checksum file, plus a
 #     minisign signature check when the tool is available (offered below as
 #     an optional package install).
-#   - Root actions: install one binary to /usr/local/bin, one config file to
-#     /etc/poolpilot-relay (only if none exists), one systemd unit, then
-#     enable+start the service. The unit itself sandboxes the agent
-#     (DynamicUser, NoNewPrivileges, ProtectSystem=strict, ProtectHome) — it
-#     is downloaded alongside the binary, checksum-verified, and plain text:
-#     read it in /etc/systemd/system/poolpilot-relay.service after install.
+#   - Root actions: install the agent binary to /usr/local/bin, a config file to
+#     /etc/poolpilot-relay (only if none exists), and its systemd unit, then
+#     enable+start the service. The unit sandboxes the agent (DynamicUser,
+#     NoNewPrivileges, ProtectSystem=strict, ProtectHome). On update-capable
+#     releases it ALSO installs the privileged self-update helper to
+#     /usr/local/bin/poolpilot-relay-updater plus its two systemd units
+#     (poolpilot-relay-updater.service + .path) and enables the .path watcher, so
+#     the device can install signed updates on its own. The helper runs as root
+#     and is deliberately NOT sandboxed — its whole job is to swap the agent
+#     binary and restart the service; its boundary is the embedded minisign key,
+#     not systemd confinement. All of the above is downloaded alongside the
+#     binary, checksum-verified, and plain text: read the units in
+#     /etc/systemd/system/ after install. Auto-update is on by default and can be
+#     turned off per device via UPDATE_DISABLED=1 in the config.
 #   - Nothing else: no telemetry, no shell-profile edits, no cron entries.
 #
 # Advanced overrides (env vars, for dev/e2e/support — unset on the normal path):
@@ -148,6 +156,29 @@ main() {
   (cd "$WORKDIR" && grep " ${UNIT_ASSET}\$" sha256sums.txt | sha256sum -c -) \
     || { echo "Checksum verification FAILED for ${UNIT_ASSET} — aborting." >&2; exit 1; }
 
+  # Self-update helper + its two systemd units. Present on update-capable
+  # releases, absent on older ones — its presence in the signed checksum file is
+  # the authority. Downloaded + checksum-verified here (unprivileged) like the
+  # agent; installed under sudo below. UPDATER_ASSETS gates both.
+  HELPER_ASSET="poolpilot-relay-updater_linux_${ARCH}"
+  UPDATER_ASSETS=""
+  if grep -q " ${HELPER_ASSET}\$" "${WORKDIR}/sha256sums.txt"; then
+    echo "==> downloading self-update helper"
+    fetch "${BASE_URL}/${HELPER_ASSET}" "${WORKDIR}/${HELPER_ASSET}" \
+      || { echo "Failed to download the self-update helper (${BASE_URL}/${HELPER_ASSET})." >&2; exit 1; }
+    (cd "$WORKDIR" && grep " ${HELPER_ASSET}\$" sha256sums.txt | sha256sum -c -) \
+      || { echo "Checksum verification FAILED for ${HELPER_ASSET} — aborting." >&2; exit 1; }
+    for UNIT_FILE in poolpilot-relay-updater.service poolpilot-relay-updater.path; do
+      fetch "${BASE_URL}/${UNIT_FILE}" "${WORKDIR}/${UNIT_FILE}" \
+        || { echo "Failed to download ${UNIT_FILE} (${BASE_URL}/${UNIT_FILE})." >&2; exit 1; }
+      (cd "$WORKDIR" && grep " ${UNIT_FILE}\$" sha256sums.txt | sha256sum -c -) \
+        || { echo "Checksum verification FAILED for ${UNIT_FILE} — aborting." >&2; exit 1; }
+    done
+    UPDATER_ASSETS=1
+  else
+    echo "==> this release predates self-update — installing the agent without the updater helper"
+  fi
+
   # Placeholder detection: MINISIGN_PUBKEY above ships as a literal placeholder
   # until the one-time minisign key ceremony runs and a real key is baked in
   # here (see deploy/relay/minisign.pub). Until then, `minisign -Vm -P
@@ -193,7 +224,13 @@ main() {
   fi
   echo "  - install the verified binary to ${BIN}"
   echo "  - write a default config to ${CONFIG} (only if none exists yet)"
-  echo "  - install + enable the systemd service ${UNIT}"
+  echo "  - install the systemd service ${UNIT}"
+  if [ -n "$UPDATER_ASSETS" ]; then
+    echo "  - install the self-update helper to /usr/local/bin/poolpilot-relay-updater"
+    echo "  - install its systemd path/oneshot units (auto-update; opt out in ${CONFIG})"
+  fi
+  echo "  - reload systemd, then enable + start the service (and the update watcher)"
+  echo "  - run '${BIN} show-pairing' once to print this device's pairing QR (read-only)"
   if [ -n "$SUDO" ] && [ -z "$HAVE_TTY" ]; then
     echo "No terminal is available for sudo's password prompt — re-run this script as root." >&2
     exit 1
@@ -242,14 +279,30 @@ CLOUD_BASE_URL=https://api.poolpilot.eu
 # LAN_LISTEN=:8443
 # TUNNEL_LISTEN=127.0.0.1:8480
 # POLL_INTERVAL=60s
+# Self-update runs automatically at night; manage it from the PoolPilot app, or
+# set UPDATE_DISABLED=1 here to opt this device out entirely.
+# UPDATE_DISABLED=1
 CFG
   fi
 
   echo "==> installing systemd unit"
   $SUDO install -m 0644 "${WORKDIR}/${UNIT_ASSET}" "$UNIT"
+
+  if [ -n "$UPDATER_ASSETS" ]; then
+    echo "==> installing self-update helper + units"
+    $SUDO install -m 0755 "${WORKDIR}/${HELPER_ASSET}" /usr/local/bin/poolpilot-relay-updater
+    $SUDO install -m 0644 "${WORKDIR}/poolpilot-relay-updater.service" /etc/systemd/system/poolpilot-relay-updater.service
+    $SUDO install -m 0644 "${WORKDIR}/poolpilot-relay-updater.path" /etc/systemd/system/poolpilot-relay-updater.path
+  fi
+
   $SUDO systemctl daemon-reload
   $SUDO systemctl enable poolpilot-relay
   $SUDO systemctl restart poolpilot-relay
+  if [ -n "$UPDATER_ASSETS" ]; then
+    # Arm the watcher: it fires the root installer when the agent stages an
+    # update. Auto-update is on by default; opt out per device in ${CONFIG}.
+    $SUDO systemctl enable --now poolpilot-relay-updater.path
+  fi
 
   echo
   echo "PoolPilot Relay is running. Open the PoolPilot app on this network to pair."
