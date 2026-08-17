@@ -225,6 +225,7 @@ main() {
   echo "  - install the verified binary to ${BIN}"
   echo "  - write a default config to ${CONFIG} (only if none exists yet)"
   echo "  - install the systemd service ${UNIT}"
+  echo "  - make the systemd journal persistent so relay logs survive reboots"
   if [ -n "$UPDATER_ASSETS" ]; then
     echo "  - install the self-update helper to /usr/local/bin/poolpilot-relay-updater"
     echo "  - install its systemd path/oneshot units (auto-update; opt out in ${CONFIG})"
@@ -287,6 +288,29 @@ CFG
 
   echo "==> installing systemd unit"
   $SUDO install -m 0644 "${WORKDIR}/${UNIT_ASSET}" "$UNIT"
+
+  # Make the systemd journal persistent so the relay's logs survive reboots.
+  # Raspberry Pi OS ships
+  # /usr/lib/systemd/journald.conf.d/40-rpi-volatile-storage.conf (Storage=volatile)
+  # to spare the SD card — but that silently discards the whole journal on every
+  # reboot, so a field bug report has no relay-side history to investigate. This
+  # drop-in's filename sorts lexically AFTER that one, so Storage=persistent wins
+  # the merge; the rotation caps keep SD wear and disk use bounded. Delete this
+  # file (and restart systemd-journald) to go back to volatile logging.
+  echo "==> making the systemd journal persistent (relay logs survive reboots)"
+  $SUDO install -d -m 0755 /var/log/journal /etc/systemd/journald.conf.d
+  $SUDO tee /etc/systemd/journald.conf.d/95-poolpilot-persistent.conf >/dev/null <<'JCONF'
+# Installed by the PoolPilot Relay installer. Overrides Raspberry Pi OS's
+# 40-rpi-volatile-storage.conf so the relay's logs persist across reboots.
+[Journal]
+Storage=persistent
+SystemMaxUse=200M
+SystemKeepFree=100M
+SystemMaxFileSize=20M
+MaxRetentionSec=1month
+JCONF
+  $SUDO systemctl restart systemd-journald
+  $SUDO journalctl --flush >/dev/null 2>&1 || true
 
   if [ -n "$UPDATER_ASSETS" ]; then
     echo "==> installing self-update helper + units"
