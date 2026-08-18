@@ -301,22 +301,48 @@ CFG
   # to spare the SD card — but that silently discards the whole journal on every
   # reboot, so a field bug report has no relay-side history to investigate. This
   # drop-in's filename sorts lexically AFTER that one, so Storage=persistent wins
-  # the merge; the rotation caps keep SD wear and disk use bounded. Delete this
-  # file (and restart systemd-journald) to go back to volatile logging.
-  echo "==> making the systemd journal persistent (relay logs survive reboots)"
-  $SUDO install -d -m 0755 /var/log/journal /etc/systemd/journald.conf.d
-  $SUDO tee /etc/systemd/journald.conf.d/95-poolpilot-persistent.conf >/dev/null <<'JCONF'
+  # the merge; the size caps keep SD wear and disk use bounded. Delete the
+  # drop-in (and restart systemd-journald) to go back to volatile logging.
+  #
+  # Applied ONLY when the journal is not already persistent. The installer
+  # targets "any Linux/systemd host", and on one that already persists (stock
+  # Debian/Ubuntu/Fedora: Storage=auto with an existing /var/log/journal),
+  # writing our caps and restarting journald would vacuum that host's existing
+  # system logs down to SystemMaxUse immediately — destructive on a box that
+  # never had the volatile-journal problem this fixes. The machine-id subdir
+  # under /var/log/journal exists exactly when journald is already persisting.
+  MACHINE_ID="$(cat /etc/machine-id 2>/dev/null || true)"
+  if [ -n "$MACHINE_ID" ] && [ -e "/var/log/journal/${MACHINE_ID}" ]; then
+    echo "==> systemd journal is already persistent — leaving journald configuration untouched"
+  else
+    echo "==> making the systemd journal persistent (relay logs survive reboots)"
+    $SUDO install -d -m 0755 /etc/systemd/journald.conf.d
+    # Create /var/log/journal only when missing, then let systemd's own tmpfiles
+    # policy set its mode/owner/ACLs (2755 root:systemd-journal + adm read). A
+    # plain `install -d -m 0755` would leave it root:root without setgid, so the
+    # persisted logs would not be group-readable by the unprivileged
+    # `journalctl -u poolpilot-relay` this script advertises below — and it would
+    # strip the setgid bit from a host whose dir is already correct.
+    [ -d /var/log/journal ] || $SUDO mkdir /var/log/journal
+    $SUDO systemd-tmpfiles --create --prefix /var/log/journal 2>/dev/null || true
+    $SUDO tee /etc/systemd/journald.conf.d/95-poolpilot-persistent.conf >/dev/null <<'JCONF'
 # Installed by the PoolPilot Relay installer. Overrides Raspberry Pi OS's
 # 40-rpi-volatile-storage.conf so the relay's logs persist across reboots.
+# To revert: delete this file, then run `systemctl restart systemd-journald`.
 [Journal]
 Storage=persistent
 SystemMaxUse=200M
 SystemKeepFree=100M
 SystemMaxFileSize=20M
-MaxRetentionSec=1month
 JCONF
-  $SUDO systemctl restart systemd-journald
-  $SUDO journalctl --flush >/dev/null 2>&1 || true
+    # Best-effort: journal persistence is auxiliary, so a journald restart
+    # failure must not abort an install whose binary/config/unit are already in
+    # place but not yet enabled+started.
+    $SUDO systemctl restart systemd-journald \
+      || echo "    warning: could not restart systemd-journald — journal persistence starts at the next reboot" >&2
+    $SUDO journalctl --flush >/dev/null 2>&1 \
+      || echo "    warning: journalctl --flush failed — this boot's earlier logs stay volatile until the next reboot" >&2
+  fi
 
   if [ -n "$UPDATER_ASSETS" ]; then
     echo "==> installing self-update helper + units"
