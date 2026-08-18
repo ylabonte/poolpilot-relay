@@ -1275,13 +1275,18 @@ func (s *Server) getControllerRules(w http.ResponseWriter, r *http.Request) {
 // can display the relay's researched default when a rule's own OkTolerance is
 // unset (0). Response-only enrichment (GET, and the PUT 200 echo so both
 // agree): setControllerRules strips the field before persisting, and
-// evaluation keeps resolving the default itself. A nil input stays nil so a
-// rule-less controller's GET keeps marshalling {"rules":null}, unchanged.
+// evaluation keeps resolving the default itself. Non-band rules are zeroed in
+// the copy — the relay computes this field on every response and never
+// reflects a client-supplied value, so a PUT echo can't disagree with a
+// subsequent GET. A nil input stays nil so a rule-less controller's GET keeps
+// marshalling {"rules":null}, unchanged.
 func withDefaultOkTolerance(rules []wire.AlertRule) []wire.AlertRule {
 	out := slices.Clone(rules)
 	for i := range out {
 		if out[i].Kind == wire.RuleKindMeasurementBand {
 			out[i].DefaultOkTolerance = alert.DefaultOkTolerance[out[i].MeasurementType]
+		} else {
+			out[i].DefaultOkTolerance = 0
 		}
 	}
 	return out
