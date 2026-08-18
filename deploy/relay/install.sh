@@ -29,7 +29,13 @@
 #     an optional package install).
 #   - Root actions: install the agent binary to /usr/local/bin, a config file to
 #     /etc/poolpilot-relay (only if none exists), and its systemd unit, then
-#     enable+start the service. The unit sandboxes the agent (DynamicUser,
+#     enable+start the service. When the system journal is not already
+#     persistent, it ALSO writes
+#     /etc/systemd/journald.conf.d/95-poolpilot-persistent.conf
+#     (Storage=persistent, bounded by a 200M size cap) and restarts
+#     systemd-journald so the relay's logs survive reboots — this affects all
+#     system logs, not just the relay's, and is undone by deleting that file.
+#     The unit sandboxes the agent (DynamicUser,
 #     NoNewPrivileges, ProtectSystem=strict, ProtectHome). On update-capable
 #     releases it ALSO installs the privileged self-update helper to
 #     /usr/local/bin/poolpilot-relay-updater plus its two systemd units
@@ -225,7 +231,7 @@ main() {
   echo "  - install the verified binary to ${BIN}"
   echo "  - write a default config to ${CONFIG} (only if none exists yet)"
   echo "  - install the systemd service ${UNIT}"
-  echo "  - make the systemd journal persistent so relay logs survive reboots"
+  echo "  - make the systemd journal persistent (if it isn't already) so relay logs survive reboots"
   if [ -n "$UPDATER_ASSETS" ]; then
     echo "  - install the self-update helper to /usr/local/bin/poolpilot-relay-updater"
     echo "  - install its systemd path/oneshot units (auto-update; opt out in ${CONFIG})"
