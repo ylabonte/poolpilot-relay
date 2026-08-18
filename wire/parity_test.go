@@ -234,6 +234,41 @@ func isZeroJSONValue(v any) bool {
 	}
 }
 
+// TestFixtureAlertRuleDefaultTolerance pins the response-only
+// default_ok_tolerance field the relay surfaces on measurement_band rules so
+// the app can display the researched default when a rule's own ok_tolerance is
+// unset: the fixture's ph-band rule carries the pH default (0.2), and the
+// stale_data rule carries none (omitempty keeps it off the wire).
+func TestFixtureAlertRuleDefaultTolerance(t *testing.T) {
+	entries := loadFixtureEntries(t)
+	raw, ok := entries["alert_rules"]
+	if !ok {
+		t.Fatal(`fixture is missing entry "alert_rules"`)
+	}
+	var rules AlertRules
+	if err := json.Unmarshal(raw, &rules); err != nil {
+		t.Fatalf("unmarshal alert_rules: %v", err)
+	}
+	byID := map[string]AlertRule{}
+	for _, r := range rules.Rules {
+		byID[r.ID] = r
+	}
+	band, ok := byID["ph-band"]
+	if !ok {
+		t.Fatal(`fixture alert_rules has no "ph-band" rule`)
+	}
+	if band.DefaultOkTolerance != 0.2 {
+		t.Errorf("ph-band default_ok_tolerance = %v, want 0.2", band.DefaultOkTolerance)
+	}
+	stale, ok := byID["stale-watchdog"]
+	if !ok {
+		t.Fatal(`fixture alert_rules has no "stale-watchdog" rule`)
+	}
+	if stale.DefaultOkTolerance != 0 {
+		t.Errorf("stale-watchdog default_ok_tolerance = %v, want 0 (unset)", stale.DefaultOkTolerance)
+	}
+}
+
 // TestVendoredFixtureMatchesSiblingCheckout guards against silent drift from
 // the pool-apps source of truth, mirroring internal/bands's
 // TestVendoredFixtureMatchesSiblingCheckout for measurement-parity.json. When
