@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -1272,11 +1273,12 @@ func (s *Server) getControllerRules(w http.ResponseWriter, r *http.Request) {
 // withDefaultOkTolerance returns a copy of rules with the response-only
 // DefaultOkTolerance field filled in for measurement_band rules, so the app
 // can display the relay's researched default when a rule's own OkTolerance is
-// unset (0). GET-only enrichment: nothing is persisted, PUT ignores the field,
-// and evaluation keeps resolving the default itself.
+// unset (0). Response-only enrichment (GET, and the PUT 200 echo so both
+// agree): setControllerRules strips the field before persisting, and
+// evaluation keeps resolving the default itself. A nil input stays nil so a
+// rule-less controller's GET keeps marshalling {"rules":null}, unchanged.
 func withDefaultOkTolerance(rules []wire.AlertRule) []wire.AlertRule {
-	out := make([]wire.AlertRule, len(rules))
-	copy(out, rules)
+	out := slices.Clone(rules)
 	for i := range out {
 		if out[i].Kind == wire.RuleKindMeasurementBand {
 			out[i].DefaultOkTolerance = alert.DefaultOkTolerance[out[i].MeasurementType]
@@ -1315,7 +1317,7 @@ func (s *Server) putControllerRules(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "persist_failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, wire.AlertRules{Rules: req.Rules})
+	writeJSON(w, http.StatusOK, wire.AlertRules{Rules: withDefaultOkTolerance(req.Rules)})
 }
 
 // probeController live-probes a controller with the submitted config/creds,
@@ -1378,7 +1380,15 @@ func writeRegisterErr(w http.ResponseWriter, err error) {
 // for rules that no longer exist so a re-added ID starts fresh (no stale
 // cooldown). Shared by the aliased and per-controller rule writers.
 func setControllerRules(c *state.Controller, rules []wire.AlertRule) {
-	c.AlertRules = rules
+	// DefaultOkTolerance is a response-only, relay-computed field — GET (and the
+	// PUT 200 echo) recompute it from alert.DefaultOkTolerance every time. Strip
+	// it from the stored copy so the natural GET → edit → PUT round-trip of a
+	// client echoing the field never persists it into the state file.
+	stored := slices.Clone(rules)
+	for i := range stored {
+		stored[i].DefaultOkTolerance = 0
+	}
+	c.AlertRules = stored
 	keep := make(map[string]bool, len(rules))
 	for _, rule := range rules {
 		keep[rule.ID] = true
@@ -1676,7 +1686,7 @@ func (s *Server) putRules(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "persist_failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, wire.AlertRules{Rules: req.Rules})
+	writeJSON(w, http.StatusOK, wire.AlertRules{Rules: withDefaultOkTolerance(req.Rules)})
 }
 
 func (s *Server) factoryReset(w http.ResponseWriter, _ *http.Request) {

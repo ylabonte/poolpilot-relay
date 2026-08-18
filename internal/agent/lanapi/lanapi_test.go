@@ -1146,20 +1146,52 @@ func TestAlertRulesGetAndPut(t *testing.T) {
 	if err := json.Unmarshal(raw, &rules); err != nil || len(rules.Rules) != 1 {
 		t.Fatalf("rules = %s (%v)", raw, err)
 	}
+	// stale_data rules carry no default tolerance: omitempty keeps the
+	// response-only field off the wire entirely.
+	if bytes.Contains(raw, []byte("default_ok_tolerance")) {
+		t.Errorf("stale_data GET must omit default_ok_tolerance: %s", raw)
+	}
 
-	// Full replace with a valid set.
+	// Full replace with a valid set. The client echoes default_ok_tolerance
+	// (as a well-behaved app does after a GET) — with a bogus value, to pin
+	// that the relay strips it before persisting instead of trusting it.
 	newSet := wire.AlertRules{Rules: []wire.AlertRule{{
 		ID: "app-ph", Kind: wire.RuleKindMeasurementBand, Enabled: true, Source: "app",
 		MeasurementType: "ph", NotifySeverities: []string{"warn", "bad"},
 		DebouncePolls: 2, CooldownSeconds: 600, NotifyRecovery: true,
+		DefaultOkTolerance: 9.9,
 	}}}
-	resp, _ = f.do(t, "PUT", "/v1/alert-rules", token, newSet)
+	resp, raw = f.do(t, "PUT", "/v1/alert-rules", token, newSet)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("put rules: HTTP %d", resp.StatusCode)
 	}
 	got := f.store.Get().Controller0().AlertRules
 	if len(got) != 1 || got[0].ID != "app-ph" {
 		t.Errorf("rules after PUT (full replace): %+v", got)
+	}
+	// Response-only: never persisted (even when the client sends it) …
+	if got[0].DefaultOkTolerance != 0 {
+		t.Errorf("default_ok_tolerance persisted as %v, want 0 (stripped)", got[0].DefaultOkTolerance)
+	}
+	// … the PUT 200 echoes the recomputed relay default (matching GET) …
+	var echoed wire.AlertRules
+	if err := json.Unmarshal(raw, &echoed); err != nil || len(echoed.Rules) != 1 {
+		t.Fatalf("put echo = %s (%v)", raw, err)
+	}
+	if echoed.Rules[0].DefaultOkTolerance != 0.2 {
+		t.Errorf("put echo default_ok_tolerance = %v, want 0.2 (relay pH default)", echoed.Rules[0].DefaultOkTolerance)
+	}
+	// … and GET enriches measurement_band rules with the relay's default.
+	resp, raw = f.do(t, "GET", "/v1/alert-rules", token, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get rules after put: HTTP %d", resp.StatusCode)
+	}
+	var enriched wire.AlertRules
+	if err := json.Unmarshal(raw, &enriched); err != nil || len(enriched.Rules) != 1 {
+		t.Fatalf("rules after put = %s (%v)", raw, err)
+	}
+	if enriched.Rules[0].DefaultOkTolerance != 0.2 {
+		t.Errorf("get default_ok_tolerance = %v, want 0.2 (relay pH default)", enriched.Rules[0].DefaultOkTolerance)
 	}
 
 	// Any invalid rule rejects the whole set.

@@ -360,12 +360,24 @@ func TestPerControllerAlertRules(t *testing.T) {
 	if err := json.Unmarshal(raw, &rules); err != nil || len(rules.Rules) == 0 {
 		t.Fatalf("new controller must be seeded with default rules: %s (%v)", raw, err)
 	}
+	// The per-controller GET enriches measurement_band rules with the relay's
+	// researched default tolerance (response-only); other kinds omit it.
+	for _, r := range rules.Rules {
+		if r.Kind == wire.RuleKindMeasurementBand && r.DefaultOkTolerance == 0 {
+			t.Errorf("band rule %s: GET missing default_ok_tolerance", r.ID)
+		}
+		if r.Kind != wire.RuleKindMeasurementBand && r.DefaultOkTolerance != 0 {
+			t.Errorf("%s rule %s: default_ok_tolerance = %v, want omitted", r.Kind, r.ID, r.DefaultOkTolerance)
+		}
+	}
 
-	// Full replace.
+	// Full replace. The echoed default_ok_tolerance must be stripped before
+	// persisting — it is response-only, recomputed on GET.
 	newSet := wire.AlertRules{Rules: []wire.AlertRule{{
 		ID: "app-ph", Kind: wire.RuleKindMeasurementBand, Enabled: true, Source: "app",
 		MeasurementType: "ph", NotifySeverities: []string{"warn", "bad"},
 		DebouncePolls: 2, CooldownSeconds: 600, NotifyRecovery: true,
+		DefaultOkTolerance: 9.9,
 	}}}
 	resp, raw = f.do(t, "PUT", "/v1/controllers/"+g1+"/alert-rules", token, newSet)
 	if resp.StatusCode != http.StatusOK {
@@ -374,6 +386,9 @@ func TestPerControllerAlertRules(t *testing.T) {
 	got, _ := f.store.Get().FindController(g1)
 	if len(got.AlertRules) != 1 || got.AlertRules[0].ID != "app-ph" {
 		t.Errorf("rules after PUT: %+v", got.AlertRules)
+	}
+	if got.AlertRules[0].DefaultOkTolerance != 0 {
+		t.Errorf("default_ok_tolerance persisted as %v, want 0 (stripped)", got.AlertRules[0].DefaultOkTolerance)
 	}
 
 	// Unknown GUID → 404 on both verbs.
