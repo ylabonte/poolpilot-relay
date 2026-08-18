@@ -1266,7 +1266,23 @@ func (s *Server) getControllerRules(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "unknown_controller")
 		return
 	}
-	writeJSON(w, http.StatusOK, wire.AlertRules{Rules: c.AlertRules})
+	writeJSON(w, http.StatusOK, wire.AlertRules{Rules: withDefaultOkTolerance(c.AlertRules)})
+}
+
+// withDefaultOkTolerance returns a copy of rules with the response-only
+// DefaultOkTolerance field filled in for measurement_band rules, so the app
+// can display the relay's researched default when a rule's own OkTolerance is
+// unset (0). GET-only enrichment: nothing is persisted, PUT ignores the field,
+// and evaluation keeps resolving the default itself.
+func withDefaultOkTolerance(rules []wire.AlertRule) []wire.AlertRule {
+	out := make([]wire.AlertRule, len(rules))
+	copy(out, rules)
+	for i := range out {
+		if out[i].Kind == wire.RuleKindMeasurementBand {
+			out[i].DefaultOkTolerance = alert.DefaultOkTolerance[out[i].MeasurementType]
+		}
+	}
+	return out
 }
 
 // putControllerRules serves PUT /v1/controllers/{guid}/alert-rules — a FULL
@@ -1637,7 +1653,7 @@ func (s *Server) controllerStatus(st state.State, c state.Controller, ps tunnel.
 }
 
 func (s *Server) getRules(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, wire.AlertRules{Rules: s.Store.Get().Controller0().AlertRules})
+	writeJSON(w, http.StatusOK, wire.AlertRules{Rules: withDefaultOkTolerance(s.Store.Get().Controller0().AlertRules)})
 }
 
 // putRules is a FULL replace: the request body is the complete new rule set.

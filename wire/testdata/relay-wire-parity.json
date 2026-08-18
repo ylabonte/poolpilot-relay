@@ -177,6 +177,7 @@
         "measurement_type": "ph",
         "bands": { "min": 6.8, "ok_min": 7.0, "ok_max": 7.4, "max": 7.8 },
         "ok_tolerance": 0.2,
+        "default_ok_tolerance": 0.2,
         "notify_severities": ["warn", "bad"],
         "debounce_polls": 3,
         "stale_after_seconds": 0,

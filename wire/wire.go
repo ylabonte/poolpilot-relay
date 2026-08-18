@@ -287,9 +287,14 @@ type AlertRule struct {
 	// controller's own warn limits stay the hard min/max. Zero/absent means the
 	// agent uses its researched per-type default. Ignored when Bands is set (an
 	// explicit full override wins).
-	OkTolerance      float64  `json:"ok_tolerance,omitempty"`
-	NotifySeverities []string `json:"notify_severities,omitempty"` // subset of "warn","bad"
-	DebouncePolls    int      `json:"debounce_polls,omitempty"`
+	OkTolerance float64 `json:"ok_tolerance,omitempty"`
+	// DefaultOkTolerance is the relay's researched per-type default for this rule's
+	// MeasurementType (alert.DefaultOkTolerance), surfaced read-only so the app can
+	// DISPLAY it when OkTolerance is unset (0, meaning "use the relay's default").
+	// Response-only: recomputed on GET, ignored on PUT; OkTolerance stays the one tunable value.
+	DefaultOkTolerance float64  `json:"default_ok_tolerance,omitempty"`
+	NotifySeverities   []string `json:"notify_severities,omitempty"` // subset of "warn","bad"
+	DebouncePolls      int      `json:"debounce_polls,omitempty"`
 
 	// stale_data fields.
 	StaleAfterSeconds int64 `json:"stale_after_seconds,omitempty"`
