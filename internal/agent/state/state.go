@@ -558,13 +558,38 @@ func (st *Store) Update(fn func(*State)) error {
 // Wipe removes the state file (factory reset) and marks the store dead: every
 // later Update fails with ErrWiped so a concurrent poll tick cannot recreate
 // the file from memory in the window before the process exits.
+//
+// A factory reset must erase the IDENTITY, not merely unlink the live document:
+// the "<path>.v1.bak" migration backup (backupV1) and any temp file a crashed
+// persist left behind (persistLocked) carry the same plaintext TLS private key
+// and credentials, so they are removed too — otherwise "reset rotates the
+// identity" would leave the old key readable on disk.
 func (st *Store) Wipe() error {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	if err := os.Remove(st.path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	// The live document is gone — mark the store dead FIRST, so even if the
+	// sibling cleanup below fails a concurrent Update cannot resurrect the
+	// wiped credentials from memory.
 	st.wiped = true
+	if err := os.Remove(st.path + ".v1.bak"); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	dir := filepath.Dir(st.path)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, ".state-") && strings.HasSuffix(name, ".json") {
+			if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		}
+	}
 	return nil
 }
 

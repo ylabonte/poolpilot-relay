@@ -397,6 +397,41 @@ func TestMigratePreservesTLSMaterialByteForByte(t *testing.T) {
 	}
 }
 
+// A factory reset must erase the identity from disk entirely: not just the
+// live state.json, but the "<path>.v1.bak" migration backup and any orphaned
+// persist temp file — both carry the same plaintext TLS private key.
+func TestWipeErasesMigrationBackupAndPersistTemps(t *testing.T) {
+	dir := t.TempDir()
+	path := writeV1(t, dir, v1Full)
+
+	st, err := Open(path) // migrates; writes path+".v1.bak"
+	if err != nil {
+		t.Fatalf("Open (migrate): %v", err)
+	}
+	if _, err := os.Stat(path + ".v1.bak"); err != nil {
+		t.Fatalf("migration backup missing before wipe: %v", err)
+	}
+	// An orphaned temp from a hypothetical crashed persist (persistLocked's
+	// CreateTemp pattern) — it would hold the same material.
+	orphan := filepath.Join(dir, ".state-orphan.json")
+	if err := os.WriteFile(orphan, []byte(`{"tls":{"key_pem":"KEY"}}`), 0o600); err != nil {
+		t.Fatalf("seed orphan temp: %v", err)
+	}
+
+	if err := st.Wipe(); err != nil {
+		t.Fatalf("Wipe: %v", err)
+	}
+	for _, p := range []string{path, path + ".v1.bak", orphan} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("factory reset left %s on disk (err=%v)", p, err)
+		}
+	}
+	// Wipe of an already-clean store stays idempotent.
+	if err := st.Wipe(); err != nil {
+		t.Errorf("second Wipe must tolerate already-removed files: %v", err)
+	}
+}
+
 func TestNormalizeLanAddress(t *testing.T) {
 	cases := []struct {
 		name     string
