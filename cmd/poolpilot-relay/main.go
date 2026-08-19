@@ -127,17 +127,11 @@ func run() error {
 	st := store.Get()
 	slog.Info("agent starting", "version", version, "agent_id", st.AgentID, "state", store.PathName())
 
-	// First boot housekeeping: TLS material.
-	if st.TLS.CertPEM == "" {
-		certPEM, keyPEM, err := tlscert.Generate(st.AgentID)
-		if err != nil {
-			return err
-		}
-		if err := store.Update(func(s *state.State) {
-			s.TLS = state.TLS{CertPEM: string(certPEM), KeyPEM: string(keyPEM)}
-		}); err != nil {
-			return err
-		}
+	// First boot housekeeping: TLS material. ensureBootTLS documents the
+	// identity-rotation policy (mint once, persist immediately, rotate only via
+	// factory reset).
+	if err := ensureBootTLS(store); err != nil {
+		return err
 	}
 	// Reconcile every controller's default alert rules against its own preset on
 	// every boot (a third ReconcileSeed call site beside controller registration
@@ -278,6 +272,49 @@ func runSafely(name string, fn func(context.Context) error, ctx context.Context)
 		}
 	}()
 	return fn(ctx)
+}
+
+// ensureBootTLS is boot housekeeping for the LAN-API TLS material — and the
+// ONLY place the agent ever mints it. The SPKI fingerprint of this keypair is
+// the pin every paired app persists at setup; nothing downstream can heal a
+// stale pin (the relay never reports the fingerprint to the cloud, the cloud
+// stores none, and the app never re-pins an already-known relay), so a cert
+// regenerated under a stable agent_id strands every paired device behind a
+// misleading "unreachable" error. Identity-rotation policy:
+//
+//   - Genuine first run (fresh state file, i.e. first install or the boot after
+//     a factory reset): mint the keypair and persist it atomically BEFORE
+//     anything serves, so no later boot can ever mint again.
+//   - Every other boot — a plain restart, a self-update/software upgrade, a
+//     state-schema migration — serves the persisted material unchanged.
+//   - Factory reset is the ONE sanctioned rotation: Store.Wipe deletes the
+//     whole document, so the next boot is a genuine first run (new agent_id AND
+//     new cert — stale pins are invalidated together with the pairing itself).
+//   - Partially present material (cert without key, or vice versa) is corrupt
+//     state: fail closed, exactly like state.Open does for a corrupt document,
+//     rather than silently minting a fresh identity over a half-broken one.
+//
+// Historical note: pre-TLS-persistence relays hit the mint path once on the
+// boot that migrated their v1 state (empty tls block → same agent_id, new
+// cert). That is a one-time artifact of the migration that introduced
+// persistence — after it, the material is on disk and this function never
+// mints again.
+func ensureBootTLS(store *state.Store) error {
+	st := store.Get()
+	hasCert, hasKey := st.TLS.CertPEM != "", st.TLS.KeyPEM != ""
+	switch {
+	case hasCert && hasKey:
+		return nil // upgrade/restart: never touch the existing identity
+	case hasCert != hasKey:
+		return fmt.Errorf("state: TLS material in %s is partially present (cert=%t key=%t) — refusing to mint a new identity over corrupt state, that would strand every paired app on a stale pin; restore the file or factory-reset", store.PathName(), hasCert, hasKey)
+	}
+	certPEM, keyPEM, err := tlscert.Generate(st.AgentID)
+	if err != nil {
+		return err
+	}
+	return store.Update(func(s *state.State) {
+		s.TLS = state.TLS{CertPEM: string(certPEM), KeyPEM: string(keyPEM)}
+	})
 }
 
 // bootHasRegisteredController reports whether any controller is both configured

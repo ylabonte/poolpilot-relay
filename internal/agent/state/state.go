@@ -42,6 +42,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -121,7 +122,11 @@ type Controller struct {
 	LastSuccessAt time.Time `json:"last_success_at,omitzero"`
 }
 
-// TLS is the self-signed LAN-API certificate material (PEM).
+// TLS is the self-signed LAN-API certificate material (PEM). Paired apps pin
+// this keypair's SPKI fingerprint, so it is IDENTITY, not just transport
+// material: it is minted exactly once (cmd/poolpilot-relay ensureBootTLS),
+// carried forward unchanged by every schema migration, and rotated only by a
+// factory reset (Wipe), never by a software upgrade or restart.
 type TLS struct {
 	CertPEM string `json:"cert_pem,omitempty"`
 	KeyPEM  string `json:"key_pem,omitempty"` // plaintext at rest — see the package doc's trust assumption
@@ -554,13 +559,50 @@ func (st *Store) Update(fn func(*State)) error {
 // Wipe removes the state file (factory reset) and marks the store dead: every
 // later Update fails with ErrWiped so a concurrent poll tick cannot recreate
 // the file from memory in the window before the process exits.
+//
+// A factory reset must erase the IDENTITY, not merely unlink the live document:
+// the "<path>.v1.bak" migration backup (backupV1) and any temp file a crashed
+// persist left behind (persistLocked) carry the same plaintext TLS private key
+// and credentials, so they are removed too — otherwise "reset rotates the
+// identity" would leave the old key readable on disk. Removing the live
+// document is the reset's point of no return: everything after it is
+// best-effort hygiene that is logged, never surfaced as a Wipe failure.
 func (st *Store) Wipe() error {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	if err := os.Remove(st.path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	// The live document is gone — mark the store dead FIRST, so even if the
+	// sibling cleanup below fails a concurrent Update cannot resurrect the
+	// wiped credentials from memory.
 	st.wiped = true
+	// Sibling cleanup is BEST-EFFORT from here: with the live document removed
+	// the reset has already HAPPENED (the store is dead, the next boot mints a
+	// fresh identity). Returning an error now would make the factory-reset
+	// handler report failure and skip the restart while every later Update
+	// fails ErrWiped — a zombie relay. A leftover backup is a hygiene miss to
+	// log, not a reason to wedge the agent.
+	bak := st.path + ".v1.bak"
+	if err := os.Remove(bak); err != nil && !errors.Is(err, os.ErrNotExist) {
+		slog.Warn("factory reset: could not remove migration backup", "path", bak, "err", err)
+	}
+	dir := filepath.Dir(st.path)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			slog.Warn("factory reset: could not scan state dir for persist temps", "dir", dir, "err", err)
+		}
+		return nil
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, ".state-") && strings.HasSuffix(name, ".json") {
+			if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+				slog.Warn("factory reset: could not remove persist temp", "path", filepath.Join(dir, name), "err", err)
+			}
+		}
+	}
 	return nil
 }
 
