@@ -2,6 +2,7 @@ package state
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -429,6 +430,35 @@ func TestWipeErasesMigrationBackupAndPersistTemps(t *testing.T) {
 	// Wipe of an already-clean store stays idempotent.
 	if err := st.Wipe(); err != nil {
 		t.Errorf("second Wipe must tolerate already-removed files: %v", err)
+	}
+}
+
+// Once the live document is removed the reset has happened: a failing sibling
+// cleanup (here: a ".v1.bak" that is a non-empty directory, so os.Remove
+// errors with a real error, not ErrNotExist) must be logged, not returned —
+// otherwise the factory-reset handler would report failure and skip the
+// restart while the store is already dead (a zombie relay).
+func TestWipeSucceedsEvenWhenSiblingCleanupFails(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+	st, err := Open(path) // fresh mint persists a live document
+	if err != nil {
+		t.Fatalf("Open (fresh): %v", err)
+	}
+	bak := path + ".v1.bak"
+	if err := os.MkdirAll(filepath.Join(bak, "sub"), 0o700); err != nil {
+		t.Fatalf("seed unremovable backup: %v", err)
+	}
+
+	if err := st.Wipe(); err != nil {
+		t.Fatalf("Wipe must succeed once the live document is gone (sibling cleanup is best-effort): %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("live document must be removed (err=%v)", err)
+	}
+	// The store is dead regardless of the cleanup failure.
+	if err := st.Update(func(s *State) {}); !errors.Is(err, ErrWiped) {
+		t.Errorf("Update after Wipe: got %v, want ErrWiped", err)
 	}
 }
 

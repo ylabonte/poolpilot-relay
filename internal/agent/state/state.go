@@ -42,6 +42,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -563,7 +564,9 @@ func (st *Store) Update(fn func(*State)) error {
 // the "<path>.v1.bak" migration backup (backupV1) and any temp file a crashed
 // persist left behind (persistLocked) carry the same plaintext TLS private key
 // and credentials, so they are removed too — otherwise "reset rotates the
-// identity" would leave the old key readable on disk.
+// identity" would leave the old key readable on disk. Removing the live
+// document is the reset's point of no return: everything after it is
+// best-effort hygiene that is logged, never surfaced as a Wipe failure.
 func (st *Store) Wipe() error {
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -574,19 +577,29 @@ func (st *Store) Wipe() error {
 	// sibling cleanup below fails a concurrent Update cannot resurrect the
 	// wiped credentials from memory.
 	st.wiped = true
-	if err := os.Remove(st.path + ".v1.bak"); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+	// Sibling cleanup is BEST-EFFORT from here: with the live document removed
+	// the reset has already HAPPENED (the store is dead, the next boot mints a
+	// fresh identity). Returning an error now would make the factory-reset
+	// handler report failure and skip the restart while every later Update
+	// fails ErrWiped — a zombie relay. A leftover backup is a hygiene miss to
+	// log, not a reason to wedge the agent.
+	bak := st.path + ".v1.bak"
+	if err := os.Remove(bak); err != nil && !errors.Is(err, os.ErrNotExist) {
+		slog.Warn("factory reset: could not remove migration backup", "path", bak, "err", err)
 	}
 	dir := filepath.Dir(st.path)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return err
+		if !errors.Is(err, os.ErrNotExist) {
+			slog.Warn("factory reset: could not scan state dir for persist temps", "dir", dir, "err", err)
+		}
+		return nil
 	}
 	for _, e := range entries {
 		name := e.Name()
 		if strings.HasPrefix(name, ".state-") && strings.HasSuffix(name, ".json") {
 			if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return err
+				slog.Warn("factory reset: could not remove persist temp", "path", filepath.Join(dir, name), "err", err)
 			}
 		}
 	}
