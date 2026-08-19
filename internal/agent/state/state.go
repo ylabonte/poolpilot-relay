@@ -121,7 +121,11 @@ type Controller struct {
 	LastSuccessAt time.Time `json:"last_success_at,omitzero"`
 }
 
-// TLS is the self-signed LAN-API certificate material (PEM).
+// TLS is the self-signed LAN-API certificate material (PEM). Paired apps pin
+// this keypair's SPKI fingerprint, so it is IDENTITY, not just transport
+// material: it is minted exactly once (cmd/poolpilot-relay ensureBootTLS),
+// carried forward unchanged by every schema migration, and rotated only by a
+// factory reset (Wipe), never by a software upgrade or restart.
 type TLS struct {
 	CertPEM string `json:"cert_pem,omitempty"`
 	KeyPEM  string `json:"key_pem,omitempty"` // plaintext at rest — see the package doc's trust assumption

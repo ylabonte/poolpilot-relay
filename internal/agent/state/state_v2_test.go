@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"testing"
 	"time"
+
+	"github.com/ylabonte/poolpilot-relay/internal/agent/tlscert"
 )
 
 // A realistic, fully-populated v1 document — pairing + controller + doc-level
@@ -315,6 +317,83 @@ func TestV1LeafTypesJSONContractIsFrozen(t *testing.T) {
 		t.Fatalf("marshal TLS: %v", err)
 	} else if string(got) != wantTLS {
 		t.Errorf("TLS JSON contract drifted (v1 migration reuses this leaf type):\n got  %s\n want %s", got, wantTLS)
+	}
+}
+
+// A v1 document that PREDATES TLS persistence carries no "tls" block at all.
+// Migration must preserve the agent identity and leave TLS empty — the boot
+// path then mints the certificate once and persists it (see cmd/poolpilot-relay
+// ensureBootTLS). This was the one path that ever changed the SPKI pin under a
+// stable agent_id, and it cannot repeat: after this migration the document is
+// v2 and carries its material forward forever.
+func TestMigratePreTLSDocPreservesIdentityWithEmptyTLS(t *testing.T) {
+	const body = `{
+  "v": 1,
+  "agent_id": "dddddddddddddddddddddddddddddddd",
+  "pairing": {"token_sha256": "abc", "paired_at": "2026-01-02T03:04:05Z", "device_name": "iPhone"},
+  "cloud": {"frpc_token": "relay-tok"},
+  "controller": {"lan_address": "192.168.2.3", "guid": "g1"}
+}`
+	dir := t.TempDir()
+	path := writeV1(t, dir, body)
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open (pre-TLS v1): %v", err)
+	}
+	s := st.Get()
+	if s.AgentID != "dddddddddddddddddddddddddddddddd" {
+		t.Errorf("agent_id not preserved: %q", s.AgentID)
+	}
+	if s.TLS.CertPEM != "" || s.TLS.KeyPEM != "" {
+		t.Errorf("absent v1 tls block must migrate to EMPTY TLS (never invented material): %+v", s.TLS)
+	}
+	if !s.Paired() || len(s.Controllers) != 1 {
+		t.Errorf("rest of the pre-TLS document not preserved: %+v", s)
+	}
+}
+
+// Migration and the subsequent persist → reopen round-trip must carry the TLS
+// material forward BYTE-FOR-BYTE: a single changed byte in cert_pem or key_pem
+// rotates the SPKI pin and locks every paired app out of the relay. Uses real
+// multi-line PEM (not the "CERT" placeholder of v1Full) so an escaping or
+// whitespace bug in the JSON round-trip would be caught.
+func TestMigratePreservesTLSMaterialByteForByte(t *testing.T) {
+	certPEM, keyPEM, err := tlscert.Generate("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
+	if err != nil {
+		t.Fatalf("tlscert.Generate: %v", err)
+	}
+	v1 := stateV1{
+		Version: 1,
+		AgentID: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+		TLS:     TLS{CertPEM: string(certPEM), KeyPEM: string(keyPEM)},
+	}
+	raw, err := json.Marshal(v1)
+	if err != nil {
+		t.Fatalf("marshal v1 doc: %v", err)
+	}
+	dir := t.TempDir()
+	path := writeV1(t, dir, string(raw))
+
+	// The migrating open (v1 → v2, persists) must not alter a byte.
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open (migrate): %v", err)
+	}
+	s := st.Get()
+	if s.TLS.CertPEM != string(certPEM) || s.TLS.KeyPEM != string(keyPEM) {
+		t.Fatal("v1 → v2 migration altered the TLS material")
+	}
+
+	// Neither must the next boot's plain re-open of the persisted v2 document
+	// (the simulated post-upgrade restart).
+	st2, err := Open(path)
+	if err != nil {
+		t.Fatalf("re-Open (v2): %v", err)
+	}
+	s2 := st2.Get()
+	if s2.TLS.CertPEM != string(certPEM) || s2.TLS.KeyPEM != string(keyPEM) {
+		t.Fatal("persist → reopen round-trip altered the TLS material")
 	}
 }
 
