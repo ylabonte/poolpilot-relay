@@ -222,7 +222,9 @@
     "label": "VIOLET",
     "ingest_id": "uoHBvRPOIvGrv5iFlbCBFNOgmBjMtp",
     "ingest_secret": "asiaOclRz3AwzKsbVRJN9wVGFYGW2W",
-    "attest_challenge": "FiuC61Uncxn75pXEjFgYxUKGGwjNIGVB"
+    "attest_challenge": "FiuC61Uncxn75pXEjFgYxUKGGwjNIGVB",
+    "attest_key_id": "key-1",
+    "attestation": "att-1"
   },
   "push_source_create_response": {
     "ingest_id": "uoHBvRPOIvGrv5iFlbCBFNOgmBjMtp",
@@ -235,7 +237,9 @@
     "ingest_id": "uoHBvRPOIvGrv5iFlbCBFNOgmBjMtp",
     "ingest_secret": "asiaOclRz3AwzKsbVRJN9wVGFYGW2W",
     "device_id": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d",
-    "attest_challenge": "FiuC61Uncxn75pXEjFgYxUKGGwjNIGVB"
+    "attest_challenge": "FiuC61Uncxn75pXEjFgYxUKGGwjNIGVB",
+    "attest_key_id": "key-1",
+    "attestation": "att-1"
   },
   "push_source_lookup_response": {
     "found": true,
@@ -246,7 +250,9 @@
   "push_source_revoke_request": {
     "ingest_id": "uoHBvRPOIvGrv5iFlbCBFNOgmBjMtp",
     "ingest_secret": "asiaOclRz3AwzKsbVRJN9wVGFYGW2W",
-    "attest_challenge": "FiuC61Uncxn75pXEjFgYxUKGGwjNIGVB"
+    "attest_challenge": "FiuC61Uncxn75pXEjFgYxUKGGwjNIGVB",
+    "attest_key_id": "key-1",
+    "attestation": "att-1"
   },
   "push_source_subscribe_request": {
     "ingest_id": "uoHBvRPOIvGrv5iFlbCBFNOgmBjMtp",
@@ -256,7 +262,9 @@
     "environment": "prod",
     "locale": "de",
     "device_id": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d",
-    "attest_challenge": "FiuC61Uncxn75pXEjFgYxUKGGwjNIGVB"
+    "attest_challenge": "FiuC61Uncxn75pXEjFgYxUKGGwjNIGVB",
+    "attest_key_id": "key-1",
+    "attestation": "att-1"
   },
   "rc_link_request": {
     "app_user_id": "rc-user-1",
