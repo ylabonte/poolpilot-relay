@@ -245,6 +245,35 @@ func (c *Client) RevokePushForDevice(ctx context.Context, deviceID string) error
 	}
 }
 
+// Release best-effort releases this relay's cloud-side quota slot on a
+// factory reset (POST /relay/release, relay-bearer, bodyless — a plain
+// relay-bearer POST like RevokeController/RevokePushForDevice above, no new
+// wire type). Unlike those, baseURL and frpcToken are explicit arguments
+// rather than read from c.store.Get(): the caller (lanapi's factoryReset)
+// invokes this AFTER state.Store.Wipe() has already killed the store, so
+// c.store.Get() would read a wiped/zero state and lose the very credentials
+// this call needs. The caller must snapshot both from the store BEFORE
+// wiping.
+//
+// A 404 means an old control plane without the route yet — best-effort, and
+// version skew must never fail the reset — so it is treated as success, the
+// same idempotent-404 reading RevokeController gives an already-gone
+// controller.
+func (c *Client) Release(ctx context.Context, baseURL, frpcToken string) error {
+	status, err := c.doJSON(ctx, http.MethodPost, baseURL+"/relay/release", frpcToken, nil, nil)
+	if err != nil {
+		return err
+	}
+	switch {
+	case status >= 200 && status < 300, status == http.StatusNotFound:
+		return nil
+	case status >= 400 && status < 500:
+		return fmt.Errorf("%w: relay/release HTTP %d", ErrRejected, status)
+	default:
+		return fmt.Errorf("%w: relay/release HTTP %d", ErrUnavailable, status)
+	}
+}
+
 // BrokerVoucher exchanges a household invite code for an app-bearer voucher
 // (POST /device-vouchers, bearer = the stored per-relay frpc token). The agent
 // calls it in the middle of the LAN pairing ceremony and hands the voucher
