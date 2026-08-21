@@ -848,6 +848,43 @@ type RcLinkResponse struct {
 	Changed   bool   `json:"changed"`
 }
 
+// ---- Household: status (member entitlement) ----
+//
+// The relay device itself does NOT serve this endpoint — these two types live
+// here only because this package is the shared JSON contract cloud imports as
+// a versioned Go dependency, pinned to a released tag (see this repo's
+// CLAUDE.md "Cross-repo" section and the package doc comment above); a later
+// cloud PR serves POST /tenant/status and a later app PR calls it (pool-apps#9,
+// the household-member-entitlement work).
+
+// TenantStatusRequest is POST /tenant/status (app-bearer authed, ANY role —
+// the whole point is that a MEMBER can ask this about its own household,
+// exactly like RcLinkRequest above). The bearer alone identifies the caller
+// and the household; the body exists only to carry the attestation challenge
+// — same reason ControllerListRequest above is a POST rather than a GET.
+type TenantStatusRequest struct {
+	// AttestChallenge — see DeviceRegisterRequest.AttestChallenge's doc.
+	AttestChallenge string `json:"attest_challenge,omitempty"`
+}
+
+// TenantStatusResponse answers TenantStatusRequest: it lets a household
+// MEMBER's device learn whether its household is entitled and what role the
+// calling bearer holds, so the app can grant "Pro via household" without ever
+// checking the device's own subscription.
+//
+// Entitled is the cloud's tenant.Entitled() for the caller's household — comp
+// (complimentary) entitlements included, the same check every other gated
+// route already applies, never a client-supplied flag. TenantID and Role
+// mirror AppBearerMintResponse's fields of the same name, but this is a live
+// re-decide on every call rather than the mint's one-time echo, so a household
+// upgrade or a role change is visible on the member's very next call — no new
+// bearer required.
+type TenantStatusResponse struct {
+	TenantID string `json:"tenant_id"`
+	Role     string `json:"role"`
+	Entitled bool   `json:"entitled"`
+}
+
 // ---- Household: invites, vouchers, recovery ----
 //
 // The join ceremony in one line: an OWNER mints an invite code (InviteMintRequest)
