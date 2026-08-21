@@ -298,6 +298,14 @@
   "rc_claim_object_response": {
     "status": "objected"
   },
+  "tenant_status_request": {
+    "attest_challenge": "chal-1"
+  },
+  "tenant_status_response": {
+    "tenant_id": "7f3e-tenant",
+    "role": "member",
+    "entitled": true
+  },
   "update_status": {
     "current": "v1.3.2",
     "available": "v1.4.0",
