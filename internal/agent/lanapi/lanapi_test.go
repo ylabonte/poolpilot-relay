@@ -1328,4 +1328,13 @@ func TestFactoryResetStillSucceedsOn404(t *testing.T) {
 	if _, err := os.Stat(f.store.PathName()); !os.IsNotExist(err) {
 		t.Errorf("state file survived the reset: %v", err)
 	}
+	// The reset must ATTEMPT the release (and treat the 404 as success), not
+	// skip it — otherwise a regression that never calls /relay/release would
+	// pass this test while exercising nothing.
+	f.releasedMu.Lock()
+	called := f.releaseCalled
+	f.releasedMu.Unlock()
+	if !called {
+		t.Error("factory reset did not attempt POST /relay/release before the 404 was returned")
+	}
 }

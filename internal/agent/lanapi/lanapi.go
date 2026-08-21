@@ -1721,6 +1721,8 @@ func (s *Server) factoryReset(w http.ResponseWriter, r *http.Request) {
 		releaseCtx, cancel := context.WithTimeout(cloudCtx(r), 5*time.Second)
 		if err := s.Cloud.Release(releaseCtx, st.Cloud.BaseURL, st.Cloud.FrpcToken); err != nil {
 			slog.Warn("cloud slot release failed; the inactivity janitor reclaims it later", "err", err)
+		} else {
+			slog.Info("released cloud quota slot on factory reset")
 		}
 		cancel()
 	}

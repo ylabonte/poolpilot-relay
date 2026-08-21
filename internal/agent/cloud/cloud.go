@@ -250,10 +250,12 @@ func (c *Client) RevokePushForDevice(ctx context.Context, deviceID string) error
 // relay-bearer POST like RevokeController/RevokePushForDevice above, no new
 // wire type). Unlike those, baseURL and frpcToken are explicit arguments
 // rather than read from c.store.Get(): the caller (lanapi's factoryReset)
-// invokes this AFTER state.Store.Wipe() has already killed the store, so
-// c.store.Get() would read a wiped/zero state and lose the very credentials
-// this call needs. The caller must snapshot both from the store BEFORE
-// wiping.
+// invokes this AFTER state.Store.Wipe(), so the call must not depend on the
+// store's post-wipe state. (Wipe removes the file and blocks further Update,
+// but leaves the in-memory doc readable until the process exits — relying on
+// that quirk would be fragile.) The caller snapshots both from the store
+// BEFORE wiping and passes them in, the same way Redeem takes an explicit
+// baseURL before the store is populated.
 //
 // A 404 means an old control plane without the route yet — best-effort, and
 // version skew must never fail the reset — so it is treated as success, the
