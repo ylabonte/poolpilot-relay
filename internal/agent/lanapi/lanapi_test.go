@@ -85,6 +85,15 @@ type fixture struct {
 	// revoke-push (POST /devices/revoke-push), keyed by device_id.
 	revokedPushMu sync.Mutex
 	revokedPush   map[string]bool
+
+	// releasedMu/releaseCalled/releaseAuth record whether POST /relay/release
+	// was hit by a factory reset, and the bearer it presented. releaseNotFound,
+	// when set, makes the stub answer 404 (an old control plane without the
+	// route yet) instead of 204.
+	releasedMu      sync.Mutex
+	releaseCalled   bool
+	releaseAuth     string
+	releaseNotFound atomic.Bool
 }
 
 // newFixture wires a full agent LAN API against a stubbed cloud and a
@@ -120,6 +129,21 @@ func newFixture(t *testing.T) *fixture {
 			f.revokedPush[body["device_id"]] = true
 			f.revokedPushMu.Unlock()
 			_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+			return
+		}
+		// Relay-authed POST /relay/release — record the call + bearer, and answer
+		// 204, or 404 when the test wants to simulate an old control plane that
+		// does not have the route yet.
+		if r.Method == http.MethodPost && r.URL.Path == "/relay/release" {
+			f.releasedMu.Lock()
+			f.releaseCalled = true
+			f.releaseAuth = r.Header.Get("Authorization")
+			f.releasedMu.Unlock()
+			if f.releaseNotFound.Load() {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		// Relay-authed DELETE /controllers/{guid} — record and 204 (idempotent).
@@ -1246,5 +1270,71 @@ func TestFactoryReset(t *testing.T) {
 			t.Fatal("process exit not requested after factory reset")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// A factory reset must best-effort release this relay's cloud-side quota
+// slot (POST /relay/release) so a reset relay does not permanently squat an
+// entitlement's controller quota — bearer = the frpc token the reset is
+// about to wipe.
+func TestFactoryResetReleasesCloudSlot(t *testing.T) {
+	f := newFixture(t)
+	token := f.pair(t)
+
+	resp, _ := f.do(t, "POST", "/v1/factory-reset", token, nil)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("factory reset: HTTP %d", resp.StatusCode)
+	}
+	f.releasedMu.Lock()
+	called, auth := f.releaseCalled, f.releaseAuth
+	f.releasedMu.Unlock()
+	if !called {
+		t.Fatal("factory reset did not call POST /relay/release")
+	}
+	if auth != "Bearer relay-frpc-token" {
+		t.Errorf("release auth = %q, want the relay's frpc bearer", auth)
+	}
+}
+
+// The release call is best-effort: an unreachable cloud must not stop the
+// reset from wiping local state and answering 204. The cloud's own
+// inactivity janitor is the backstop for the slot itself.
+func TestFactoryResetStillSucceedsWhenCloudDown(t *testing.T) {
+	f := newFixture(t)
+	token := f.pair(t)
+	f.cloudSrv.Close() // simulate an unreachable control-plane
+
+	resp, raw := f.do(t, "POST", "/v1/factory-reset", token, nil)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("factory reset with cloud down: HTTP %d %s, want 204 (release is best-effort)", resp.StatusCode, raw)
+	}
+	if _, err := os.Stat(f.store.PathName()); !os.IsNotExist(err) {
+		t.Errorf("state file survived the reset: %v", err)
+	}
+}
+
+// A 404 from /relay/release (an old control plane without the route yet)
+// must be just as harmless to the reset as the cloud being down outright —
+// version skew must never block a factory reset.
+func TestFactoryResetStillSucceedsOn404(t *testing.T) {
+	f := newFixture(t)
+	token := f.pair(t)
+	f.releaseNotFound.Store(true)
+
+	resp, raw := f.do(t, "POST", "/v1/factory-reset", token, nil)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("factory reset with release 404: HTTP %d %s, want 204", resp.StatusCode, raw)
+	}
+	if _, err := os.Stat(f.store.PathName()); !os.IsNotExist(err) {
+		t.Errorf("state file survived the reset: %v", err)
+	}
+	// The reset must ATTEMPT the release (and treat the 404 as success), not
+	// skip it — otherwise a regression that never calls /relay/release would
+	// pass this test while exercising nothing.
+	f.releasedMu.Lock()
+	called := f.releaseCalled
+	f.releasedMu.Unlock()
+	if !called {
+		t.Error("factory reset did not attempt POST /relay/release before the 404 was returned")
 	}
 }

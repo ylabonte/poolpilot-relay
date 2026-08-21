@@ -1694,7 +1694,17 @@ func (s *Server) putRules(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, wire.AlertRules{Rules: withDefaultOkTolerance(req.Rules)})
 }
 
-func (s *Server) factoryReset(w http.ResponseWriter, _ *http.Request) {
+// factoryReset wipes local state, then best-effort releases this relay's
+// cloud-side quota slot (issue: a reset relay must not permanently squat an
+// entitlement's controller quota). st is captured BEFORE Wipe on purpose —
+// Wipe is the point of no return (state.Store.Wipe's doc) and the release
+// call needs the frpc token Wipe is about to destroy. Wipe-first is
+// deliberate, not an oversight: a release failure must never block the
+// reset, only the reset itself may. The cloud's own inactivity janitor is
+// the backstop when the release call fails (offline relay, cloud down, or a
+// control plane old enough not to have the route yet).
+func (s *Server) factoryReset(w http.ResponseWriter, r *http.Request) {
+	st := s.Store.Get()
 	if err := s.Store.Wipe(); err != nil {
 		slog.Error("factory reset", "err", err)
 		writeErr(w, http.StatusInternalServerError, "wipe_failed")
@@ -1702,6 +1712,19 @@ func (s *Server) factoryReset(w http.ResponseWriter, _ *http.Request) {
 	}
 	if s.OnPaired != nil {
 		s.OnPaired.UpdatePaired(false)
+	}
+	if st.Enrolled() {
+		// WithoutCancel, like the revoke calls above: the LAN client that issued
+		// the reset may hang up (or the systemd exit below may fire) before this
+		// completes, and that must not abort the release mid-flight. The 5s
+		// bound keeps a wedged uplink from delaying the response.
+		releaseCtx, cancel := context.WithTimeout(cloudCtx(r), 5*time.Second)
+		if err := s.Cloud.Release(releaseCtx, st.Cloud.BaseURL, st.Cloud.FrpcToken); err != nil {
+			slog.Warn("cloud slot release failed; the inactivity janitor reclaims it later", "err", err)
+		} else {
+			slog.Info("released cloud quota slot on factory reset")
+		}
+		cancel()
 	}
 	w.WriteHeader(http.StatusNoContent)
 	// Exit AFTER the response is on the wire; systemd (Restart=always)

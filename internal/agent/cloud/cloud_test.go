@@ -320,6 +320,61 @@ func TestRevokePushForDeviceStatusMapping(t *testing.T) {
 	}
 }
 
+// Release takes baseURL/frpcToken as explicit arguments (not store-backed,
+// unlike RevokeController/RevokePushForDevice above) because factoryReset
+// calls it after the store has already been wiped — so the test constructs
+// the client around a store that is never seeded with these values, proving
+// the call cannot be accidentally satisfied from the store instead.
+func TestReleaseSendsBearer(t *testing.T) {
+	var gotMethod, gotPath, gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath, gotAuth = r.Method, r.URL.Path, r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	c := New(newStore(t, ""))
+	if err := c.Release(context.Background(), srv.URL, "release-token"); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/relay/release" || gotAuth != "Bearer release-token" {
+		t.Errorf("request = %s %s auth=%q", gotMethod, gotPath, gotAuth)
+	}
+}
+
+// A 404 (old cloud without the route yet) is best-effort success, just like
+// RevokeController's idempotent-404; other 4xx are terminal (ErrRejected);
+// 5xx/transport failures are retryable (ErrUnavailable).
+func TestReleaseStatusMapping(t *testing.T) {
+	notFound := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer notFound.Close()
+	if err := New(newStore(t, "")).Release(context.Background(), notFound.URL, "tok"); err != nil {
+		t.Errorf("404 must be best-effort success (old cloud without the route), got %v", err)
+	}
+
+	rejecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer rejecting.Close()
+	if err := New(newStore(t, "")).Release(context.Background(), rejecting.URL, "tok"); !errors.Is(err, ErrRejected) {
+		t.Errorf("other 4xx must map to ErrRejected, got %v", err)
+	}
+
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer failing.Close()
+	if err := New(newStore(t, "")).Release(context.Background(), failing.URL, "tok"); !errors.Is(err, ErrUnavailable) {
+		t.Errorf("5xx must map to ErrUnavailable, got %v", err)
+	}
+
+	if err := New(newStore(t, "")).Release(context.Background(), "http://127.0.0.1:1", "tok"); !errors.Is(err, ErrUnavailable) {
+		t.Errorf("transport failure must map to ErrUnavailable, got %v", err)
+	}
+}
+
 func TestCheckUpdateSendsVersionAndParsesTarget(t *testing.T) {
 	var gotAuth, gotBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
