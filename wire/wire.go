@@ -851,14 +851,17 @@ type RcLinkResponse struct {
 // ---- Household: status (member entitlement) ----
 //
 // The relay device itself does NOT serve this endpoint — these two types live
-// here only because wire is the shared contract package cloud imports at a
-// pinned tag (see AppBearerMintResponse's doc above); a later cloud PR serves
-// POST /tenant/status and a later app PR calls it (pool-apps#9, the
-// household-member-entitlement work).
+// here only because this package is the shared JSON contract cloud imports as
+// a versioned Go dependency, pinned to a released tag (see this repo's
+// CLAUDE.md "Cross-repo" section and the package doc comment above); a later
+// cloud PR serves POST /tenant/status and a later app PR calls it (pool-apps#9,
+// the household-member-entitlement work).
 
 // TenantStatusRequest is POST /tenant/status (app-bearer authed, ANY role —
 // the whole point is that a MEMBER can ask this about its own household,
-// exactly like RcLinkRequest above).
+// exactly like RcLinkRequest above). The bearer alone identifies the caller
+// and the household; the body exists only to carry the attestation challenge
+// — same reason ControllerListRequest above is a POST rather than a GET.
 type TenantStatusRequest struct {
 	// AttestChallenge — see DeviceRegisterRequest.AttestChallenge's doc.
 	AttestChallenge string `json:"attest_challenge,omitempty"`
