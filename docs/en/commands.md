@@ -68,15 +68,21 @@ The self‑update helper logs separately:
 journalctl -u poolpilot-relay-updater      # what the updater did (and why)
 ```
 
-## Checking the version
+## Version and help
 
-There is **no `--version` flag** — running `poolpilot-relay` with anything other
-than `show-pairing`/`show-recovery` just tries to start the agent. To see which
-version a device is running:
+The agent understands the two flags you'd expect:
 
-- open the relay's page in the **PoolPilot app** (it shows the version), or
-- read it from the boot log:
+```bash
+poolpilot-relay version     # also --version, -v  → prints the version, e.g. v0.1.0
+poolpilot-relay help        # also --help,    -h  → lists the commands and flags
+```
 
-  ```bash
-  journalctl -u poolpilot-relay | grep "agent starting"
-  ```
+Any unrecognized argument prints the same help to standard error and exits
+non‑zero, rather than accidentally starting the agent.
+
+To check the version of the **running** service specifically, the PoolPilot app
+shows it too, or read it from the boot log:
+
+```bash
+journalctl -u poolpilot-relay | grep "agent starting"
+```

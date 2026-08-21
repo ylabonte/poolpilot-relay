@@ -71,15 +71,21 @@ Der Selbst-Update-Helfer loggt separat:
 journalctl -u poolpilot-relay-updater      # was der Updater getan hat (und warum)
 ```
 
-## Version prüfen
+## Version und Hilfe
 
-Es gibt **keinen `--version`-Schalter** — `poolpilot-relay` mit etwas anderem als
-`show-pairing`/`show-recovery` aufzurufen versucht nur, den Agenten zu starten. Um
-zu sehen, welche Version ein Gerät fährt:
+Der Agent versteht die beiden Schalter, die du erwartest:
 
-- öffne die Seite des Relays in der **PoolPilot-App** (sie zeigt die Version), oder
-- lies sie aus dem Start-Log:
+```bash
+poolpilot-relay version     # auch --version, -v  → gibt die Version aus, z. B. v0.1.0
+poolpilot-relay help        # auch --help,    -h  → listet Befehle und Schalter
+```
 
-  ```bash
-  journalctl -u poolpilot-relay | grep "agent starting"
-  ```
+Jedes unbekannte Argument gibt dieselbe Hilfe auf die Standardfehlerausgabe aus
+und beendet sich mit einem Fehlercode, statt versehentlich den Agenten zu starten.
+
+Um gezielt die Version des **laufenden** Dienstes zu prüfen, zeigt die
+PoolPilot-App sie ebenfalls, oder lies sie aus dem Start-Log:
+
+```bash
+journalctl -u poolpilot-relay | grep "agent starting"
+```

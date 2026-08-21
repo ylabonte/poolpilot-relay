@@ -37,11 +37,13 @@ them by hand — systemd runs the agent and you manage everything from the app �
 but here's what they are (details in **[Commands](docs/en/commands.md)** ·
 🇩🇪 [Befehle](docs/de/commands.md)):
 
-| Program | Purpose | Common use |
+| Command | Purpose | Common use |
 | --- | --- | --- |
 | `poolpilot-relay` | The **agent** — the relay itself, run by systemd. | `systemctl status poolpilot-relay`, `journalctl -u poolpilot-relay -f` |
 | `poolpilot-relay show-pairing` | Print this device's **pairing** QR + fingerprint (read-only). | `sudo poolpilot-relay show-pairing` |
 | `poolpilot-relay show-recovery` | Print a one-time code to **re-take the owner role** (read-only). | `sudo poolpilot-relay show-recovery` |
+| `poolpilot-relay version` | Print the agent version (also `--version`, `-v`). | `poolpilot-relay version` |
+| `poolpilot-relay help` | List the commands and flags (also `--help`, `-h`). | `poolpilot-relay help` |
 | `poolpilot-relay-updater` | Privileged **self-update helper**; fired by systemd, never run by hand. | — |
 | `install.sh` | The installer above — also updates/repairs a device (idempotent). | `curl -fsSL https://get.poolpilot.eu/install.sh \| bash` |
 
@@ -50,8 +52,8 @@ Systemd units live in `/etc/systemd/system/` (`poolpilot-relay.service`, plus
 `/etc/poolpilot-relay/config` — see **[Configuration](docs/en/configuration.md)**
 · 🇩🇪 [Konfiguration](docs/de/configuration.md).
 
-> There is no `--version` flag. Check a device's version in the app, or with
-> `journalctl -u poolpilot-relay | grep "agent starting"`.
+> Check a device's version with `poolpilot-relay version` (or `--version`), or in
+> the PoolPilot app. Run `poolpilot-relay help` (or `--help`) to list every command.
 
 ## Building & testing
 
