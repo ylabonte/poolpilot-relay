@@ -1,43 +1,75 @@
 # PoolPilot Relay
 
-The edge agent (Go) that talks to your ProCon.IP or VIOLET pool controller on
-the local network and bridges it to the PoolPilot apps.
+The edge agent (Go) that talks to your **ProCon.IP** or **VIOLET** pool
+controller on the local network and bridges it to the PoolPilot apps — directly
+over your LAN at home, and through a secure tunnel to the PoolPilot cloud when
+you're away.
+
+📖 **Documentation:** [English](docs/en/index.md) · **[🇩🇪 Deutsch](docs/de/index.md)**
+&nbsp;— installation, pairing, commands, configuration, self-update, troubleshooting.
 
 ## Install
 
-```
+```bash
 curl -fsSL https://get.poolpilot.eu/install.sh | bash
 ```
 
 Prefer to read before you run? The installer lives in this repo — fetch it
 straight from source, read it, then run it:
 
-```
+```bash
 curl -fsSLO https://raw.githubusercontent.com/ylabonte/poolpilot-relay/main/deploy/relay/install.sh
 less install.sh && bash install.sh
 ```
 
 Binaries are published as signed [GitHub Release](https://github.com/ylabonte/poolpilot-relay/releases)
-assets; the installer verifies each download's SHA-256 checksum (plus a minisign
+assets; the installer verifies each download's SHA-256 checksum (plus a `minisign`
 signature when `minisign` is present). Which version installs is decided by the
-PoolPilot control plane — so halting a bad release stops fresh installs too.
+PoolPilot control plane. Once installed, the relay **[updates itself](docs/en/self-update.md)**.
 
-Once installed, the relay **self-updates**: the agent stages signed releases and
-a privileged root helper (`cmd/poolpilot-relay-updater`) independently verifies
-and applies them with automatic rollback, on a nightly schedule you manage from
-the app (or opt out of per device with `UPDATE_DISABLED=1`). Operator runbook:
-[docs/self-update.md](docs/self-update.md).
+Full walkthrough: **[Installation & pairing](docs/en/installation.md)**
+· 🇩🇪 [Installation & Kopplung](docs/de/installation.md).
 
-## Testing
+## What gets installed
 
-Unit and wire-parity tests use the standard Go toolchain:
+These are the commands the relay gives you, and the programs behind them. In
+normal use you don't run any of them by hand — systemd runs the agent and you
+manage everything from the app —
+but here's what they are (details in **[Commands](docs/en/commands.md)** ·
+🇩🇪 [Befehle](docs/de/commands.md)):
 
-```
-go test ./...
+| Command | Purpose | Common use |
+| --- | --- | --- |
+| `poolpilot-relay` | The **agent** — the relay itself, run by systemd. | `systemctl status poolpilot-relay`, `journalctl -u poolpilot-relay -f` |
+| `poolpilot-relay show-pairing` | Print this device's **pairing** QR + fingerprint (read-only). | `sudo poolpilot-relay show-pairing` |
+| `poolpilot-relay show-recovery` | Print a one-time code to **re-take the owner role** (read-only). | `sudo poolpilot-relay show-recovery` |
+| `poolpilot-relay version` | Print the agent version (also `--version`, `-v`). | `poolpilot-relay version` |
+| `poolpilot-relay help` | List the commands and flags (also `--help`, `-h`). | `poolpilot-relay help` |
+| `poolpilot-relay-updater` | Privileged **self-update helper**; fired by systemd, never run by hand. | — |
+| `install.sh` | The installer above — also updates/repairs a device (idempotent). | `curl -fsSL https://get.poolpilot.eu/install.sh \| bash` |
+
+Systemd units live in `/etc/systemd/system/` (`poolpilot-relay.service`, plus
+`poolpilot-relay-updater.service` + `.path` for self-update). Settings live in
+`/etc/poolpilot-relay/config` — see **[Configuration](docs/en/configuration.md)**
+· 🇩🇪 [Konfiguration](docs/de/configuration.md).
+
+> Check a device's version with `poolpilot-relay version` (or `--version`), or in
+> the PoolPilot app. Run `poolpilot-relay help` (or `--help`) to list every command.
+
+## Building & testing
+
+Standard Go tooling — everything is one module at the repo root:
+
+```bash
+go build ./...     # compile every package
+go test ./...      # unit + wire/measurement parity tests
+go vet ./...       # static checks
 ```
 
 The self-update path additionally has a manual, per-architecture end-to-end
-harness — QEMU/cloud-init VMs on amd64/386/armv7/riscv64 that drive the real
-`.path`→helper→install→health-watch→rollback chain. It is run by hand (a
-compensating control for the deliberate no-systemd-e2e gap in CI) and documented
-in [test/self-update-e2e/README.md](test/self-update-e2e/README.md).
+harness (QEMU/cloud-init VMs on amd64/386/armv7/riscv64) documented in
+[test/self-update-e2e/README.md](test/self-update-e2e/README.md).
+
+## License
+
+See [LICENSE](LICENSE) and [NOTICE](NOTICE).

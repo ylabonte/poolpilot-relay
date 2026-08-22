@@ -69,13 +69,11 @@ import (
 var version = "dev"
 
 func main() {
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "show-pairing":
-			os.Exit(runShowPairing(os.Args[2:]))
-		case "show-recovery":
-			os.Exit(runShowRecovery(os.Args[2:]))
-		}
+	// Argument-driven modes (show-*, version, help, and usage errors) are handled
+	// here and exit; only a bare invocation with no arguments falls through to
+	// running the agent — that is the systemd ExecStart path.
+	if code, handled := runCLI(os.Args[1:], os.Stdout, os.Stderr); handled {
+		os.Exit(code)
 	}
 	if err := run(); err != nil && !errors.Is(err, context.Canceled) {
 		slog.Error("agent exited", "err", err)

@@ -6,9 +6,10 @@
 device in the user's home (typically a Raspberry Pi or similar). It talks to a **ProCon.IP** or
 **VIOLET** pool controller on the local network and bridges it to the PoolPilot apps — reachable both
 directly over the LAN and, when the user is away, through an outbound **frp tunnel** to the PoolPilot
-cloud backend. It is designed to update itself — the update-check client exists
-(`internal/agent/cloud`), but the updater loop is not yet wired; which version **installs** is decided
-by the control plane, so a bad release can be halted centrally.
+cloud backend. It updates itself: the agent checks in with the control plane and stages signed,
+verified releases (`internal/agent/updater`), and a privileged root helper (`cmd/poolpilot-relay-updater`)
+installs them with automatic rollback. Which version **installs** is decided by the control plane, so a
+bad release can be halted centrally.
 
 Module path: `github.com/ylabonte/poolpilot-relay` (Go 1.26).
 
