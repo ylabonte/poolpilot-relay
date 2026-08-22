@@ -64,7 +64,7 @@ sudo systemctl restart poolpilot-relay
 ```
 
 Mit `UPDATE_DISABLED=1` prüft das Relay **nicht** auf Updates, installiert sie
-**nicht** automatisch **und „Jetzt aktualisieren" in der App funktioniert dann
+**nicht** automatisch **und „Jetzt aktualisieren“ in der App funktioniert dann
 auch nicht** — es ist ein harter Aus-Schalter. Um ein solches Gerät später zu
 aktualisieren, führe den Installer erneut aus:
 

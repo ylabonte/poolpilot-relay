@@ -14,8 +14,8 @@ journalctl -u poolpilot-relay -f        # live logs; Ctrl-C to stop
 journalctl -u poolpilot-relay -b        # everything since the last boot
 ```
 
-Thanks to the installer, these logs survive reboots. If you use self‑update, the
-installer helper logs separately:
+Thanks to the installer, these logs survive reboots. The self‑update helper
+logs separately:
 
 ```bash
 journalctl -u poolpilot-relay-updater

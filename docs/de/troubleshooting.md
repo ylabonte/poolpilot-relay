@@ -14,8 +14,8 @@ journalctl -u poolpilot-relay -f        # Live-Logs; mit Strg-C beenden
 journalctl -u poolpilot-relay -b        # alles seit dem letzten Start
 ```
 
-Dank des Installers überstehen diese Logs Neustarts. Wenn du das Selbst-Update
-nutzt, loggt der Installer-Helfer separat:
+Dank des Installers überstehen diese Logs Neustarts. Der Selbst-Update-Helfer
+loggt separat:
 
 ```bash
 journalctl -u poolpilot-relay-updater
@@ -29,7 +29,7 @@ journalctl -u poolpilot-relay-updater
 2. **Selbes Netzwerk?** Zu Hause findet die App das Relay über dein LAN. Stelle
    sicher, dass das Telefon im selben WLAN ist (nicht im Gast-WLAN oder auf
    Mobilfunk).
-3. **Meldet „nicht erreichbar" nach einem Werksreset?** Ein Werksreset gibt dem
+3. **Meldet „nicht erreichbar“ nach einem Werksreset?** Ein Werksreset gibt dem
    Relay eine brandneue Identität, die nicht mehr zu dem passt, was sich deine
    App gemerkt hat — deshalb kann die App es als *nicht erreichbar* melden,
    obwohl alles in Ordnung ist. Behebung: **das Relay in der App entfernen und

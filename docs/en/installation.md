@@ -20,6 +20,12 @@
 curl -fsSL https://get.poolpilot.eu/install.sh | bash
 ```
 
+On a box that has `wget` but not `curl`, pipe it the same way:
+
+```bash
+wget -qO- https://get.poolpilot.eu/install.sh | bash
+```
+
 Prefer to read the script before running it? It lives in this repository — fetch
 it from source, read it, then run it:
 

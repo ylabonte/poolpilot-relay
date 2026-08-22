@@ -22,6 +22,12 @@ unterstützt.
 curl -fsSL https://get.poolpilot.eu/install.sh | bash
 ```
 
+Auf einem Gerät mit `wget`, aber ohne `curl`, geht es genauso:
+
+```bash
+wget -qO- https://get.poolpilot.eu/install.sh | bash
+```
+
 Du möchtest das Skript vor dem Ausführen lesen? Es liegt in diesem Repository —
 hol es direkt von der Quelle, lies es, führe es dann aus:
 

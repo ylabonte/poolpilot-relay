@@ -32,8 +32,9 @@ Full walkthrough: **[Installation & pairing](docs/en/installation.md)**
 
 ## What gets installed
 
-The installer places these on your device. In normal use you don't run any of
-them by hand — systemd runs the agent and you manage everything from the app —
+These are the commands the relay gives you, and the programs behind them. In
+normal use you don't run any of them by hand — systemd runs the agent and you
+manage everything from the app —
 but here's what they are (details in **[Commands](docs/en/commands.md)** ·
 🇩🇪 [Befehle](docs/de/commands.md)):
 
