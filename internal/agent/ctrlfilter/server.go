@@ -336,6 +336,25 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
+// controllerTransport is the reverse proxy's transport for the controller leg —
+// http.DefaultTransport with connection reuse turned OFF. The controllers run a
+// minimal embedded HTTP stack that does not survive keep-alive reuse for writes:
+// a pooled connection the controller has since dropped makes a POST — which Go
+// will not transparently retry, the way it does an idempotent GET — surface as
+// "upstream prematurely closed connection", a dead write while reads still work.
+// Verified live 2026-08-27: nginx logged exactly that on POST /usrcfg.cgi over
+// the tunnel, and the identical write succeeded when the phone was on the
+// controller's LAN. A LAN browser never hits it (its connection pool is fresh and
+// short-lived); this long-lived agent's is not. One fresh, close-after connection
+// per request mirrors the LAN path that works; ResponseHeaderTimeout makes a
+// stalled controller fail fast (a logged 502) instead of hanging the whole chain.
+var controllerTransport = func() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DisableKeepAlives = true
+	t.ResponseHeaderTimeout = 30 * time.Second
+	return t
+}()
+
 // New returns the reverse-proxy handler for ONE controller: target is the
 // controller's real base URL. An authenticated caller gets full transparent
 // read+write access; see the package doc for why the "view but don't touch"
@@ -364,6 +383,7 @@ func New(target *url.URL) http.Handler {
 			pr.SetXForwarded()
 			pr.SetURL(target)
 		},
+		Transport:     controllerTransport,
 		FlushInterval: -1,
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			slog.Warn("ctrlfilter: proxy to controller failed", "target", target.String(), "err", err)
