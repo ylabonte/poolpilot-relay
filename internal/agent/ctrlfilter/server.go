@@ -348,6 +348,8 @@ func (s *Server) Run(ctx context.Context) error {
 // short-lived); this long-lived agent's is not. One fresh, close-after connection
 // per request mirrors the LAN path that works; ResponseHeaderTimeout makes a
 // stalled controller fail fast (a logged 502) instead of hanging the whole chain.
+// DisableKeepAlives adds Connection: close to ordinary requests but not to a
+// protocol switch, so New's Upgrade/WebSocket handling below is unaffected.
 var controllerTransport = func() *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.DisableKeepAlives = true
