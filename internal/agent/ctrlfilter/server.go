@@ -357,6 +357,26 @@ var controllerTransport = func() *http.Transport {
 	return t
 }()
 
+// forwardingHeaders are the non-X-Forwarded-* proxy "fingerprint" headers
+// stripped from every request before it reaches the controller; New's Rewrite
+// sweeps the whole X-Forwarded-* family by prefix separately. The controller
+// keeps a small request-header buffer on WRITES and rejects (400 + RST) any POST
+// whose headers exceed it; a LAN-direct browser write fits, but these headers —
+// which a LAN client never sends — are the extra weight that tips an otherwise
+// identical write over. The controller has no use for them anyway: it is the
+// final hop. Verified live 2026-08-29 on a ProCon.IP (VIOLET ships the same
+// PoolDigital web stack): the same usrcfg.cgi POST is 400 with these present and
+// 200 without.
+//
+// The stdlib ReverseProxy already deletes Forwarded + the standard
+// X-Forwarded-For/Host/Proto before Rewrite runs, so of this list only X-Real-Ip
+// and Via are load-bearing today; Forwarded is kept belt-and-braces.
+var forwardingHeaders = []string{
+	"X-Real-Ip",
+	"Forwarded",
+	"Via",
+}
+
 // New returns the reverse-proxy handler for ONE controller: target is the
 // controller's real base URL. An authenticated caller gets full transparent
 // read+write access; see the package doc for why the "view but don't touch"
@@ -368,10 +388,13 @@ var controllerTransport = func() *http.Transport {
 // request is forwarded, so the path this layer sees and the path the reverse
 // proxy forwards can never be two different strings (the classic
 // path-normalization smuggling class). A request that clears that gate is
-// reverse-proxied through as-is: method, headers, and body unmodified,
-// including the controller's own Basic Auth challenge/response — the caller's
-// browser/app supplies the controller's own credentials, this layer never
-// injects any of its own.
+// reverse-proxied through with its method, body, and application headers
+// unmodified — including the controller's own Basic Auth challenge/response,
+// which the caller's browser/app supplies and this layer never injects. The one
+// deliberate exception is the proxy-forwarding headers (forwardingHeaders): the
+// Rewrite strips them and adds none of its own, so the controller sees a
+// request the size a LAN client sends — a write bloated past its small header
+// buffer is rejected outright.
 //
 // Streaming and WebSocket upgrades get no special handling here and need
 // none: net/http/httputil.ReverseProxy has copied response bodies
@@ -382,7 +405,22 @@ var controllerTransport = func() *http.Transport {
 func New(target *url.URL) http.Handler {
 	rp := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
-			pr.SetXForwarded()
+			// Present the controller a LAN-sized request: do NOT advertise the
+			// proxy (no SetXForwarded), and strip every proxy-forwarding header so
+			// the write stays under the controller's small header buffer (see
+			// forwardingHeaders). ReverseProxy already drops the standard
+			// X-Forwarded-For/Host/Proto + Forwarded before this runs, but a
+			// non-standard X-Forwarded-* an upstream may add (X-Forwarded-Port,
+			// -Ssl, ...) would not be — so sweep the whole family by prefix, then
+			// the named non-prefix stragglers.
+			for k := range pr.Out.Header {
+				if strings.HasPrefix(k, "X-Forwarded-") {
+					pr.Out.Header.Del(k)
+				}
+			}
+			for _, h := range forwardingHeaders {
+				pr.Out.Header.Del(h)
+			}
 			pr.SetURL(target)
 		},
 		Transport:     controllerTransport,
