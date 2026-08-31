@@ -78,13 +78,20 @@ type Driver interface {
 // default bands for any driver that does not.
 type ControlConfigReader interface {
 	// ControlConfig fetches the controller's live dosing config keyed by
-	// measurement type. The contract is uniform across implementers and has two
-	// parts: it is fail-soft on CONTENT — a measurement whose setpoint/limits the
-	// controller does not report is simply absent from the map, and that type
-	// falls back to its default band — but it returns an ERROR on a
-	// transport/protocol failure, so the poller keeps the last-known-good bands
-	// for one bad poll instead of snapping every type to defaults (see the
-	// internal/agent/poller retainControl path).
+	// measurement type. CONTENT handling is uniform and fail-soft: a measurement
+	// whose setpoint/limits the controller does not report is simply absent from
+	// the map, and that type falls back to its default band.
+	//
+	// TRANSPORT-failure handling is implementation-defined, and the poller copes
+	// with both shapes (see internal/agent/poller): an implementation may return
+	// an error — the poller then keeps the last-known-good bands for that poll
+	// (retainControl) — or fail-soft to a partial/empty map with a nil error,
+	// which the poller takes as the freshest truth, so a now-absent type drops to
+	// its default band. The two differ by wire shape: proconDriver reads its INI
+	// channels separately and fail-softs a failed channel (nil error, that type →
+	// default) while keeping the channels it did read; violetDriver reads all
+	// config in one request, so a transport failure has nothing partial to keep
+	// and returns an error (retain last-known-good).
 	ControlConfig(ctx context.Context) (map[string]measure.ControlConfig, error)
 }
 
