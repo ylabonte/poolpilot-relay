@@ -164,3 +164,12 @@ func (d *violetDriver) Probe(ctx context.Context) error {
 	_, err := d.client.FetchReadings(ctx)
 	return err
 }
+
+// ControlConfig reads the VIOLET's /getConfig for the live setpoint + warn
+// limits per measurement (see violet.Client.FetchControlConfig). This is what
+// makes violetDriver a driver.ControlConfigReader, so the poller derives its
+// alert bands from the controller's own thresholds instead of the parity
+// defaults — VIOLET parity with the ProCon.IP driver.
+func (d *violetDriver) ControlConfig(ctx context.Context) (map[string]measure.ControlConfig, error) {
+	return d.client.FetchControlConfig(ctx)
+}

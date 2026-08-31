@@ -185,6 +185,49 @@ func TestVioletDriverProbeAuthFailed(t *testing.T) {
 	}
 }
 
+// violetConfigSeed loads the vendored real-wire /getConfig fixture shared with
+// internal/violet's own tests.
+func violetConfigSeed(t *testing.T) []byte {
+	t.Helper()
+	raw, err := os.ReadFile("../../violet/testdata/getConfig_seed.json")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	return raw
+}
+
+// TestVioletDriverIsControlConfigReader is the core VIOLET-parity assertion: the
+// VIOLET driver now satisfies the optional ControlConfigReader capability, so the
+// poller's type-assert (internal/agent/poller) picks it up and the alert engine
+// derives live push bands from the controller's own setpoints/limits instead of
+// the parity defaults — exactly as the ProCon.IP driver already does.
+func TestVioletDriverIsControlConfigReader(t *testing.T) {
+	fixture := violetConfigSeed(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(fixture)
+	}))
+	defer srv.Close()
+
+	d, err := New(preset.Violet, Config{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	cr, ok := d.(ControlConfigReader)
+	if !ok {
+		t.Fatal("violet driver does not satisfy driver.ControlConfigReader")
+	}
+	control, err := cr.ControlConfig(context.Background())
+	if err != nil {
+		t.Fatalf("ControlConfig: %v", err)
+	}
+	if _, ok := control[bands.TypePH]; !ok {
+		t.Error("expected a pH control config from the VIOLET driver")
+	}
+	if _, ok := control[bands.TypeORP]; !ok {
+		t.Error("expected an ORP control config from the VIOLET driver")
+	}
+}
+
 // ---- Config.Timeout mapping ----
 
 // TestConfigTimeoutMapsOntoHTTPClient asserts Config.Timeout actually bounds
