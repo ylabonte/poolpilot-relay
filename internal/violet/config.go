@@ -254,10 +254,11 @@ func configDouble(raw map[string]any, key string) (float64, bool) {
 }
 
 // configFlag reads a `_use`-style flag: true when the value renders as "1" or
-// "true" (case-insensitive), or the bare number 1. Accepting "true" mirrors the
-// apps' flagOrNull (shared/violet-client JsonAccessors.kt) so the relay and app
-// resolve the SAME active dosing channel on a firmware variant that echoes
-// "true" instead of "1".
+// "true" (case-insensitive), the bare number 1, or the bare JSON boolean true.
+// This mirrors the apps' flagOrNull (shared/violet-client JsonAccessors.kt),
+// which reads the primitive's content, so the relay and app resolve the SAME
+// active dosing channel across firmware variants that echo "1", "true", or a
+// bare boolean.
 func configFlag(raw map[string]any, key string) bool {
 	v, ok := raw[key]
 	if !ok {
@@ -269,6 +270,8 @@ func configFlag(raw map[string]any, key string) bool {
 		return s == "1" || strings.EqualFold(s, "true")
 	case float64:
 		return t == 1
+	case bool:
+		return t
 	default:
 		return false
 	}

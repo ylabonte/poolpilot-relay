@@ -337,9 +337,11 @@ func TestConfigFlagParsing(t *testing.T) {
 		{"string true", map[string]any{"k": "true"}, true},
 		{"string TRUE case-insensitive", map[string]any{"k": "TRUE"}, true},
 		{"number 1", map[string]any{"k": float64(1)}, true},
+		{"bare boolean true", map[string]any{"k": true}, true},
 		{"string 0", map[string]any{"k": "0"}, false},
 		{"string false", map[string]any{"k": "false"}, false},
 		{"number 0", map[string]any{"k": float64(0)}, false},
+		{"bare boolean false", map[string]any{"k": false}, false},
 		{"absent key", map[string]any{}, false},
 		{"non-scalar type", map[string]any{"k": []any{"1"}}, false},
 	}
