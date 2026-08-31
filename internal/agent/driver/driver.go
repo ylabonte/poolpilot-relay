@@ -73,13 +73,18 @@ type Driver interface {
 
 // ControlConfigReader is the optional capability a Driver implements when its
 // controller exposes live regulation config (setpoint + warn limits) the alert
-// engine can derive push bands from. Only the ProCon.IP driver implements it
-// today; the poller type-asserts for it and falls back to the parity default
-// bands for drivers that do not.
+// engine can derive push bands from. The ProCon.IP and VIOLET drivers both
+// implement it; the poller type-asserts for it and falls back to the parity
+// default bands for any driver that does not.
 type ControlConfigReader interface {
 	// ControlConfig fetches the controller's live dosing config keyed by
-	// measurement type. It is fail-soft: types the controller does not report
-	// are simply absent from the map.
+	// measurement type. The contract is uniform across implementers and has two
+	// parts: it is fail-soft on CONTENT — a measurement whose setpoint/limits the
+	// controller does not report is simply absent from the map, and that type
+	// falls back to its default band — but it returns an ERROR on a
+	// transport/protocol failure, so the poller keeps the last-known-good bands
+	// for one bad poll instead of snapping every type to defaults (see the
+	// internal/agent/poller retainControl path).
 	ControlConfig(ctx context.Context) (map[string]measure.ControlConfig, error)
 }
 
