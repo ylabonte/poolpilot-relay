@@ -3,6 +3,12 @@ on:
   pull_request:
   push:
     branches: [main]
+# Least privilege: both jobs only checkout + build/test. The parity fixtures are
+# fetched with a separate GitHub App token (create-github-app-token below), and
+# actions/upload-artifact uses the runner's own token — neither reads GITHUB_TOKEN
+# — so contents:read is all this workflow needs.
+permissions:
+  contents: read
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
