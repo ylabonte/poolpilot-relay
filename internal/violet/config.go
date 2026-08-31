@@ -164,6 +164,14 @@ func (c *Client) FetchControlConfig(ctx context.Context) (map[string]measure.Con
 // ok=false when the active channels don't yield all of setpoint + warn-low +
 // warn-high, so the caller omits the type and it falls back to its default band —
 // the same "need the full triple or drop" rule the ProCon.IP INI reader applies.
+//
+// The mean is a deliberate approximation of the apps' corridor semantics
+// (controlBandForMeasurement keeps the two setpoints as idealLow..idealHigh):
+// measure.ControlConfig carries a single Target, so a two-setpoint corridor
+// cannot be represented here. The hard warn limits (Min/Max) — where alarms
+// actually fire — stay exact; only the inner ok/warn boundary is approximated,
+// and only materially when the two setpoints sit far apart (atypical). Tracked
+// for exact parity in issue #31.
 func resolveControlConfig(baseURL string, m controlMeasurement, raw map[string]any) (measure.ControlConfig, bool) {
 	active := activeFields(m, raw)
 
@@ -245,9 +253,11 @@ func configDouble(raw map[string]any, key string) (float64, bool) {
 	return f, true
 }
 
-// configFlag reads a `_use`-style flag: true only when the value renders as "1"
-// (string "1" or the number 1), matching how the firmware marks a dosing channel
-// active.
+// configFlag reads a `_use`-style flag: true when the value renders as "1" or
+// "true" (case-insensitive), or the bare number 1. Accepting "true" mirrors the
+// apps' flagOrNull (shared/violet-client JsonAccessors.kt) so the relay and app
+// resolve the SAME active dosing channel on a firmware variant that echoes
+// "true" instead of "1".
 func configFlag(raw map[string]any, key string) bool {
 	v, ok := raw[key]
 	if !ok {
@@ -255,7 +265,8 @@ func configFlag(raw map[string]any, key string) bool {
 	}
 	switch t := v.(type) {
 	case string:
-		return strings.TrimSpace(t) == "1"
+		s := strings.TrimSpace(t)
+		return s == "1" || strings.EqualFold(s, "true")
 	case float64:
 		return t == 1
 	default:

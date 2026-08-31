@@ -258,6 +258,100 @@ func TestControlConfigQueryEnumeratesKeysNoBlanks(t *testing.T) {
 	}
 }
 
+func TestFetchControlConfigAcceptsBareNumberAndNumericFlag(t *testing.T) {
+	// A firmware variant that serves unquoted JSON numbers and a numeric _use flag
+	// (the seed fixture is all string-typed) must parse identically.
+	body := []byte(`{
+		"DOSAGE_phminus_use":1,
+		"DOSAGE_phminus_setpoint":7.3,
+		"DOSAGE_phminus_limits_warnlow":6.9,
+		"DOSAGE_phminus_limits_warnhigh":7.7
+	}`)
+	srv, _ := configServer(t, "", "", body)
+
+	got, err := (&Client{BaseURL: srv.URL}).FetchControlConfig(context.Background())
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	assertControl(t, "pH", got[bands.TypePH], 7.3, 6.9, 7.7)
+}
+
+func TestFetchControlConfigAcceptsTrueFlag(t *testing.T) {
+	// A firmware variant that echoes "true" instead of "1" for _use must resolve
+	// the channel active, matching the apps' flagOrNull.
+	body := []byte(`{
+		"DOSAGE_phminus_use":"true",
+		"DOSAGE_phminus_setpoint":"7.3",
+		"DOSAGE_phminus_limits_warnlow":"6.9",
+		"DOSAGE_phminus_limits_warnhigh":"7.7"
+	}`)
+	srv, _ := configServer(t, "", "", body)
+
+	got, err := (&Client{BaseURL: srv.URL}).FetchControlConfig(context.Background())
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if _, ok := got[bands.TypePH]; !ok {
+		t.Error(`expected a pH control config when the _use flag reads "true"`)
+	}
+}
+
+func TestConfigDoubleParsing(t *testing.T) {
+	cases := []struct {
+		name   string
+		raw    map[string]any
+		want   float64
+		wantOK bool
+	}{
+		{"string decimal", map[string]any{"k": "7.3"}, 7.3, true},
+		{"string integer", map[string]any{"k": "790"}, 790, true},
+		{"bare number", map[string]any{"k": 7.3}, 7.3, true},
+		{"negative", map[string]any{"k": "-20.0"}, -20, true},
+		{"blank string", map[string]any{"k": "  "}, 0, false},
+		{"non-numeric string", map[string]any{"k": "n/a"}, 0, false},
+		{"absent key", map[string]any{}, 0, false},
+		{"Inf string rejected", map[string]any{"k": "Inf"}, 0, false},
+		{"NaN string rejected", map[string]any{"k": "NaN"}, 0, false},
+		{"non-scalar type rejected", map[string]any{"k": true}, 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := configDouble(tc.raw, "k")
+			if ok != tc.wantOK {
+				t.Fatalf("ok: got %v, want %v", ok, tc.wantOK)
+			}
+			if ok && !almostEqual(got, tc.want) {
+				t.Errorf("value: got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestConfigFlagParsing(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  map[string]any
+		want bool
+	}{
+		{"string 1", map[string]any{"k": "1"}, true},
+		{"string true", map[string]any{"k": "true"}, true},
+		{"string TRUE case-insensitive", map[string]any{"k": "TRUE"}, true},
+		{"number 1", map[string]any{"k": float64(1)}, true},
+		{"string 0", map[string]any{"k": "0"}, false},
+		{"string false", map[string]any{"k": "false"}, false},
+		{"number 0", map[string]any{"k": float64(0)}, false},
+		{"absent key", map[string]any{}, false},
+		{"non-scalar type", map[string]any{"k": []any{"1"}}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := configFlag(tc.raw, "k"); got != tc.want {
+				t.Errorf("configFlag: got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func assertControl(t *testing.T, name string, cc measure.ControlConfig, target, min, max float64) {
 	t.Helper()
 	if !almostEqual(cc.Target, target) {
