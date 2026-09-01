@@ -729,7 +729,14 @@ type AppBearerMintRequest struct {
 // affordances to show; the server enforces the distinction itself and never
 // trusts a client's copy of it.
 //
-// AppUserID echoes the bound rc link, empty when the household has none.
+// AppUserID echoes the bound rc link. Empty when the household has no rc
+// link, and — since the cloud's guest-echo suppression fix
+// (docs/app-bearer-contract.md §2/§3/§7 in poolpilot-cloud) — also empty on
+// any MEMBER-role mint or redeem: a joining or rotating guest never rc-links,
+// so it has no legitimate use for the household OWNER's RevenueCat id. An
+// OWNER-role mint (the founding mint, an owner's own add-device rotation, or
+// the recovery ceremony's redeemed-voucher leg) keeps the echo, since it is
+// that household's own link.
 type AppBearerMintResponse struct {
 	AppBearer string `json:"app_bearer"`
 	AppUserID string `json:"app_user_id"`
