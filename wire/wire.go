@@ -746,8 +746,9 @@ type AppBearerMintResponse struct {
 
 // ---- Household: membership ----
 
-// MemberInfo is one live app bearer of the household, as listed by
-// GET /tenant/members (owner-only).
+// MemberDeviceInfo is one live app bearer (device install) acting as a
+// household member, nested inside MemberInfo.Devices by GET /tenant/members
+// (owner-only).
 //
 // What is deliberately NOT here: no device name, no push token, no token hash,
 // nothing that identifies a PERSON. The anonymity constraint runs through this
@@ -757,23 +758,45 @@ type AppBearerMintResponse struct {
 // an audit tag and is the only thing that lets a user tell two entries apart in
 // the UI; Label is not, because it is an internal minting marker ("add-device"),
 // not something a user chose or should be shown.
-type MemberInfo struct {
-	// BearerID is the app_bearer row's opaque UUID — the handle the role and
-	// revoke routes take in their URL. Not a credential: it authorizes nothing
-	// on its own and is only ever accepted from an owner of the same household.
+type MemberDeviceInfo struct {
+	// BearerID is the app_bearer row's opaque UUID. Not a credential: it
+	// authorizes nothing on its own and is only ever accepted from an owner of
+	// the same household.
 	BearerID string `json:"bearer_id"`
-	Role     string `json:"role"` // "owner" | "member"
 	Platform string `json:"platform,omitempty"`
 	// CreatedAt / LastSeenAt are RFC 3339. LastSeenAt is absent for a bearer
 	// that was minted but never used — which is exactly what the UI wants to
 	// show differently from an idle device, and what the stale-household
 	// janitor's recency guard also keys on.
-	LastSeenAt string `json:"last_seen_at,omitempty"`
 	CreatedAt  string `json:"created_at"`
+	LastSeenAt string `json:"last_seen_at,omitempty"`
 	// Current marks the entry belonging to the bearer that made THIS request, so
 	// the UI can label "this device" and warn before an owner revokes or demotes
 	// itself. Mirrors DeviceInfo.Current on the agent's own device list.
-	Current bool `json:"current"`
+	Current bool `json:"current"` // the device that made THIS request
+}
+
+// MemberInfo is one PERSON of the household — a role, a per-relay scope, and
+// the devices that act as them — as listed by GET /tenant/members
+// (owner-only). Replaces the earlier one-row-per-bearer shape: a household
+// member with two installs used to surface as two indistinguishable rows;
+// now they group under one MemberID with a Devices list.
+//
+// Same anonymity constraint as MemberDeviceInfo: no name, no token, no hash —
+// MemberID identifies a slot in this household's roster, nothing more. The
+// role and revoke routes take MemberID in their URL, the same way they used
+// to take a bearer's BearerID.
+type MemberInfo struct {
+	MemberID  string `json:"member_id"`
+	Role      string `json:"role"` // "owner" | "member"
+	CreatedAt string `json:"created_at"`
+	// RelayIDs scopes a member to specific relays (0032_app_bearer_relay.sql's
+	// per-relay guest ACL); omitted for an owner, who is unrestricted.
+	RelayIDs []string           `json:"relay_ids,omitempty"`
+	Devices  []MemberDeviceInfo `json:"devices"`
+	// RevokedAt is reserved for a future filter/history view; the roster lists
+	// live members only today, so this is always empty on the wire.
+	RevokedAt string `json:"revoked_at,omitempty"`
 }
 
 // MembersResponse is GET /tenant/members' body. An object rather than a bare
