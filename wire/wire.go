@@ -806,7 +806,7 @@ type MembersResponse struct {
 	Members []MemberInfo `json:"members"`
 }
 
-// MemberRoleRequest is POST /tenant/members/{bearer_id}/role (owner-only):
+// MemberRoleRequest is POST /tenant/members/{member_id}/role (owner-only):
 // grant the owner role to a member, or hand it back.
 //
 // ADDITIVE grant, never a transfer (docs/app-bearer-contract.md §3): promoting a member
@@ -822,7 +822,7 @@ type MemberRoleRequest struct {
 }
 
 // MemberRevokeRequest is the OPTIONAL body of DELETE
-// /tenant/members/{bearer_id} (owner-only). The route needs no input beyond the
+// /tenant/members/{member_id} (owner-only). The route needs no input beyond the
 // URL; the body exists so this mutation can carry the same attestation guard as
 // every other one — that guard verifies an iOS assertion over the exact request
 // bytes, so a body-less request simply cannot be attested. A DELETE with a body
