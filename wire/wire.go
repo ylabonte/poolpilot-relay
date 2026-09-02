@@ -729,7 +729,14 @@ type AppBearerMintRequest struct {
 // affordances to show; the server enforces the distinction itself and never
 // trusts a client's copy of it.
 //
-// AppUserID echoes the bound rc link, empty when the household has none.
+// AppUserID echoes the bound rc link. Empty when the household has no rc
+// link, and — since the cloud's guest-echo suppression fix
+// (docs/app-bearer-contract.md §2/§3/§7 in poolpilot-cloud) — also empty on
+// any MEMBER-role mint or redeem: a joining or rotating guest never rc-links,
+// so it has no legitimate use for the household OWNER's RevenueCat id. An
+// OWNER-role mint (the founding mint, an owner's own add-device rotation, or
+// the recovery ceremony's redeemed-voucher leg) keeps the echo, since it is
+// that household's own link.
 type AppBearerMintResponse struct {
 	AppBearer string `json:"app_bearer"`
 	AppUserID string `json:"app_user_id"`
@@ -739,8 +746,9 @@ type AppBearerMintResponse struct {
 
 // ---- Household: membership ----
 
-// MemberInfo is one live app bearer of the household, as listed by
-// GET /tenant/members (owner-only).
+// MemberDeviceInfo is one live app bearer (device install) acting as a
+// household member, nested inside MemberInfo.Devices by GET /tenant/members
+// (owner-only).
 //
 // What is deliberately NOT here: no device name, no push token, no token hash,
 // nothing that identifies a PERSON. The anonymity constraint runs through this
@@ -750,23 +758,55 @@ type AppBearerMintResponse struct {
 // an audit tag and is the only thing that lets a user tell two entries apart in
 // the UI; Label is not, because it is an internal minting marker ("add-device"),
 // not something a user chose or should be shown.
-type MemberInfo struct {
-	// BearerID is the app_bearer row's opaque UUID — the handle the role and
-	// revoke routes take in their URL. Not a credential: it authorizes nothing
-	// on its own and is only ever accepted from an owner of the same household.
+type MemberDeviceInfo struct {
+	// BearerID is the app_bearer row's opaque UUID. Not a credential: it
+	// authorizes nothing on its own and is only ever accepted from an owner of
+	// the same household.
 	BearerID string `json:"bearer_id"`
-	Role     string `json:"role"` // "owner" | "member"
 	Platform string `json:"platform,omitempty"`
 	// CreatedAt / LastSeenAt are RFC 3339. LastSeenAt is absent for a bearer
 	// that was minted but never used — which is exactly what the UI wants to
 	// show differently from an idle device, and what the stale-household
 	// janitor's recency guard also keys on.
-	LastSeenAt string `json:"last_seen_at,omitempty"`
 	CreatedAt  string `json:"created_at"`
+	LastSeenAt string `json:"last_seen_at,omitempty"`
 	// Current marks the entry belonging to the bearer that made THIS request, so
 	// the UI can label "this device" and warn before an owner revokes or demotes
 	// itself. Mirrors DeviceInfo.Current on the agent's own device list.
 	Current bool `json:"current"`
+}
+
+// MemberInfo is one PERSON of the household — a role, a per-relay scope, and
+// the devices that act as them — as listed by GET /tenant/members
+// (owner-only). Replaces the earlier one-row-per-bearer shape: a household
+// member with two installs used to surface as two indistinguishable rows;
+// now they group under one MemberID with a Devices list.
+//
+// Same anonymity constraint as MemberDeviceInfo: no name, no token, no hash —
+// MemberID identifies a slot in this household's roster, nothing more. The
+// role and revoke routes take MemberID in their URL, the same way they used
+// to take a bearer's BearerID.
+type MemberInfo struct {
+	MemberID string `json:"member_id"`
+	Role     string `json:"role"` // "owner" | "member"
+	// CreatedAt is RFC 3339 — when this member joined the household (the mint of
+	// its earliest bearer).
+	CreatedAt string `json:"created_at"`
+	// RelayIDs scopes a member to specific relays (0032_app_bearer_relay.sql's
+	// per-relay guest ACL); omitted for an owner, who is unrestricted. A member
+	// always holds at least one relay here — the voucher redeem seeds one,
+	// add-device copies it, a demotion snapshots the household's — so an absent
+	// or empty relay_ids on a MEMBER is never "unrestricted": it is a bug or a
+	// fully-evicted guest, which the scope join reads as "sees nothing", never
+	// tenant-wide.
+	RelayIDs []string `json:"relay_ids,omitempty"`
+	// Devices is never nil on the wire — a member with no live bearer is not
+	// listed at all — and the producer allocates rather than marshalling a bare
+	// null, so a strict client can decode it as a non-optional list.
+	Devices []MemberDeviceInfo `json:"devices"`
+	// RevokedAt is reserved for a future filter/history view; the roster lists
+	// live members only today, so this is always empty on the wire.
+	RevokedAt string `json:"revoked_at,omitempty"`
 }
 
 // MembersResponse is GET /tenant/members' body. An object rather than a bare
@@ -776,7 +816,7 @@ type MembersResponse struct {
 	Members []MemberInfo `json:"members"`
 }
 
-// MemberRoleRequest is POST /tenant/members/{bearer_id}/role (owner-only):
+// MemberRoleRequest is POST /tenant/members/{member_id}/role (owner-only):
 // grant the owner role to a member, or hand it back.
 //
 // ADDITIVE grant, never a transfer (docs/app-bearer-contract.md §3): promoting a member
@@ -792,7 +832,7 @@ type MemberRoleRequest struct {
 }
 
 // MemberRevokeRequest is the OPTIONAL body of DELETE
-// /tenant/members/{bearer_id} (owner-only). The route needs no input beyond the
+// /tenant/members/{member_id} (owner-only). The route needs no input beyond the
 // URL; the body exists so this mutation can carry the same attestation guard as
 // every other one — that guard verifies an iOS assertion over the exact request
 // bytes, so a body-less request simply cannot be attested. A DELETE with a body
