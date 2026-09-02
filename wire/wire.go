@@ -1111,19 +1111,25 @@ type RcClaimInitRequest struct {
 }
 
 // RcClaimInitResponse is RcClaimInitRequest's body: ONE wire shape across the
-// branches contract §2 defines, keyed on Status — free, holder_active,
-// pending, released. ClaimID/ExpiresAt are present only on the pending
-// branch; released is terminal and carries neither. The cloud stage of this
-// fan-out (pinned at tag v0.4.0) is what answers "released"; this relay-wire
-// change only documents the value, and the field set is unchanged.
+// branches contract §2 defines, keyed on Status.
 //
-// A repeat init against an existing pending claim answers the SAME ClaimID
-// and the ORIGINAL ExpiresAt (the window never slides) — the idempotency
-// contract §9 tells the app to rely on: persist claim_id + expires_at, and a
-// lost/repeated init recovers the identical state rather than opening a
-// second claim.
+// The currently deployed cloud answers free, holder_active or pending, and
+// ClaimID/ExpiresAt are present only on the pending branch. A repeat init
+// against an existing pending claim answers the SAME ClaimID and the ORIGINAL
+// ExpiresAt (the window never slides) — the idempotency contract §9 tells the
+// app to rely on: persist claim_id + expires_at, and a lost/repeated init
+// recovers the identical state rather than opening a second claim.
+//
+// The cloud stage of this fan-out (pinned at tag v0.4.0) REPLACES pending
+// rather than adding to it: the ghost branch releases instantly and answers
+// the terminal "released", so the branch set becomes free, holder_active,
+// released. Pending, the repeat-init idempotency contract above, and the
+// claim/objection window retire with it; ClaimID/ExpiresAt stay in the shape
+// for wire compatibility but go unpopulated. The field set is unchanged.
 type RcClaimInitResponse struct {
-	Status    string `json:"status"` // "free" | "holder_active" | "pending" | "released"
+	// Deployed cloud: "free" | "holder_active" | "pending".
+	// From tag v0.4.0: "free" | "holder_active" | "released".
+	Status    string `json:"status"`
 	ClaimID   string `json:"claim_id,omitempty"`
 	ExpiresAt string `json:"expires_at,omitempty"` // RFC 3339
 }
