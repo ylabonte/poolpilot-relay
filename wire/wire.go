@@ -666,12 +666,14 @@ type PushSourceSubscribeResponse struct {
 
 // ---- Store proof of possession (rc-id bind gate) ----
 
-// StoreProof is the store-signed proof of subscription possession
-// (docs/rc-claim-app-contract.md §2 / app-bearer-contract.md §2 as rewritten
-// by this change). Exactly one of AppleJWS / PlayPurchaseToken is set,
-// agreeing with Platform. The server requires it whenever the id being bound
-// carries a store-backed subscription in RevenueCat (the bind predicate);
-// clients attach it opportunistically whenever the device can produce one.
+// StoreProof is the store-signed proof of subscription possession. Its
+// app-facing contract is defined in docs/rc-claim-app-contract.md §2 and
+// docs/app-bearer-contract.md §2 in poolpilot-cloud (rewritten there in the
+// cloud stage of this fan-out, not by this relay-wire change). Exactly one of
+// AppleJWS / PlayPurchaseToken is set, agreeing with Platform. The server
+// requires it whenever the id being bound carries a store-backed subscription
+// in RevenueCat (the bind predicate); clients attach it opportunistically
+// whenever the device can produce one.
 type StoreProof struct {
 	Platform          string `json:"platform"`                      // "ios" | "android"
 	AppleJWS          string `json:"apple_jws,omitempty"`           // raw StoreKit 2 Transaction JWS
@@ -1109,8 +1111,11 @@ type RcClaimInitRequest struct {
 }
 
 // RcClaimInitResponse is RcClaimInitRequest's body: ONE wire shape across the
-// three branches contract §2 defines, keyed on Status — free, holder_active,
-// pending. ClaimID/ExpiresAt are present only on the pending branch.
+// branches contract §2 defines, keyed on Status — free, holder_active,
+// pending, released. ClaimID/ExpiresAt are present only on the pending
+// branch; released is terminal and carries neither. The cloud stage of this
+// fan-out (pinned at tag v0.4.0) is what answers "released"; this relay-wire
+// change only documents the value, and the field set is unchanged.
 //
 // A repeat init against an existing pending claim answers the SAME ClaimID
 // and the ORIGINAL ExpiresAt (the window never slides) — the idempotency
@@ -1118,7 +1123,7 @@ type RcClaimInitRequest struct {
 // lost/repeated init recovers the identical state rather than opening a
 // second claim.
 type RcClaimInitResponse struct {
-	Status    string `json:"status"` // "free" | "holder_active" | "pending"
+	Status    string `json:"status"` // "free" | "holder_active" | "pending" | "released"
 	ClaimID   string `json:"claim_id,omitempty"`
 	ExpiresAt string `json:"expires_at,omitempty"` // RFC 3339
 }
