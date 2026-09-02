@@ -793,7 +793,8 @@ type MemberInfo struct {
 	// its earliest bearer).
 	CreatedAt string `json:"created_at"`
 	// RelayIDs is a member's per-relay scope (0032_app_bearer_relay.sql's
-	// per-relay guest ACL): the relays they were invited to. It lives on the
+	// per-relay guest ACL, re-keyed by 0033_household_member.sql to the
+	// member): the relays they were invited to. It lives on the
 	// member, not the device — every device under this MemberID inherits it
 	// by virtue of belonging to the member, nothing is copied per-device.
 	// Omitted for an owner, who is unrestricted. A member always holds at
