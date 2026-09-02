@@ -1079,10 +1079,10 @@ type AppBearerVoucherRedeemRequest struct {
 // own fresh install ever minted. Three routes on the deployed cloud, none of
 // which shares a resolver kind with the household routes above — the claimant
 // who opens a claim has no household and no bearer, which is the whole reason
-// the flow exists. From tag v0.4.0 only POST /rc-claim survives; the poll and
-// object routes (and the two shapes below that serve them) retire with
-// decision (b), their struct + fixture deletions riding the stage-3
-// app-canonical fixture change.
+// the flow exists. From tag v0.4.0 only POST /rc-claim survives: Option A
+// removes the poll/objection surface (its "decision (b)"), so the poll and
+// object routes and the two shapes below that serve them retire, their struct
+// + fixture deletions riding the stage-3 app-canonical fixture change.
 
 // RcClaimInitRequest is POST /rc-claim (public mux, attestation-gated,
 // BEARER-LESS — contract §2). AppUserID is the RevenueCat id the caller
@@ -1093,12 +1093,13 @@ type AppBearerVoucherRedeemRequest struct {
 // together or neither), with one deliberate difference: the clientDataHash
 // preimage is attestClientData(challenge, "") — AppUserID is NOT folded in,
 // matching the five /push-sources routes' bootstrap rather than the mint's.
-// The claim gains little from id-binding the attestation — possession is
-// proven elsewhere (the objection window on the deployed cloud; from tag
-// v0.4.0 the store_proof, which rides inside the signed body), not by folding
-// AppUserID into the preimage — and one fewer preimage variant is one fewer
-// way for the app to compute the wrong hash (contract's "Remaining review
-// items" §2). The preimage stays attestClientData(challenge, "") across both.
+// The claim gains little from id-binding the attestation — the possession
+// control lives elsewhere (the objection window on the deployed cloud; from
+// tag v0.4.0 the store_proof, which rides inside the signed body), not in
+// folding AppUserID into the preimage — and one fewer preimage variant is one
+// fewer way for the app to compute the wrong hash (contract's "Remaining
+// review items" §2). The preimage stays attestClientData(challenge, "") across
+// both.
 type RcClaimInitRequest struct {
 	AppUserID string `json:"app_user_id"`
 	// Platform is audit-only ("ios" | "android"), as at mint.
@@ -1128,11 +1129,11 @@ type RcClaimInitRequest struct {
 //
 // The cloud stage of this fan-out (which pins this wire module at tag v0.4.0)
 // REPLACES pending rather than adding to it: the ghost branch releases
-// instantly and answers
-// the terminal "released", so the branch set becomes free, holder_active,
-// released. Pending, the repeat-init idempotency contract above, and the
-// claim/objection window retire with it; ClaimID/ExpiresAt stay in the shape
-// for wire compatibility but go unpopulated. The field set is unchanged.
+// instantly and answers the terminal "released", so the branch set becomes
+// free, holder_active, released. Pending, the repeat-init idempotency contract
+// above, and the claim/objection window retire with it; ClaimID/ExpiresAt stay
+// in the shape for wire compatibility but go unpopulated. The field set is
+// unchanged.
 type RcClaimInitResponse struct {
 	// Deployed cloud: "free" | "holder_active" | "pending".
 	// From tag v0.4.0: "free" | "holder_active" | "released".
