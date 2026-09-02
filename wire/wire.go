@@ -792,13 +792,16 @@ type MemberInfo struct {
 	// CreatedAt is RFC 3339 — when this member joined the household (the mint of
 	// its earliest bearer).
 	CreatedAt string `json:"created_at"`
-	// RelayIDs scopes a member to specific relays (0032_app_bearer_relay.sql's
-	// per-relay guest ACL); omitted for an owner, who is unrestricted. A member
-	// always holds at least one relay here — the voucher redeem seeds one,
-	// add-device copies it, a demotion snapshots the household's — so an absent
-	// or empty relay_ids on a MEMBER is never "unrestricted": it is a bug or a
-	// fully-evicted guest, which the scope join reads as "sees nothing", never
-	// tenant-wide.
+	// RelayIDs is a member's per-relay scope (0032_app_bearer_relay.sql's
+	// per-relay guest ACL, re-keyed by 0033_household_member.sql to the
+	// member): the relays they were invited to. It lives on the
+	// member, not the device — every device under this MemberID inherits it
+	// by virtue of belonging to the member, nothing is copied per-device.
+	// Omitted for an owner, who is unrestricted. A member always holds at
+	// least one relay here — the voucher redeem seeds it, a demotion
+	// snapshots the household's — so an absent or empty relay_ids on a
+	// MEMBER is never "unrestricted": it is a bug or a fully-evicted guest,
+	// which the scope join reads as "sees nothing", never tenant-wide.
 	RelayIDs []string `json:"relay_ids,omitempty"`
 	// Devices is never nil on the wire — a member with no live bearer is not
 	// listed at all — and the producer allocates rather than marshalling a bare
