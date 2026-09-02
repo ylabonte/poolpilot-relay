@@ -773,7 +773,7 @@ type MemberDeviceInfo struct {
 	// Current marks the entry belonging to the bearer that made THIS request, so
 	// the UI can label "this device" and warn before an owner revokes or demotes
 	// itself. Mirrors DeviceInfo.Current on the agent's own device list.
-	Current bool `json:"current"` // the device that made THIS request
+	Current bool `json:"current"`
 }
 
 // MemberInfo is one PERSON of the household — a role, a per-relay scope, and
@@ -787,13 +787,23 @@ type MemberDeviceInfo struct {
 // role and revoke routes take MemberID in their URL, the same way they used
 // to take a bearer's BearerID.
 type MemberInfo struct {
-	MemberID  string `json:"member_id"`
-	Role      string `json:"role"` // "owner" | "member"
+	MemberID string `json:"member_id"`
+	Role     string `json:"role"` // "owner" | "member"
+	// CreatedAt is RFC 3339 — when this member joined the household (the mint of
+	// its earliest bearer).
 	CreatedAt string `json:"created_at"`
 	// RelayIDs scopes a member to specific relays (0032_app_bearer_relay.sql's
-	// per-relay guest ACL); omitted for an owner, who is unrestricted.
-	RelayIDs []string           `json:"relay_ids,omitempty"`
-	Devices  []MemberDeviceInfo `json:"devices"`
+	// per-relay guest ACL); omitted for an owner, who is unrestricted. A member
+	// always holds at least one relay here — the voucher redeem seeds one,
+	// add-device copies it, a demotion snapshots the household's — so an absent
+	// or empty relay_ids on a MEMBER is never "unrestricted": it is a bug or a
+	// fully-evicted guest, which the scope join reads as "sees nothing", never
+	// tenant-wide.
+	RelayIDs []string `json:"relay_ids,omitempty"`
+	// Devices is never nil on the wire — a member with no live bearer is not
+	// listed at all — and the producer allocates rather than marshalling a bare
+	// null, so a strict client can decode it as a non-optional list.
+	Devices []MemberDeviceInfo `json:"devices"`
 	// RevokedAt is reserved for a future filter/history view; the roster lists
 	// live members only today, so this is always empty on the wire.
 	RevokedAt string `json:"revoked_at,omitempty"`
