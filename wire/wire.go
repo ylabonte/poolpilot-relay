@@ -894,8 +894,9 @@ type RcLinkRequest struct {
 	// AttestChallenge — see DeviceRegisterRequest.AttestChallenge's doc.
 	AttestChallenge string `json:"attest_challenge,omitempty"`
 	// StoreProof — see StoreProof's doc. Consulted only on a CHANGE call (a
-	// bind of a fresh id); the no-op re-send of the id already held costs no
-	// round trip and never needs it.
+	// bind of a fresh id); the every-launch no-op re-send of the id already
+	// held stays proof-free — no predicate, so it never grows a store round
+	// trip.
 	StoreProof *StoreProof `json:"store_proof,omitempty"`
 }
 
@@ -1075,10 +1076,13 @@ type AppBearerVoucherRedeemRequest struct {
 // The last rung of the recovery ladder app-bearer-contract.md §6 cannot
 // reach: a customer whose relay is physically gone, and whose subscription a
 // RevenueCat TRANSFER re-pointed at a ghost household before the customer's
-// own fresh install ever minted. Three routes, none of which shares a
-// resolver kind with the household routes above — the claimant who opens a
-// claim has no household and no bearer, which is the whole reason the flow
-// exists.
+// own fresh install ever minted. Three routes on the deployed cloud, none of
+// which shares a resolver kind with the household routes above — the claimant
+// who opens a claim has no household and no bearer, which is the whole reason
+// the flow exists. From tag v0.4.0 only POST /rc-claim survives; the poll and
+// object routes (and the two shapes below that serve them) retire with
+// decision (b), their struct + fixture deletions riding the stage-3
+// app-canonical fixture change.
 
 // RcClaimInitRequest is POST /rc-claim (public mux, attestation-gated,
 // BEARER-LESS — contract §2). AppUserID is the RevenueCat id the caller
@@ -1089,10 +1093,12 @@ type AppBearerVoucherRedeemRequest struct {
 // together or neither), with one deliberate difference: the clientDataHash
 // preimage is attestClientData(challenge, "") — AppUserID is NOT folded in,
 // matching the five /push-sources routes' bootstrap rather than the mint's.
-// The claim gains little from id-binding the attestation (the objection
-// window is the control, not a proof of purchase), and one fewer preimage
-// variant is one fewer way for the app to compute the wrong hash (contract's
-// "Remaining review items" §2).
+// The claim gains little from id-binding the attestation — possession is
+// proven elsewhere (the objection window on the deployed cloud; from tag
+// v0.4.0 the store_proof, which rides inside the signed body), not by folding
+// AppUserID into the preimage — and one fewer preimage variant is one fewer
+// way for the app to compute the wrong hash (contract's "Remaining review
+// items" §2). The preimage stays attestClientData(challenge, "") across both.
 type RcClaimInitRequest struct {
 	AppUserID string `json:"app_user_id"`
 	// Platform is audit-only ("ios" | "android"), as at mint.
@@ -1120,8 +1126,9 @@ type RcClaimInitRequest struct {
 // app to rely on: persist claim_id + expires_at, and a lost/repeated init
 // recovers the identical state rather than opening a second claim.
 //
-// The cloud stage of this fan-out (pinned at tag v0.4.0) REPLACES pending
-// rather than adding to it: the ghost branch releases instantly and answers
+// The cloud stage of this fan-out (which pins this wire module at tag v0.4.0)
+// REPLACES pending rather than adding to it: the ghost branch releases
+// instantly and answers
 // the terminal "released", so the branch set becomes free, holder_active,
 // released. Pending, the repeat-init idempotency contract above, and the
 // claim/objection window retire with it; ClaimID/ExpiresAt stay in the shape
@@ -1137,7 +1144,10 @@ type RcClaimInitResponse struct {
 // RcClaimStatusResponse is GET /rc-claim/{claim_id}'s body (contract §3 — a
 // deliberately ungated GET, claim_id itself the unguessable capability) and
 // also POST /rc-claim/{claim_id}/object's 200/409 body (contract §4), whose
-// Status carries "objected", "released" or "expired" with no ExpiresAt.
+// Status carries "objected", "released" or "expired" with no ExpiresAt. Both
+// routes serve the deployed cloud only and retire at tag v0.4.0 with decision
+// (b) (see the section header); this shape's deletion rides the stage-3
+// fixture change.
 //
 // ExpiresAt is the EARLIEST possible release, never the moment of it — see
 // RcClaimInitResponse and the contract's §3 table for the app-facing
@@ -1150,7 +1160,9 @@ type RcClaimStatusResponse struct {
 // RcClaimObjectRequest is POST /rc-claim/{claim_id}/object (app bearer of the
 // HOLDING household + attestation — contract §4). No target in the body: the
 // claim_id in the URL names it, and the caller's bearer proves which
-// household is objecting.
+// household is objecting. Deployed cloud only — this route and shape retire at
+// tag v0.4.0 with decision (b) (see the section header); the deletion rides
+// the stage-3 fixture change.
 type RcClaimObjectRequest struct {
 	// AttestChallenge — see DeviceRegisterRequest.AttestChallenge's doc.
 	AttestChallenge string `json:"attest_challenge,omitempty"`
