@@ -664,6 +664,22 @@ type PushSourceSubscribeResponse struct {
 	RenewAfter string `json:"renew_after"`
 }
 
+// ---- Store proof of possession (rc-id bind gate) ----
+
+// StoreProof is the store-signed proof of subscription possession. Its
+// app-facing contract is defined in docs/rc-claim-app-contract.md §2 and
+// docs/app-bearer-contract.md §2 in poolpilot-cloud (rewritten there in the
+// cloud stage of this fan-out, not by this relay-wire change). Exactly one of
+// AppleJWS / PlayPurchaseToken is set, agreeing with Platform. The server
+// requires it whenever the id being bound carries a store-backed subscription
+// in RevenueCat (the bind predicate); clients attach it opportunistically
+// whenever the device can produce one.
+type StoreProof struct {
+	Platform          string `json:"platform"`                      // "ios" | "android"
+	AppleJWS          string `json:"apple_jws,omitempty"`           // raw StoreKit 2 Transaction JWS
+	PlayPurchaseToken string `json:"play_purchase_token,omitempty"` // raw Play Billing purchase token
+}
+
 // ---- App bearer (ownership proof; issue #26 IDOR / #25 ownership / #35A) —
 // see docs/app-bearer-contract.md, the byte-level authority for this pair.
 //
@@ -712,6 +728,14 @@ type AppBearerMintRequest struct {
 	// configured to register from.
 	AttestKeyID string `json:"attest_key_id,omitempty"`
 	Attestation string `json:"attestation,omitempty"`
+	// StoreProof — see StoreProof's doc. Omitempty: a proof-free bind is legal
+	// (a free-tier or promotional id has nothing to prove possession of); the
+	// server's bind predicate decides whether its absence is refused.
+	//
+	// POST /app-bearer/add-device reuses this same request struct but binds
+	// nothing (add-device only rotates the caller's own bearer) — this field
+	// is IGNORED on that route.
+	StoreProof *StoreProof `json:"store_proof,omitempty"`
 }
 
 // AppBearerMintResponse is AppBearerMintRequest's body, and also POST
@@ -869,6 +893,11 @@ type RcLinkRequest struct {
 	AppUserID string `json:"app_user_id"`
 	// AttestChallenge — see DeviceRegisterRequest.AttestChallenge's doc.
 	AttestChallenge string `json:"attest_challenge,omitempty"`
+	// StoreProof — see StoreProof's doc. Consulted only on a CHANGE call (a
+	// bind of a fresh id); the every-launch no-op re-send of the id already
+	// held stays proof-free — no predicate, so it never grows a store round
+	// trip.
+	StoreProof *StoreProof `json:"store_proof,omitempty"`
 }
 
 // RcLinkResponse answers RcLinkRequest.
@@ -1047,10 +1076,13 @@ type AppBearerVoucherRedeemRequest struct {
 // The last rung of the recovery ladder app-bearer-contract.md §6 cannot
 // reach: a customer whose relay is physically gone, and whose subscription a
 // RevenueCat TRANSFER re-pointed at a ghost household before the customer's
-// own fresh install ever minted. Three routes, none of which shares a
-// resolver kind with the household routes above — the claimant who opens a
-// claim has no household and no bearer, which is the whole reason the flow
-// exists.
+// own fresh install ever minted. Three routes on the deployed cloud, none of
+// which shares a resolver kind with the household routes above — the claimant
+// who opens a claim has no household and no bearer, which is the whole reason
+// the flow exists. From tag v0.4.0 only POST /rc-claim survives: Option A
+// removes the poll/objection surface (its "decision (b)"), so the poll and
+// object routes and the two shapes below that serve them retire, their struct
+// + fixture deletions riding the stage-3 app-canonical fixture change.
 
 // RcClaimInitRequest is POST /rc-claim (public mux, attestation-gated,
 // BEARER-LESS — contract §2). AppUserID is the RevenueCat id the caller
@@ -1061,10 +1093,13 @@ type AppBearerVoucherRedeemRequest struct {
 // together or neither), with one deliberate difference: the clientDataHash
 // preimage is attestClientData(challenge, "") — AppUserID is NOT folded in,
 // matching the five /push-sources routes' bootstrap rather than the mint's.
-// The claim gains little from id-binding the attestation (the objection
-// window is the control, not a proof of purchase), and one fewer preimage
-// variant is one fewer way for the app to compute the wrong hash (contract's
-// "Remaining review items" §2).
+// The claim gains little from id-binding the attestation — the possession
+// control lives elsewhere (the objection window on the deployed cloud; from
+// tag v0.4.0 the store_proof, which rides inside the signed body), not in
+// folding AppUserID into the preimage — and one fewer preimage variant is one
+// fewer way for the app to compute the wrong hash (contract's "Remaining
+// review items" §2). The preimage stays attestClientData(challenge, "") across
+// both.
 type RcClaimInitRequest struct {
 	AppUserID string `json:"app_user_id"`
 	// Platform is audit-only ("ios" | "android"), as at mint.
@@ -1076,19 +1111,33 @@ type RcClaimInitRequest struct {
 	// register one through, exactly like the five /push-sources routes.
 	AttestKeyID string `json:"attest_key_id,omitempty"`
 	Attestation string `json:"attestation,omitempty"`
+	// StoreProof — see StoreProof's doc. A claim that releases a store-backed
+	// id is a bind (the follow-up mint re-binds it), so it is gated by the
+	// same predicate as the founding mint.
+	StoreProof *StoreProof `json:"store_proof,omitempty"`
 }
 
 // RcClaimInitResponse is RcClaimInitRequest's body: ONE wire shape across the
-// three branches contract §2 defines, keyed on Status — free, holder_active,
-// pending. ClaimID/ExpiresAt are present only on the pending branch.
+// branches contract §2 defines, keyed on Status.
 //
-// A repeat init against an existing pending claim answers the SAME ClaimID
-// and the ORIGINAL ExpiresAt (the window never slides) — the idempotency
-// contract §9 tells the app to rely on: persist claim_id + expires_at, and a
-// lost/repeated init recovers the identical state rather than opening a
-// second claim.
+// The currently deployed cloud answers free, holder_active or pending, and
+// ClaimID/ExpiresAt are present only on the pending branch. A repeat init
+// against an existing pending claim answers the SAME ClaimID and the ORIGINAL
+// ExpiresAt (the window never slides) — the idempotency contract §9 tells the
+// app to rely on: persist claim_id + expires_at, and a lost/repeated init
+// recovers the identical state rather than opening a second claim.
+//
+// The cloud stage of this fan-out (which pins this wire module at tag v0.4.0)
+// REPLACES pending rather than adding to it: the ghost branch releases
+// instantly and answers the terminal "released", so the branch set becomes
+// free, holder_active, released. Pending, the repeat-init idempotency contract
+// above, and the claim/objection window retire with it; ClaimID/ExpiresAt stay
+// in the shape for wire compatibility but go unpopulated. The field set is
+// unchanged.
 type RcClaimInitResponse struct {
-	Status    string `json:"status"` // "free" | "holder_active" | "pending"
+	// Deployed cloud: "free" | "holder_active" | "pending".
+	// From tag v0.4.0: "free" | "holder_active" | "released".
+	Status    string `json:"status"`
 	ClaimID   string `json:"claim_id,omitempty"`
 	ExpiresAt string `json:"expires_at,omitempty"` // RFC 3339
 }
@@ -1096,7 +1145,10 @@ type RcClaimInitResponse struct {
 // RcClaimStatusResponse is GET /rc-claim/{claim_id}'s body (contract §3 — a
 // deliberately ungated GET, claim_id itself the unguessable capability) and
 // also POST /rc-claim/{claim_id}/object's 200/409 body (contract §4), whose
-// Status carries "objected", "released" or "expired" with no ExpiresAt.
+// Status carries "objected", "released" or "expired" with no ExpiresAt. Both
+// routes serve the deployed cloud only and retire at tag v0.4.0 with decision
+// (b) (see the section header); this shape's deletion rides the stage-3
+// fixture change.
 //
 // ExpiresAt is the EARLIEST possible release, never the moment of it — see
 // RcClaimInitResponse and the contract's §3 table for the app-facing
@@ -1109,7 +1161,9 @@ type RcClaimStatusResponse struct {
 // RcClaimObjectRequest is POST /rc-claim/{claim_id}/object (app bearer of the
 // HOLDING household + attestation — contract §4). No target in the body: the
 // claim_id in the URL names it, and the caller's bearer proves which
-// household is objecting.
+// household is objecting. Deployed cloud only — this route and shape retire at
+// tag v0.4.0 with decision (b) (see the section header); the deletion rides
+// the stage-3 fixture change.
 type RcClaimObjectRequest struct {
 	// AttestChallenge — see DeviceRegisterRequest.AttestChallenge's doc.
 	AttestChallenge string `json:"attest_challenge,omitempty"`
