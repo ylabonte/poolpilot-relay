@@ -110,6 +110,23 @@
       }
     ]
   },
+  "app_bearer_mint_request": {
+    "app_user_id": "$RCAnonymousID:abc",
+    "attest_challenge": "chal-1",
+    "platform": "ios",
+    "attest_key_id": "key-1",
+    "attestation": "att-1",
+    "store_proof": {
+      "platform": "ios",
+      "apple_jws": "eyJhbGciOiJFUzI1NiIsIng1YyI6WyJNSUlC4oCmIl19.eyJvcmlnaW5hbFRyYW5zYWN0aW9uSWQiOiIyMDAwMDAwOTk5OTk5OTk5In0.MEUCIQDfakeJWSforFixtureOnlyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    }
+  },
+  "app_bearer_mint_response": {
+    "app_bearer": "41855878c0b4214539d5cd14f4f20571427a9dbe997e5fb17e2972dd97d3ddbd",
+    "app_user_id": "$RCAnonymousID:abc",
+    "tenant_id": "7f3e-tenant",
+    "role": "owner"
+  },
   "status": {
     "paired": true,
     "tunnel": {
@@ -268,7 +285,11 @@
   },
   "rc_link_request": {
     "app_user_id": "rc-user-1",
-    "attest_challenge": "chal-1"
+    "attest_challenge": "chal-1",
+    "store_proof": {
+      "platform": "android",
+      "play_purchase_token": "gpa.3300-9876-5432-10987"
+    }
   },
   "rc_link_response": {
     "tenant_id": "7f3e-tenant",
@@ -281,7 +302,11 @@
     "platform": "ios",
     "attest_challenge": "chal-1",
     "attest_key_id": "key-1",
-    "attestation": "att-1"
+    "attestation": "att-1",
+    "store_proof": {
+      "platform": "ios",
+      "apple_jws": "eyJhbGciOiJFUzI1NiIsIng1YyI6WyJNSUlC4oCmIl19.eyJvcmlnaW5hbFRyYW5zYWN0aW9uSWQiOiIyMDAwMDAwOTk5OTk5OTk5In0.MEUCIQDfakeJWSforFixtureOnlyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    }
   },
   "rc_claim_init_response": {
     "status": "pending",

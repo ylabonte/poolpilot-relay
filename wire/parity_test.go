@@ -86,6 +86,8 @@ func TestFixtureRoundTrips(t *testing.T) {
 		{"push_source_revoke_request", func() any { return &PushSourceRevokeRequest{} }},
 		{"push_source_subscribe_request", func() any { return &PushSourceSubscribeRequest{} }},
 		{"controllers_list_response", func() any { return &ControllerListResponse{} }},
+		{"app_bearer_mint_request", func() any { return &AppBearerMintRequest{} }},
+		{"app_bearer_mint_response", func() any { return &AppBearerMintResponse{} }},
 		{"rc_link_request", func() any { return &RcLinkRequest{} }},
 		{"rc_link_response", func() any { return &RcLinkResponse{} }},
 		{"rc_claim_init_request", func() any { return &RcClaimInitRequest{} }},

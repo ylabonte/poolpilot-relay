@@ -664,6 +664,20 @@ type PushSourceSubscribeResponse struct {
 	RenewAfter string `json:"renew_after"`
 }
 
+// ---- Store proof of possession (rc-id bind gate) ----
+
+// StoreProof is the store-signed proof of subscription possession
+// (docs/rc-claim-app-contract.md §2 / app-bearer-contract.md §2 as rewritten
+// by this change). Exactly one of AppleJWS / PlayPurchaseToken is set,
+// agreeing with Platform. The server requires it whenever the id being bound
+// carries a store-backed subscription in RevenueCat (the bind predicate);
+// clients attach it opportunistically whenever the device can produce one.
+type StoreProof struct {
+	Platform          string `json:"platform"`                      // "ios" | "android"
+	AppleJWS          string `json:"apple_jws,omitempty"`           // raw StoreKit 2 Transaction JWS
+	PlayPurchaseToken string `json:"play_purchase_token,omitempty"` // raw Play Billing purchase token
+}
+
 // ---- App bearer (ownership proof; issue #26 IDOR / #25 ownership / #35A) —
 // see docs/app-bearer-contract.md, the byte-level authority for this pair.
 //
@@ -712,6 +726,14 @@ type AppBearerMintRequest struct {
 	// configured to register from.
 	AttestKeyID string `json:"attest_key_id,omitempty"`
 	Attestation string `json:"attestation,omitempty"`
+	// StoreProof — see StoreProof's doc. Omitempty: a proof-free bind is legal
+	// (a free-tier or promotional id has nothing to prove possession of); the
+	// server's bind predicate decides whether its absence is refused.
+	//
+	// POST /app-bearer/add-device reuses this same request struct but binds
+	// nothing (add-device only rotates the caller's own bearer) — this field
+	// is IGNORED on that route.
+	StoreProof *StoreProof `json:"store_proof,omitempty"`
 }
 
 // AppBearerMintResponse is AppBearerMintRequest's body, and also POST
@@ -869,6 +891,10 @@ type RcLinkRequest struct {
 	AppUserID string `json:"app_user_id"`
 	// AttestChallenge — see DeviceRegisterRequest.AttestChallenge's doc.
 	AttestChallenge string `json:"attest_challenge,omitempty"`
+	// StoreProof — see StoreProof's doc. Consulted only on a CHANGE call (a
+	// bind of a fresh id); the no-op re-send of the id already held costs no
+	// round trip and never needs it.
+	StoreProof *StoreProof `json:"store_proof,omitempty"`
 }
 
 // RcLinkResponse answers RcLinkRequest.
@@ -1076,6 +1102,10 @@ type RcClaimInitRequest struct {
 	// register one through, exactly like the five /push-sources routes.
 	AttestKeyID string `json:"attest_key_id,omitempty"`
 	Attestation string `json:"attestation,omitempty"`
+	// StoreProof — see StoreProof's doc. A claim that releases a store-backed
+	// id is a bind (the follow-up mint re-binds it), so it is gated by the
+	// same predicate as the founding mint.
+	StoreProof *StoreProof `json:"store_proof,omitempty"`
 }
 
 // RcClaimInitResponse is RcClaimInitRequest's body: ONE wire shape across the
