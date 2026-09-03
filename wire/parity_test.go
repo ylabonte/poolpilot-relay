@@ -299,6 +299,6 @@ func TestVendoredFixtureMatchesSiblingCheckout(t *testing.T) {
 		t.Fatalf("read vendored fixture: %v", err)
 	}
 	if !bytes.Equal(source, vendored) {
-		t.Fatal("vendored relay-wire-parity.json drifted from pool-apps — re-vendor it (cp from shared/test-fixtures/) and align internal/wire/wire.go")
+		t.Fatal("vendored relay-wire-parity.json drifted from pool-apps — re-vendor it (cp from shared/test-fixtures/) and align wire/wire.go")
 	}
 }
