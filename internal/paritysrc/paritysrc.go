@@ -49,19 +49,30 @@ func Fixture(name string) (data []byte, reason string, ok bool) {
 	return out, "", true
 }
 
+// siblingRepoNames are the two directory names a pool-apps checkout is known
+// to use on this machine: "pool-apps" (the legacy ~/workspace layout) and
+// "poolpilot-app" (the meta-cockpit's bootstrap.sh clone, and the repo's own
+// name). Probing only one silently skips the guard under the other layout —
+// exactly the "guards effectively switched off" failure this package exists
+// to prevent, just via the directory NAME instead of a fixed relative path.
+var siblingRepoNames = []string{"pool-apps", "poolpilot-app"}
+
 // siblingRepo walks up from the working directory looking for a pool-apps
-// checkout beside one of the ancestors. It requires a .git entry so a stray
-// directory of that name is not mistaken for the repo; .git is a directory in a
-// normal clone and a file inside a worktree, so both are accepted.
+// checkout (under either of siblingRepoNames) beside one of the ancestors.
+// It requires a .git entry so a stray directory of that name is not mistaken
+// for the repo; .git is a directory in a normal clone and a file inside a
+// worktree, so both are accepted.
 func siblingRepo() (string, bool) {
 	dir, err := os.Getwd()
 	if err != nil {
 		return "", false
 	}
 	for range 12 {
-		cand := filepath.Join(dir, "pool-apps")
-		if _, err := os.Stat(filepath.Join(cand, ".git")); err == nil {
-			return cand, true
+		for _, name := range siblingRepoNames {
+			cand := filepath.Join(dir, name)
+			if _, err := os.Stat(filepath.Join(cand, ".git")); err == nil {
+				return cand, true
+			}
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
