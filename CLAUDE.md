@@ -73,7 +73,7 @@ coordinating a new tagged release (see *Cross-repo* below).
 ## Cross-repo
 
 - The **PoolPilot cloud backend** consumes this module as a versioned Go dependency, pinned to a
-  released tag (currently `v0.1.0`). Because the backend builds against a *tag*, not `main`, the four
+  released tag (currently `v0.4.0`). Because the backend builds against a *tag*, not `main`, the four
   exported packages are a contract: change their shape only via a new tag, and expect old-agent /
   new-backend and new-agent / old-backend to coexist for a while (relays update on their own schedule).
 - **Distribution:** signed GitHub Release assets, installed via `https://get.poolpilot.eu` (which
