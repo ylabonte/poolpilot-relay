@@ -607,6 +607,14 @@ func TestEffectiveSeverityIgnoresDisabledRule(t *testing.T) {
 // enabled rule for the same measurement type still governs. EffectiveSeverity
 // must match Evaluate and use the enabled rule, not the disabled one it
 // happens to encounter first.
+//
+// The three candidate verdicts for 7.9 (disabled rule's own band → "ok",
+// parity defaults → "bad", enabled rule's band → "warn") are chosen to be
+// pairwise distinct, so a passing test actually proves the enabled rule's
+// band was consulted — not merely that the disabled rule's own override was
+// skipped (an over-skip straight to the defaults would also satisfy a
+// "bad"-only assertion here, since the defaults happen to agree with what
+// the disabled rule's neighbour band would have said).
 func TestEffectiveSeverityFallsThroughDisabledRuleToEnabledOne(t *testing.T) {
 	disabled := phRule()
 	disabled.ID = "disabled-ph"
@@ -615,13 +623,13 @@ func TestEffectiveSeverityFallsThroughDisabledRuleToEnabledOne(t *testing.T) {
 
 	enabled := phRule()
 	enabled.ID = "app-ph"
-	enabled.Bands = &bands.BandsConfig{Min: 6.0, OkMin: 6.2, OkMax: 6.5, Max: 7.0}
+	enabled.Bands = &bands.BandsConfig{Min: 6.0, OkMin: 6.5, OkMax: 7.5, Max: 8.5}
 
 	rules := []wire.AlertRule{disabled, enabled}
 	r := measure.Reading{Type: bands.TypePH, Value: 7.9}
 
-	if sev, ok := EffectiveSeverity(rules, nil, r); !ok || sev != "bad" {
-		t.Errorf("severity = %q, %v; want bad (enabled rule's band, disabled rule skipped)", sev, ok)
+	if sev, ok := EffectiveSeverity(rules, nil, r); !ok || sev != "warn" {
+		t.Errorf("severity = %q, %v; want warn (enabled rule's band, disabled rule skipped)", sev, ok)
 	}
 }
 
