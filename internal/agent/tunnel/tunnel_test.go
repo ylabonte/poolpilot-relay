@@ -20,8 +20,9 @@ func testConfig() Config {
 	}
 }
 
-// The translation must mirror test/e2e/frpc.toml.tmpl exactly — that file is
-// the tunnel contract the frps plugin authenticates against.
+// The translation must mirror poolpilot-cloud's test/e2e/frpc.toml.tmpl
+// exactly — that file is the tunnel contract the frps plugin authenticates
+// against.
 func TestTranslateMatchesFrpcTemplate(t *testing.T) {
 	common, proxies, err := translate(testConfig())
 	if err != nil {

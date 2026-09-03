@@ -1,7 +1,8 @@
 // Package tunnel embeds the frp client (v0.70.1) to expose the configured
-// controller through the cloud frps. It reproduces test/e2e/frpc.toml.tmpl
-// programmatically: token transport auth, the per-relay token in metadatas.token,
-// loginFailExit=false, and one http proxy with subdomain=<controller GUID>.
+// controller through the cloud frps. It reproduces poolpilot-cloud's
+// test/e2e/frpc.toml.tmpl programmatically: token transport auth, the
+// per-relay token in metadatas.token, loginFailExit=false, and one http
+// proxy with subdomain=<controller GUID>.
 //
 // The frp dependency is deliberately quarantined here — no other agent package
 // may import github.com/fatedier/frp.
@@ -347,7 +348,7 @@ func (t *frpTunnel) proxyState(name string) Status {
 }
 
 // translate maps our Config onto frp's v1 config types — the programmatic
-// twin of test/e2e/frpc.toml.tmpl. Field-for-field:
+// twin of poolpilot-cloud's test/e2e/frpc.toml.tmpl. Field-for-field:
 //
 //	serverAddr/serverPort   → ClientCommonConfig.ServerAddr/ServerPort
 //	loginFailExit = false   → ClientCommonConfig.LoginFailExit
