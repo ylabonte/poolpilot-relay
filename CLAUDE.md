@@ -24,6 +24,11 @@ go vet ./...       # static checks
 gofmt -l .         # formatting (must be empty)
 ```
 
+In the meta-cockpit layout, prefix these with `GOWORK=off` when running from a git worktree: the
+cockpit's `go.work` only lists `./poolpilot-relay`, not a worktree path under it, so `./...` resolves
+to no workspace module and every command above except `gofmt` fails outright. The main checkout needs
+no override.
+
 The `internal/agent/tunnel` package wraps frp and is covered by its own tests, so `go test ./...`
 exercises the tunnel wiring without a live server — no separate e2e harness is needed for it. The
 self-update path does have one, though: `test/self-update-e2e/`, a manual VM/on-device harness for
