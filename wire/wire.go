@@ -1096,11 +1096,12 @@ type AppBearerVoucherRedeemRequest struct {
 // preimage is attestClientData(challenge, "") — AppUserID is NOT folded in,
 // matching the five /push-sources routes' bootstrap rather than the mint's.
 // The claim gains little from id-binding the attestation — the possession
-// control is the store_proof (see StoreProof's doc), which rides inside the
-// signed body, not the pre-Option-A objection window this route used to rely
-// on (see the section header) — and one fewer preimage variant is one fewer
-// way for the app to compute the wrong hash (contract's "Remaining review
-// items" §2). The preimage stays attestClientData(challenge, "") across both.
+// control is the store_proof (see StoreProof's doc) — a store-issued
+// credential the server validates, carried in this request's body — not the
+// pre-Option-A objection window this route used to rely on (see the section
+// header) — and one fewer preimage variant is one fewer way for the app to
+// compute the wrong hash (contract's "Remaining review items" §2). The
+// preimage stays attestClientData(challenge, "") across both.
 type RcClaimInitRequest struct {
 	AppUserID string `json:"app_user_id"`
 	// Platform is audit-only ("ios" | "android"), as at mint.
