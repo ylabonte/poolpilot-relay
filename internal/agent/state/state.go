@@ -17,7 +17,7 @@
 // backup (see backupV1) carries the exact same plaintext material under the
 // same 0600 permissions. Host-bound encryption-at-rest would raise the bar
 // against a pure file-exfiltration attack (e.g. an unencrypted disk image),
-// but no key-management approach was implemented yet — see issue #37.
+// but no key-management approach was implemented yet — see poolpilot-cloud#37.
 //
 // Schema history:
 //
