@@ -1103,7 +1103,7 @@ type AppBearerVoucherRedeemRequest struct {
 // credential the server validates, carried in this request's body — not the
 // pre-Option-A objection window this route used to rely on (see the section
 // header) — and one fewer preimage variant is one fewer way for the app to
-// compute the wrong hash (contract's "Remaining review items" §2). The
+// compute the wrong hash (contract §2 states the preimage normatively). The
 // preimage stays attestClientData(challenge, "") across both.
 type RcClaimInitRequest struct {
 	AppUserID string `json:"app_user_id"`
