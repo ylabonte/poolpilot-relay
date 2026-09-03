@@ -360,7 +360,7 @@ func NormalizeLanAddress(addr string, useHTTPS bool) string {
 
 // ValidateLanAddress rejects a lan_address whose host is a loopback, link-local
 // (which includes the 169.254.169.254 cloud-metadata endpoint), or unspecified
-// IP literal — an SSRF hardening (issue #36). A paired caller (already remote,
+// IP literal — an SSRF hardening (poolpilot-cloud#36). A paired caller (already remote,
 // over the public frp tunnel) sets lan_address and the tunnel then proxies to
 // it; without this, a caller could point it at the relay's own loopback
 // services or a cloud metadata endpoint and reach them over the tunnel. Private
