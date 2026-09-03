@@ -13,9 +13,10 @@ import (
 )
 
 // enrollRequest and enrollResponse mirror the JSON bodies of POST /enroll,
-// which internal/api/enroll.go builds with an inline anonymous struct/map
-// rather than a named wire.go type (enrollResponse has no exported counterpart
-// at all). The fixture still pins their shape, so the round-trip table below
+// which poolpilot-cloud's internal/api/enroll.go builds with an inline
+// anonymous struct/map rather than a named wire.go type (enrollResponse has
+// no exported counterpart at all). The fixture still pins their shape, so
+// the round-trip table below
 // covers them against local stand-ins instead of skipping them.
 //
 // enrollRequest is empty, and that is the point: pool-apps#455 removed

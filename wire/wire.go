@@ -337,9 +337,10 @@ type DeviceRegisterRequest struct {
 	// AttestChallenge is a fresh single-use nonce (POST /attest/challenge) the
 	// iOS client embeds in the body it is about to App-Attest-assert-sign,
 	// bounding how long a captured request stays replayable — see
-	// internal/api/attestguard.go, which consumes it when ATTEST_MODE is log
-	// or enforce. Empty/ignored when attestation is Off, and on Android
-	// (Play Integrity's own per-request token supplies freshness instead).
+	// poolpilot-cloud's internal/api/attestguard.go, which consumes it when
+	// ATTEST_MODE is log or enforce. Empty/ignored when attestation is Off,
+	// and on Android (Play Integrity's own per-request token supplies
+	// freshness instead).
 	AttestChallenge string `json:"attest_challenge,omitempty"`
 }
 
@@ -371,9 +372,10 @@ type DeviceTestResponse struct {
 // These ride alongside the pre-existing bearer-gated endpoints (enroll,
 // invites, devices/register|unregister|test): attestation
 // binds a specific phone to an entitlement so that knowing/guessing an
-// active App User ID is no longer sufficient (internal/api/devices.go's
-// SECURITY comment). Staging is via ATTEST_MODE (off|log|enforce, default
-// off) — see internal/attest and internal/api/attestguard.go.
+// active App User ID is no longer sufficient (poolpilot-cloud's
+// internal/api/devices.go's SECURITY comment). Staging is via ATTEST_MODE
+// (off|log|enforce, default off) — see poolpilot-cloud's internal/attest and
+// internal/api/attestguard.go.
 
 // AttestChallengeResponse is POST /attest/challenge's body: a fresh,
 // single-use, short-lived (server-enforced TTL) nonce. iOS folds it into the
@@ -491,9 +493,10 @@ type AlertResponse struct {
 // the one-time attestation object here instead of a per-request assertion,
 // and the server registers a HOUSEHOLD-LESS attested_device row (tenant_id
 // NULL, migration 0024) from it — same mechanism as the mint's bootstrap
-// (attestationBootstrap, internal/api/attest.go), same "both fields together
-// or neither" rule, and the same clientDataHash preimage as
-// AppBearerVoucherRedeemRequest's bootstrap: attestClientData(challenge, "")
+// (attestationBootstrap, poolpilot-cloud's internal/api/attest.go), same
+// "both fields together or neither" rule, and the same clientDataHash
+// preimage as AppBearerVoucherRedeemRequest's bootstrap:
+// attestClientData(challenge, "")
 // — no app_user_id to fold in on this identity-free surface either. See
 // docs/attestation-app-contract.md.
 
