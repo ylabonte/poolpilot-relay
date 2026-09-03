@@ -25,7 +25,10 @@ gofmt -l .         # formatting (must be empty)
 ```
 
 The `internal/agent/tunnel` package wraps frp and is covered by its own tests, so `go test ./...`
-exercises the tunnel wiring without a live server. There is no separate e2e harness in this repo.
+exercises the tunnel wiring without a live server — no separate e2e harness is needed for it. The
+self-update path does have one, though: `test/self-update-e2e/`, a manual VM/on-device harness for
+the privileged staging→verify→install→restart→rollback chain across CPU architectures (see its own
+README).
 
 ## Module layout
 
