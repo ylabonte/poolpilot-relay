@@ -1096,12 +1096,11 @@ type AppBearerVoucherRedeemRequest struct {
 // preimage is attestClientData(challenge, "") — AppUserID is NOT folded in,
 // matching the five /push-sources routes' bootstrap rather than the mint's.
 // The claim gains little from id-binding the attestation — the possession
-// control lives elsewhere (the objection window on the deployed cloud; from
-// tag v0.4.0 the store_proof, which rides inside the signed body), not in
-// folding AppUserID into the preimage — and one fewer preimage variant is one
-// fewer way for the app to compute the wrong hash (contract's "Remaining
-// review items" §2). The preimage stays attestClientData(challenge, "") across
-// both.
+// control is the store_proof (see StoreProof's doc), which rides inside the
+// signed body, not the pre-Option-A objection window this route used to rely
+// on (see the section header) — and one fewer preimage variant is one fewer
+// way for the app to compute the wrong hash (contract's "Remaining review
+// items" §2). The preimage stays attestClientData(challenge, "") across both.
 type RcClaimInitRequest struct {
 	AppUserID string `json:"app_user_id"`
 	// Platform is audit-only ("ios" | "android"), as at mint.
@@ -1122,24 +1121,17 @@ type RcClaimInitRequest struct {
 // RcClaimInitResponse is RcClaimInitRequest's body: ONE wire shape across the
 // branches contract §2 defines, keyed on Status.
 //
-// The currently deployed cloud answers free, holder_active or pending, and
-// ClaimID/ExpiresAt are present only on the pending branch. A repeat init
-// against an existing pending claim answers the SAME ClaimID and the ORIGINAL
-// ExpiresAt (the window never slides) — the idempotency contract §9 tells the
-// app to rely on: persist claim_id + expires_at, and a lost/repeated init
-// recovers the identical state rather than opening a second claim.
-//
-// The cloud stage of this fan-out (which pins this wire module at tag v0.4.0)
-// REPLACES pending rather than adding to it: the ghost branch releases
-// instantly and answers the terminal "released", so the branch set becomes
-// free, holder_active, released. Pending, the repeat-init idempotency contract
-// above, and the claim/objection window retire with it; ClaimID/ExpiresAt stay
-// in the shape for wire compatibility but go unpopulated. The field set is
-// unchanged.
+// The deployed cloud answers "free", "holder_active", or "released" — Option
+// A's store proof-of-possession release decides the outcome INSTANTLY, with
+// no pending state: a release happens at most once per id, so there is
+// nothing left to poll for and nothing left to object to, which is why the
+// poll/object routes and shapes retired (see the section header above). The
+// pre-Option-A "pending" branch, its repeat-init idempotency contract, and
+// the claim/objection window it drove are gone with it. ClaimID and
+// ExpiresAt stay in the shape for wire compatibility, but the deployed cloud
+// never populates either — decode them defensively.
 type RcClaimInitResponse struct {
-	// Deployed cloud: "free" | "holder_active" | "pending".
-	// From tag v0.4.0: "free" | "holder_active" | "released".
-	Status    string `json:"status"`
+	Status    string `json:"status"` // "free" | "holder_active" | "released"
 	ClaimID   string `json:"claim_id,omitempty"`
 	ExpiresAt string `json:"expires_at,omitempty"` // RFC 3339
 }
