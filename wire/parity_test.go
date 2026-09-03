@@ -86,16 +86,12 @@ func TestFixtureRoundTrips(t *testing.T) {
 		{"push_source_revoke_request", func() any { return &PushSourceRevokeRequest{} }},
 		{"push_source_subscribe_request", func() any { return &PushSourceSubscribeRequest{} }},
 		{"controllers_list_response", func() any { return &ControllerListResponse{} }},
+		{"app_bearer_mint_request", func() any { return &AppBearerMintRequest{} }},
+		{"app_bearer_mint_response", func() any { return &AppBearerMintResponse{} }},
 		{"rc_link_request", func() any { return &RcLinkRequest{} }},
 		{"rc_link_response", func() any { return &RcLinkResponse{} }},
 		{"rc_claim_init_request", func() any { return &RcClaimInitRequest{} }},
 		{"rc_claim_init_response", func() any { return &RcClaimInitResponse{} }},
-		{"rc_claim_status_response", func() any { return &RcClaimStatusResponse{} }},
-		{"rc_claim_object_request", func() any { return &RcClaimObjectRequest{} }},
-		// The relay reuses RcClaimStatusResponse for the object response
-		// ({"status":"objected"}); the app pins a distinct RcClaimObjectResponse,
-		// but the wire shape is identical, so the round-trip decodes cleanly here.
-		{"rc_claim_object_response", func() any { return &RcClaimStatusResponse{} }},
 		{"tenant_status_request", func() any { return &TenantStatusRequest{} }},
 		{"tenant_status_response", func() any { return &TenantStatusResponse{} }},
 		{"update_status", func() any { return &UpdateStatusResponse{} }},
