@@ -39,7 +39,7 @@ import (
 func Fixture(name string) (data []byte, reason string, ok bool) {
 	repo, found := siblingRepo()
 	if !found {
-		return nil, "no pool-apps sibling checkout found above the working directory", false
+		return nil, "no pool-apps / poolpilot-app sibling checkout found above the working directory", false
 	}
 	rel := "shared/test-fixtures/" + name
 	out, err := exec.Command("git", "-C", repo, "show", "origin/main:"+rel).Output()
