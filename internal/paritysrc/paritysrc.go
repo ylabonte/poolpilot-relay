@@ -1,6 +1,6 @@
 // Package paritysrc locates the authoritative copy of a cross-repo parity
 // fixture in the pool-apps sibling checkout, for the drift guards in
-// internal/wire and internal/bands.
+// wire and bands.
 //
 // Both fixtures (relay-wire-parity.json, measurement-parity.json) are owned by
 // pool-apps and vendored into this repo; the guards fail when the vendored copy

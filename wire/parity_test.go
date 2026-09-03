@@ -138,8 +138,8 @@ func TestFixtureRoundTrips(t *testing.T) {
 }
 
 // TestFixturePresetSupportMatchesSourceOfTruth pins the fixture's
-// info.preset_support to internal/preset.Supported(), the single source of
-// truth for supported preset identifiers (see internal/preset's package
+// info.preset_support to preset.Supported(), the single source of
+// truth for supported preset identifiers (see preset's package
 // doc). Order matters — preset_support rides the wire verbatim — so a
 // fixture that drops, adds, or reorders a preset without preset.go moving in
 // lockstep fails here instead of silently drifting.
@@ -268,11 +268,11 @@ func TestFixtureAlertRuleDefaultTolerance(t *testing.T) {
 }
 
 // TestVendoredFixtureMatchesSiblingCheckout guards against silent drift from
-// the pool-apps source of truth, mirroring internal/bands's
+// the pool-apps source of truth, mirroring bands's
 // TestVendoredFixtureMatchesSiblingCheckout for measurement-parity.json. When
 // WIRE_PARITY_SOURCE_PATH is set, that file is authoritative and the test
 // FAILS if it is unreadable or differs. The variable is deliberately NOT the
-// PARITY_SOURCE_PATH used by internal/bands: the two guards expect different
+// PARITY_SOURCE_PATH used by bands: the two guards expect different
 // authoritative files, and a shared name could never satisfy both in one run.
 // When unset (the dev-machine layout), it reads the fixture from the sibling
 // checkout's origin/main via internal/paritysrc — see that package for why it

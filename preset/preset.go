@@ -7,7 +7,7 @@
 // The order returned by Supported() is a wire contract, not an incidental
 // implementation detail: it is advertised verbatim as GET /v1/info's
 // preset_support field and pinned by the cross-repo parity fixture at
-// internal/wire/testdata/relay-wire-parity.json. Adding, removing, or
+// wire/testdata/relay-wire-parity.json. Adding, removing, or
 // reordering a preset requires updating that fixture (and the pool-apps-side
 // contract it mirrors) in lockstep.
 package preset

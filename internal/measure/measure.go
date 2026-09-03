@@ -11,7 +11,7 @@ import "errors"
 // Reading is one classified measurement a controller driver extracted from
 // its wire payload.
 type Reading struct {
-	// Type is the bands key this reading classifies to (internal/bands: ph,
+	// Type is the bands key this reading classifies to (bands: ph,
 	// orp_mv, chlorine_mg_l, temp_water_c, temp_air_c).
 	Type string
 	// Value is the linearised measurement value, in Unit.
