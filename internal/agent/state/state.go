@@ -164,7 +164,7 @@ type State struct {
 	Outbox      []wire.AlertRequest `json:"outbox,omitempty"`
 	TLS         TLS                 `json:"tls,omitzero"`
 	// CtrlSessionSecret is the HMAC key the relay signs ctrl-vhost web sessions
-	// with (issue #27, internal/agent/ctrlfilter). Generated lazily on the first
+	// with (poolpilot-cloud#27, internal/agent/ctrlfilter). Generated lazily on the first
 	// mint and never rotated on its own — rotating it invalidates every live
 	// session, which is a deliberate operator action, not a background one.
 	//
