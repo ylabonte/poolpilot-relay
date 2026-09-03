@@ -1122,7 +1122,7 @@ type RcClaimInitRequest struct {
 	StoreProof *StoreProof `json:"store_proof,omitempty"`
 }
 
-// RcClaimInitResponse is RcClaimInitRequest's body: ONE wire shape across the
+// RcClaimInitResponse is POST /rc-claim's response body: ONE wire shape across the
 // branches contract §2 defines, keyed on Status.
 //
 // The deployed cloud answers "free", "holder_active", or "released" — Option
