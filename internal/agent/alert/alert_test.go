@@ -585,6 +585,54 @@ func TestEffectiveSeverity(t *testing.T) {
 	}
 }
 
+// Regression for #40: EffectiveSeverity must skip a disabled rule exactly like
+// Evaluate does, so /v1/status cannot colour from a rule an operator turned
+// off. A disabled rule's own override band would call 7.9 "ok"; since the
+// rule must be skipped, the reading falls through to the parity defaults,
+// which call 7.9 "bad" (mirrors TestEffectiveSeverity's default case).
+func TestEffectiveSeverityIgnoresDisabledRule(t *testing.T) {
+	disabled := phRule()
+	disabled.Enabled = false
+	disabled.Bands = &bands.BandsConfig{Min: 6.0, OkMin: 6.5, OkMax: 8.5, Max: 9.0}
+	r := measure.Reading{Type: bands.TypePH, Value: 7.9}
+
+	if sev, ok := EffectiveSeverity([]wire.AlertRule{disabled}, nil, r); !ok || sev != "bad" {
+		t.Errorf("disabled-rule severity = %q, %v; want bad (defaults, disabled rule skipped)", sev, ok)
+	}
+}
+
+// The exact reachable state the issue describes: an operator durably
+// suppresses a default rule by keeping it in the list with enabled:false
+// (cmd/poolpilot-relay/main.go's documented suppression path) while a second,
+// enabled rule for the same measurement type still governs. EffectiveSeverity
+// must match Evaluate and use the enabled rule, not the disabled one it
+// happens to encounter first.
+//
+// The three candidate verdicts for 7.9 (disabled rule's own band → "ok",
+// parity defaults → "bad", enabled rule's band → "warn") are chosen to be
+// pairwise distinct, so a passing test actually proves the enabled rule's
+// band was consulted — not merely that the disabled rule's own override was
+// skipped (an over-skip straight to the defaults would also satisfy a
+// "bad"-only assertion here, since the defaults happen to agree with what
+// the disabled rule's neighbour band would have said).
+func TestEffectiveSeverityFallsThroughDisabledRuleToEnabledOne(t *testing.T) {
+	disabled := phRule()
+	disabled.ID = "disabled-ph"
+	disabled.Enabled = false
+	disabled.Bands = &bands.BandsConfig{Min: 6.0, OkMin: 6.5, OkMax: 8.5, Max: 9.0}
+
+	enabled := phRule()
+	enabled.ID = "app-ph"
+	enabled.Bands = &bands.BandsConfig{Min: 6.0, OkMin: 6.5, OkMax: 7.5, Max: 8.5}
+
+	rules := []wire.AlertRule{disabled, enabled}
+	r := measure.Reading{Type: bands.TypePH, Value: 7.9}
+
+	if sev, ok := EffectiveSeverity(rules, nil, r); !ok || sev != "warn" {
+		t.Errorf("severity = %q, %v; want warn (enabled rule's band, disabled rule skipped)", sev, ok)
+	}
+}
+
 func TestBandsFromControl(t *testing.T) {
 	cc := measure.ControlConfig{Target: 760, Min: 200, Max: 900}
 	got, ok := bandsFromControl(cc, 75)

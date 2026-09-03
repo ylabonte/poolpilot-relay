@@ -368,7 +368,7 @@ func EvaluateStale(rules []wire.AlertRule, states map[string]*RuleState, lastSuc
 // /v1/status measurement rendering so the status colour matches what would push.
 func EffectiveSeverity(rules []wire.AlertRule, control map[string]measure.ControlConfig, r measure.Reading) (string, bool) {
 	for _, rule := range rules {
-		if rule.Kind == wire.RuleKindMeasurementBand && rule.MeasurementType == r.Type {
+		if rule.Kind == wire.RuleKindMeasurementBand && rule.Enabled && rule.MeasurementType == r.Type {
 			if cfg, ok := effectiveBands(rule, control); ok {
 				return string(cfg.Banded().SeverityAt(r.Value)), true
 			}
