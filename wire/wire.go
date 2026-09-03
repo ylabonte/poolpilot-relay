@@ -1076,13 +1076,15 @@ type AppBearerVoucherRedeemRequest struct {
 // The last rung of the recovery ladder app-bearer-contract.md §6 cannot
 // reach: a customer whose relay is physically gone, and whose subscription a
 // RevenueCat TRANSFER re-pointed at a ghost household before the customer's
-// own fresh install ever minted. Three routes on the deployed cloud, none of
-// which shares a resolver kind with the household routes above — the claimant
-// who opens a claim has no household and no bearer, which is the whole reason
-// the flow exists. From tag v0.4.0 only POST /rc-claim survives: Option A
-// removes the poll/objection surface (its "decision (b)"), so the poll and
-// object routes and the two shapes below that serve them retire, their struct
-// + fixture deletions riding the stage-3 app-canonical fixture change.
+// own fresh install ever minted. The deployed cloud once served three routes
+// here; Option A's "decision (b)" removed the poll/objection surface (GET
+// /rc-claim/{claim_id} and POST /rc-claim/{claim_id}/object), so only POST
+// /rc-claim survives — sharing no resolver kind with the household routes
+// above, since the claimant who opens a claim has no household and no
+// bearer, which is the whole reason the flow exists. The
+// RcClaimStatusResponse and RcClaimObjectRequest shapes that served the two
+// retired routes are gone from this package too, matching the app-canonical
+// fixture (shared/test-fixtures/relay-wire-parity.json) as of pool-apps#622.
 
 // RcClaimInitRequest is POST /rc-claim (public mux, attestation-gated,
 // BEARER-LESS — contract §2). AppUserID is the RevenueCat id the caller
@@ -1140,33 +1142,6 @@ type RcClaimInitResponse struct {
 	Status    string `json:"status"`
 	ClaimID   string `json:"claim_id,omitempty"`
 	ExpiresAt string `json:"expires_at,omitempty"` // RFC 3339
-}
-
-// RcClaimStatusResponse is GET /rc-claim/{claim_id}'s body (contract §3 — a
-// deliberately ungated GET, claim_id itself the unguessable capability) and
-// also POST /rc-claim/{claim_id}/object's 200/409 body (contract §4), whose
-// Status carries "objected", "released" or "expired" with no ExpiresAt. Both
-// routes serve the deployed cloud only and retire at tag v0.4.0 with decision
-// (b) (see the section header); this shape's deletion rides the stage-3
-// fixture change.
-//
-// ExpiresAt is the EARLIEST possible release, never the moment of it — see
-// RcClaimInitResponse and the contract's §3 table for the app-facing
-// countdown semantics this drives.
-type RcClaimStatusResponse struct {
-	Status    string `json:"status"` // "pending" | "released" | "objected" | "expired"
-	ExpiresAt string `json:"expires_at,omitempty"`
-}
-
-// RcClaimObjectRequest is POST /rc-claim/{claim_id}/object (app bearer of the
-// HOLDING household + attestation — contract §4). No target in the body: the
-// claim_id in the URL names it, and the caller's bearer proves which
-// household is objecting. Deployed cloud only — this route and shape retire at
-// tag v0.4.0 with decision (b) (see the section header); the deletion rides
-// the stage-3 fixture change.
-type RcClaimObjectRequest struct {
-	// AttestChallenge — see DeviceRegisterRequest.AttestChallenge's doc.
-	AttestChallenge string `json:"attest_challenge,omitempty"`
 }
 
 // ---- Agent self-update (LAN API /v1/update) ----
