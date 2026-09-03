@@ -13,9 +13,10 @@ import (
 )
 
 // enrollRequest and enrollResponse mirror the JSON bodies of POST /enroll,
-// which internal/api/enroll.go builds with an inline anonymous struct/map
-// rather than a named wire.go type (enrollResponse has no exported counterpart
-// at all). The fixture still pins their shape, so the round-trip table below
+// which poolpilot-cloud's internal/api/enroll.go builds with an inline
+// anonymous struct/map rather than a named wire.go type (enrollResponse has
+// no exported counterpart at all). The fixture still pins their shape, so
+// the round-trip table below
 // covers them against local stand-ins instead of skipping them.
 //
 // enrollRequest is empty, and that is the point: pool-apps#455 removed
@@ -86,16 +87,12 @@ func TestFixtureRoundTrips(t *testing.T) {
 		{"push_source_revoke_request", func() any { return &PushSourceRevokeRequest{} }},
 		{"push_source_subscribe_request", func() any { return &PushSourceSubscribeRequest{} }},
 		{"controllers_list_response", func() any { return &ControllerListResponse{} }},
+		{"app_bearer_mint_request", func() any { return &AppBearerMintRequest{} }},
+		{"app_bearer_mint_response", func() any { return &AppBearerMintResponse{} }},
 		{"rc_link_request", func() any { return &RcLinkRequest{} }},
 		{"rc_link_response", func() any { return &RcLinkResponse{} }},
 		{"rc_claim_init_request", func() any { return &RcClaimInitRequest{} }},
 		{"rc_claim_init_response", func() any { return &RcClaimInitResponse{} }},
-		{"rc_claim_status_response", func() any { return &RcClaimStatusResponse{} }},
-		{"rc_claim_object_request", func() any { return &RcClaimObjectRequest{} }},
-		// The relay reuses RcClaimStatusResponse for the object response
-		// ({"status":"objected"}); the app pins a distinct RcClaimObjectResponse,
-		// but the wire shape is identical, so the round-trip decodes cleanly here.
-		{"rc_claim_object_response", func() any { return &RcClaimStatusResponse{} }},
 		{"tenant_status_request", func() any { return &TenantStatusRequest{} }},
 		{"tenant_status_response", func() any { return &TenantStatusResponse{} }},
 		{"update_status", func() any { return &UpdateStatusResponse{} }},
@@ -142,8 +139,8 @@ func TestFixtureRoundTrips(t *testing.T) {
 }
 
 // TestFixturePresetSupportMatchesSourceOfTruth pins the fixture's
-// info.preset_support to internal/preset.Supported(), the single source of
-// truth for supported preset identifiers (see internal/preset's package
+// info.preset_support to preset.Supported(), the single source of
+// truth for supported preset identifiers (see preset's package
 // doc). Order matters — preset_support rides the wire verbatim — so a
 // fixture that drops, adds, or reorders a preset without preset.go moving in
 // lockstep fails here instead of silently drifting.
@@ -272,11 +269,11 @@ func TestFixtureAlertRuleDefaultTolerance(t *testing.T) {
 }
 
 // TestVendoredFixtureMatchesSiblingCheckout guards against silent drift from
-// the pool-apps source of truth, mirroring internal/bands's
+// the pool-apps source of truth, mirroring bands's
 // TestVendoredFixtureMatchesSiblingCheckout for measurement-parity.json. When
 // WIRE_PARITY_SOURCE_PATH is set, that file is authoritative and the test
 // FAILS if it is unreadable or differs. The variable is deliberately NOT the
-// PARITY_SOURCE_PATH used by internal/bands: the two guards expect different
+// PARITY_SOURCE_PATH used by bands: the two guards expect different
 // authoritative files, and a shared name could never satisfy both in one run.
 // When unset (the dev-machine layout), it reads the fixture from the sibling
 // checkout's origin/main via internal/paritysrc — see that package for why it
@@ -303,6 +300,6 @@ func TestVendoredFixtureMatchesSiblingCheckout(t *testing.T) {
 		t.Fatalf("read vendored fixture: %v", err)
 	}
 	if !bytes.Equal(source, vendored) {
-		t.Fatal("vendored relay-wire-parity.json drifted from pool-apps — re-vendor it (cp from shared/test-fixtures/) and align internal/wire/wire.go")
+		t.Fatal("vendored relay-wire-parity.json drifted from pool-apps — re-vendor it (cp from shared/test-fixtures/) and align wire/wire.go")
 	}
 }

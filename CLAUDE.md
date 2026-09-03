@@ -24,8 +24,16 @@ go vet ./...       # static checks
 gofmt -l .         # formatting (must be empty)
 ```
 
+In the meta-cockpit layout, prefix these with `GOWORK=off` when running from a git worktree: the
+cockpit's `go.work` only lists `./poolpilot-relay`, not a worktree path under it, so `./...` resolves
+to no workspace module and every command above except `gofmt` fails outright. The main checkout needs
+no override.
+
 The `internal/agent/tunnel` package wraps frp and is covered by its own tests, so `go test ./...`
-exercises the tunnel wiring without a live server. There is no separate e2e harness in this repo.
+exercises the tunnel wiring without a live server — no separate e2e harness is needed for it. The
+self-update path does have one, though: `test/self-update-e2e/`, a manual VM/on-device harness for
+the privileged staging→verify→install→restart→rollback chain across CPU architectures (see its own
+README).
 
 ## Module layout
 
@@ -73,7 +81,7 @@ coordinating a new tagged release (see *Cross-repo* below).
 ## Cross-repo
 
 - The **PoolPilot cloud backend** consumes this module as a versioned Go dependency, pinned to a
-  released tag (currently `v0.1.0`). Because the backend builds against a *tag*, not `main`, the four
+  released tag (currently `v0.4.0`). Because the backend builds against a *tag*, not `main`, the four
   exported packages are a contract: change their shape only via a new tag, and expect old-agent /
   new-backend and new-agent / old-backend to coexist for a while (relays update on their own schedule).
 - **Distribution:** signed GitHub Release assets, installed via `https://get.poolpilot.eu` (which

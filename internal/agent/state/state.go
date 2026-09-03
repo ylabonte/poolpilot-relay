@@ -17,7 +17,7 @@
 // backup (see backupV1) carries the exact same plaintext material under the
 // same 0600 permissions. Host-bound encryption-at-rest would raise the bar
 // against a pure file-exfiltration attack (e.g. an unencrypted disk image),
-// but no key-management approach was implemented yet — see issue #37.
+// but no key-management approach was implemented yet — see poolpilot-cloud#37.
 //
 // Schema history:
 //
@@ -164,7 +164,7 @@ type State struct {
 	Outbox      []wire.AlertRequest `json:"outbox,omitempty"`
 	TLS         TLS                 `json:"tls,omitzero"`
 	// CtrlSessionSecret is the HMAC key the relay signs ctrl-vhost web sessions
-	// with (issue #27, internal/agent/ctrlfilter). Generated lazily on the first
+	// with (poolpilot-cloud#27, internal/agent/ctrlfilter). Generated lazily on the first
 	// mint and never rotated on its own — rotating it invalidates every live
 	// session, which is a deliberate operator action, not a background one.
 	//
@@ -360,7 +360,7 @@ func NormalizeLanAddress(addr string, useHTTPS bool) string {
 
 // ValidateLanAddress rejects a lan_address whose host is a loopback, link-local
 // (which includes the 169.254.169.254 cloud-metadata endpoint), or unspecified
-// IP literal — an SSRF hardening (issue #36). A paired caller (already remote,
+// IP literal — an SSRF hardening (poolpilot-cloud#36). A paired caller (already remote,
 // over the public frp tunnel) sets lan_address and the tunnel then proxies to
 // it; without this, a caller could point it at the relay's own loopback
 // services or a cloud metadata endpoint and reach them over the tunnel. Private

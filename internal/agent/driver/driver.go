@@ -1,5 +1,5 @@
 // Package driver is the preset→controller-driver factory: given a preset
-// identifier (internal/preset) and a connection Config, New builds the
+// identifier (preset) and a connection Config, New builds the
 // concrete controller client and hands it back behind the neutral Driver
 // interface. This is the single dispatch point the poller
 // (internal/agent/poller) and the LAN API's live controller probe
@@ -15,7 +15,7 @@
 //
 // This package is agent-side only: it wires concrete HTTP controller
 // clients (proconip.Client, violet.Client) and must never be imported from
-// internal/api or internal/wire.
+// internal/api (poolpilot-cloud's) or wire.
 package driver
 
 import (

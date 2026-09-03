@@ -304,7 +304,7 @@ func newFixture(t *testing.T) *fixture {
 		ExitFn:       func() { f.exited.Store(true) },
 		ProbeTimeout: 5 * time.Second,
 		// Allow the loopback (httptest) mock controllers this suite uses; the
-		// issue #36 SSRF block (strict default) is covered by its own tests.
+		// poolpilot-cloud#36 SSRF block (strict default) is covered by its own tests.
 		ValidateLan: func(string, bool) error { return nil },
 	}
 	f.srv = srv
@@ -404,7 +404,7 @@ func TestInfoUnauthenticated(t *testing.T) {
 		info.Fingerprint != "sha256/testpin==" {
 		t.Errorf("info = %+v", info)
 	}
-	// preset_support is a wire contract (internal/preset.Supported()): exactly
+	// preset_support is a wire contract (preset.Supported()): exactly
 	// ["procon-ip","violet"], in that order.
 	if len(info.PresetSupport) != 2 || info.PresetSupport[0] != "procon-ip" || info.PresetSupport[1] != "violet" {
 		t.Errorf("preset_support = %+v, want [procon-ip violet]", info.PresetSupport)
