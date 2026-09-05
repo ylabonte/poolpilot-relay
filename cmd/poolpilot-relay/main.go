@@ -6,7 +6,12 @@
 //
 //	CLOUD_BASE_URL   control-plane base URL (required), e.g. https://api.poolpilot.eu
 //	STATE_PATH       state file (default /var/lib/poolpilot-relay/state.json)
-//	LAN_LISTEN       LAN API bind address (default :8443)
+//	LAN_LISTEN       LAN API bind address (default :8443); the mDNS record
+//	                 advertises whatever port this resolves to, so the phone app
+//	                 follows a non-default port automatically
+//	HA_OPTIONS       path to the Home Assistant Supervisor options file (JSON);
+//	                 when set, its `lan_port` seeds LAN_LISTEN so the app's port
+//	                 is settable from the HA UI — an explicit LAN_LISTEN wins
 //	TUNNEL_LISTEN    loopback HTTP bind the frp api proxy forwards to
 //	                 (default 127.0.0.1:8480) — the tunneled LAN API
 //	CTRL_FILTER_LISTEN loopback HTTP bind every ctrl-<GUID> frp proxy forwards
@@ -132,6 +137,10 @@ func reconcileControllerSeeds(s *state.State) {
 }
 
 func run() error {
+	// Home Assistant app bridge: fold the Supervisor's options file into the
+	// env-based config (currently just LAN_LISTEN) before anything reads it.
+	applyHAOptions()
+
 	cloudBaseURL := os.Getenv("CLOUD_BASE_URL")
 	if cloudBaseURL == "" {
 		return fmt.Errorf("CLOUD_BASE_URL is required")
@@ -242,7 +251,7 @@ func run() error {
 			}
 			os.Exit(0)
 		},
-		Updater:      upd,
+		Updater: upd,
 	}
 	// The ctrl vhost accepts the pairing bearer as an alternative to the browser
 	// session cookie, for the native polling clients and reachability probes

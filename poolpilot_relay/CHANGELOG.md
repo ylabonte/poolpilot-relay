@@ -7,6 +7,10 @@ notes live in the relay's GitHub Releases:
 
 ## Unreleased
 
+- The pairing-API port is now configurable from the app's **Configuration** tab:
+  set **`lan_port`** (default `8443`) when another app already holds 8443 on the
+  host network. The relay advertises the chosen port over mDNS, so the phone app
+  follows it automatically — no app-side change.
 - Initial Home Assistant app packaging of the PoolPilot Relay: a 64-bit
   (`aarch64`, `amd64`) image built and published to ghcr on every release tag.
 - A phone-triggered factory reset restarts the agent in-process with a fresh

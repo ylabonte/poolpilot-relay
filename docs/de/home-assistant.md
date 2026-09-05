@@ -39,9 +39,17 @@ für dich verwaltet.
 
 ## Konfiguration
 
-Es gibt nichts zu konfigurieren. Die App spricht mit der PoolPilot-Cloud und
-legt ihre Identität auf ihrem eigenen persistenten Volume ab; gekoppelt wird aus
-der Handy-App.
+Eine Einstellung, im Reiter **Konfiguration** der App: **`lan_port`**
+(Standard **8443**) — der Port, auf dem die gepinnte Kopplungs-API im
+Host-Netzwerk lauscht. Ändere ihn nur, wenn eine andere App bereits 8443 belegt
+(im Log steht dann `bind: address already in use`). Das Relay kündigt den neuen
+Port per mDNS an, die Handy-App findet ihn also automatisch. Am besten *vor* dem
+Koppeln setzen; bei einem bereits gekoppelten Relay findet das Handy den neuen
+Port beim nächsten Verbinden per mDNS.
+
+Alles Übrige ist fest: Die App spricht mit der PoolPilot-Cloud und legt ihre
+Identität auf ihrem eigenen persistenten Volume ab; gekoppelt wird aus der
+Handy-App.
 
 ## Daten & Backups
 
@@ -67,9 +75,10 @@ erscheinen im Add-on-Store wie bei jeder anderen App.
 ## Netzwerk
 
 Die App läuft im **Host-Netzwerk**, damit sie sich per mDNS ankündigen, deinen
-Controller im LAN erreichen und ihre gepinnte Kopplungs-API auf Port **8443** für
-die Handy-Apps bereitstellen kann. Achte darauf, dass Port 8443 auf dem Host
-frei ist.
+Controller im LAN erreichen und ihre gepinnte Kopplungs-API für die Handy-Apps
+bereitstellen kann. Standardmäßig lauscht sie auf Port **8443**; belegt eine
+andere App diesen Port bereits, setze im Reiter **Konfiguration** einen anderen
+**`lan_port`** (siehe oben).
 
 ## Wiederherstellung / Fortgeschritten
 
@@ -88,8 +97,11 @@ docker exec "$(docker ps --filter name=poolpilot_relay --format '{{.Names}}')" \
 ## Fehlerbehebung
 
 - **Die Handy-App findet das Relay nicht** — prüfe, dass die App *gestartet* ist,
-  dass Home Assistant und dein Handy im selben LAN sind und dass Port 8443 frei
-  ist.
+  dass Home Assistant und dein Handy im selben LAN sind und dass der Port der App
+  (Standard 8443) frei ist.
+- **Im Log steht `bind: address already in use`** — eine andere App belegt den
+  Port. Setze im Reiter **Konfiguration** einen anderen **`lan_port`** und starte
+  die App neu.
 - **Logs** — öffne den **Log**-Tab der App.
 
 ---

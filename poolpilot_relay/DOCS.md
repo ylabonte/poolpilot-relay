@@ -42,7 +42,16 @@ same things apply:
 
 ## Configuration
 
-There is nothing to configure. The app talks to the PoolPilot cloud at
+One setting, on the app's **Configuration** tab:
+
+- **`lan_port`** (default **8443**) — the port the relay's pinned HTTPS pairing
+  API binds on the host network. Change it only if another app already uses 8443
+  (the log then shows `bind: address already in use`). The relay advertises the
+  new port over mDNS, so the phone app finds it automatically — no app-side
+  change. Prefer setting it *before* pairing; if you change it on an
+  already-paired relay, the phone re-discovers it via mDNS on its next connect.
+
+Everything else is fixed: the app talks to the PoolPilot cloud at
 `api.poolpilot.eu` and stores its identity on the app's own persistent volume.
 
 ## Data & backups
@@ -72,13 +81,17 @@ release ships, the app store offers the new version like any other app.
 ## Networking
 
 The app runs on the **host network** so it can discover itself via mDNS, reach
-your controller on the LAN, and serve its pinned HTTPS pairing API on port
-**8443** to the phone apps. Make sure nothing else on the host uses port 8443.
+your controller on the LAN, and serve its pinned HTTPS pairing API to the phone
+apps. By default it binds port **8443**; if another app already uses that port,
+set a different **`lan_port`** on the Configuration tab (see above).
 
 ## Troubleshooting
 
 - **App won't pair / phone can't find it** — confirm the app is *started*, that
-  Home Assistant and your phone are on the same LAN, and that port 8443 is free.
+  Home Assistant and your phone are on the same LAN, and that the app's port
+  (default 8443) is free.
+- **Log shows `bind: address already in use`** — another app already holds the
+  port. Set a different **`lan_port`** on the Configuration tab and restart.
 - **Logs** — open the app's **Log** tab, or watch it from the Supervisor.
 
 Full relay documentation: <https://github.com/ylabonte/poolpilot-relay>.
