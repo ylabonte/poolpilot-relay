@@ -1,12 +1,28 @@
 name: addon-release
 
-# Every relay release tag also produces the Home Assistant app release:
-# build + push the multi-arch image to ghcr, then (stable tags only) bump the
-# app's config.yaml version on main so the Supervisor offers the new build.
+# Every relay release tag also produces the Home Assistant app release: build +
+# push the multi-arch image to ghcr, then (stable tags only) bump the app's
+# config.yaml version on main so the Supervisor offers the new build.
+#
+# Rollout authority: for the app channel, the version the Supervisor installs is
+# governed solely by `version:` in config.yaml on the default branch (bumped
+# below) — NOT by the PoolPilot control plane, which governs only the systemd
+# self-update fleet. That split is intentional; the two channels roll out
+# independently.
+#
+# One-time setup required before the first stable release can bump main:
+#   * A GitHub App (or fine-grained token) with `contents: write` +
+#     `pull requests: write` on this repo, exposed as the secrets
+#     ADDON_BUMP_APP_ID / ADDON_BUMP_APP_PRIVATE_KEY. The bump opens an
+#     auto-merging PR (App-authored, so required checks run) rather than pushing
+#     to main directly — main's ruleset requires a PR + status checks.
+#   * The ghcr package ghcr.io/ylabonte/poolpilot-relay must be made PUBLIC once
+#     (Packages are private by default); until then the Supervisor and the
+#     image-exists check below cannot pull it anonymously.
 on:
   push:
     tags: ["v*"]
-  workflow_dispatch: {}
+  workflow_dispatch: {} # build-only dry run (never pushes an image)
 
 permissions:
   contents: read
@@ -37,22 +53,27 @@ jobs:
       - name: Derive version + channel
         id: meta
         run: |
+          # HA image tag / app version is the tag WITHOUT the leading v (0.4.0);
+          # the in-binary version keeps the v-prefixed tag to match release.yml
+          # and the form documented in cmd/poolpilot-relay/main.go.
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            V="${GITHUB_REF_NAME#v}"
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            echo "binver=${GITHUB_REF_NAME}"     >> "$GITHUB_OUTPUT"
           else
-            V="0.0.0-dev"
+            echo "version=0.0.0-dev" >> "$GITHUB_OUTPUT"
+            echo "binver=dev"        >> "$GITHUB_OUTPUT"
           fi
-          echo "version=$V" >> "$GITHUB_OUTPUT"
           case "${GITHUB_REF_NAME}" in
             *-rc.*) echo "stable=false" >> "$GITHUB_OUTPUT" ;;
             *)      echo "stable=true"  >> "$GITHUB_OUTPUT" ;;
           esac
 
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      # No QEMU: the builder stage cross-compiles with Go on the native build
+      # platform and the final stage is FROM scratch (no emulated RUN).
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       - name: Log in to ghcr
-        uses: docker/login-action@v3
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -60,16 +81,16 @@ jobs:
 
       - name: Build & push multi-arch image
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           file: deploy/docker/Dockerfile
-          platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/386
-          push: true
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.ref_type == 'tag' }} # dispatch runs build-only
           provenance: false
           sbom: false
           build-args: |
-            VERSION=${{ steps.meta.outputs.version }}
+            VERSION=${{ steps.meta.outputs.binver }}
           tags: ${{ env.IMAGE }}:${{ steps.meta.outputs.version }}
 
       - name: Tag :latest (stable tags only)
@@ -78,7 +99,7 @@ jobs:
           VERSION: ${{ steps.meta.outputs.version }}
         run: docker buildx imagetools create -t "${IMAGE}:latest" "${IMAGE}:${VERSION}"
 
-      - uses: sigstore/cosign-installer@v3
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         if: github.ref_type == 'tag'
       - name: Sign image (cosign keyless)
         if: github.ref_type == 'tag'
@@ -87,27 +108,37 @@ jobs:
         run: cosign sign --yes "${IMAGE}@${DIGEST}"
 
   bump:
-    # Stable release tags only: the published app tracks stable, rc images are
+    # Stable release tags only: the published app tracks stable; rc images are
     # built above for rehearsal but never offered to users.
     needs: image
     if: github.ref_type == 'tag' && needs.image.outputs.stable == 'true'
     runs-on: ubuntu-latest
     permissions:
-      contents: write # commit the version bump to main
+      contents: read
     steps:
+      # main's ruleset requires a PR + status checks, so the bump lands via an
+      # auto-merging PR authored by a GitHub App (App-authored PRs trigger the
+      # required checks; GITHUB_TOKEN-authored ones would not).
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          app-id: ${{ secrets.ADDON_BUMP_APP_ID }}
+          private-key: ${{ secrets.ADDON_BUMP_APP_PRIVATE_KEY }}
+
       - uses: actions/checkout@v7
         with:
           ref: main
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Verify the image exists before bumping (image-before-bump ordering)
         env:
           VERSION: ${{ needs.image.outputs.version }}
         run: |
           # The Supervisor reads `version:` from config.yaml on the default
-          # branch; bumping ahead of a published image would offer users a 404.
+          # branch; bumping ahead of a published, publicly-pullable image would
+          # offer users a 404.
           docker buildx imagetools inspect "${IMAGE}:${VERSION}" >/dev/null \
-            || { echo "::error::${IMAGE}:${VERSION} not found — refusing to bump."; exit 1; }
+            || { echo "::error::${IMAGE}:${VERSION} not found or not anonymously pullable (is the ghcr package public?) — refusing to bump."; exit 1; }
 
       - name: Bump app version
         env:
@@ -117,23 +148,30 @@ jobs:
           import re, sys
           v = sys.argv[1]
           p = "poolpilot_relay/config.yaml"
-          s = open(p).read()
+          s = open(p, encoding="utf-8").read()
           s = re.sub(r'(?m)^version:.*$', f'version: "{v}"', s, count=1)
-          open(p, "w").write(s)
+          open(p, "w", encoding="utf-8").write(s)
           PY
 
-      - name: Commit & push to main
+      - name: Open auto-merging bump PR
         env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           VERSION: ${{ needs.image.outputs.version }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
         run: |
           if git diff --quiet -- poolpilot_relay/config.yaml; then
-            echo "config.yaml already at ${VERSION}; nothing to commit."
+            echo "config.yaml already at ${VERSION}; nothing to do."
             exit 0
           fi
-          git config user.name "poolpilot-release-bot"
-          git config user.email "noreply@poolpilot.eu"
+          # Per-version branch, so two releases never collide on a shared branch.
+          BR="addon-release/${VERSION}"
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${APP_SLUG}[bot]@users.noreply.github.com"
+          git switch -c "$BR"
           git add poolpilot_relay/config.yaml
-          # [skip ci]: this bump needs no CI, and keeps it from re-triggering.
-          git commit -m "chore(addon): release ${VERSION} [skip ci]"
-          # Explicit refspec (repo carries push.default=upstream in places).
-          git push origin HEAD:refs/heads/main
+          git commit -m "chore(addon): release ${VERSION}"
+          git push origin "$BR:refs/heads/$BR"
+          gh pr create --base main --head "$BR" \
+            --title "chore(addon): release ${VERSION}" \
+            --body "Automated Home Assistant app version bump to \`${VERSION}\` (image \`${IMAGE}:${VERSION}\` is published). Auto-merges once required checks pass."
+          gh pr merge --auto --squash "$BR"

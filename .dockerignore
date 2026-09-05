@@ -7,3 +7,7 @@ docs
 test
 poolpilot_relay
 *.md
+# gitignored in this repo, but present in the cockpit multi-repo layout — a
+# stray go.work would break the in-container build with ambiguous imports.
+go.work
+go.work.sum

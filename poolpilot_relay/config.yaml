@@ -16,13 +16,11 @@ url: https://github.com/ylabonte/poolpilot-relay
 # Pre-built, generic multi-arch image — the Supervisor pulls it, it is never
 # built on the user's device. The tag is set from `version` above.
 image: ghcr.io/ylabonte/poolpilot-relay
+# 64-bit only: Home Assistant deprecated the 32-bit arches (armv7/i386) in 2025.6
+# and stopped refreshing updates for them after 2025.12.
 arch:
   - aarch64
   - amd64
-  - armv7
-  - i386
-# The relay is a single static binary; no s6/init layer is needed.
-init: false
 # mDNS discovery, reaching the controller on the LAN, and serving the pinned
 # HTTPS pairing API on :8443 to the phone apps all require the host network.
 host_network: true
