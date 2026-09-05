@@ -18,7 +18,7 @@ func TestServerRoutesByHostGUID(t *testing.T) {
 	srv.SetTargets(map[string]Target{
 		"guid1": {BaseURL: backend.URL},
 	})
-	// Every request through Handler now needs a web session (issue #27); this
+	// Every request through Handler now needs a web session (issue poolpilot-cloud#27); this
 	// test is about host-based routing, so it carries a valid one throughout.
 	srv.SetSessionKey(testKey)
 
@@ -87,9 +87,9 @@ func sessionCookie(t *testing.T, guid string) *http.Cookie {
 	return &http.Cookie{Name: CookieName, Value: val}
 }
 
-// Without a session cookie the tunnel yields nothing at all — this is the #27
-// fix: a leaked GUID alone stops being sufficient. Checked BEFORE the write
-// filter, so even a plain read is refused.
+// Without a session cookie the tunnel yields nothing at all — this is the
+// poolpilot-cloud#27 fix: a leaked GUID alone stops being sufficient. The
+// credential gate refuses even a plain read, not just writes.
 func TestRequestWithoutSessionCookieIs403(t *testing.T) {
 	backend := newFakeController()
 	defer backend.Close()
@@ -245,7 +245,7 @@ func TestSessionCookieUnlocksReads(t *testing.T) {
 }
 
 // A valid session now unlocks writes too: remote access is app-paired-only and
-// a paired caller gets full transparent access (issue #27's write deny-list was
+// a paired caller gets full transparent access (issue poolpilot-cloud#27's write deny-list was
 // removed). The credential gate — not a per-path filter — is the control point.
 func TestSessionUnlocksWrites(t *testing.T) {
 	backend := newFakeController()
@@ -307,7 +307,7 @@ func TestSessionBootstrapOnUnknownGUIDIs404(t *testing.T) {
 
 // The native polling clients (ProCon.IP/VIOLET over the transparent tunnel) and
 // the reachability probes cannot carry the browser session cookie, so the gate
-// accepts the pairing bearer instead. Without this the #27 gate would have
+// accepts the pairing bearer instead. Without this the poolpilot-cloud#27 gate would have
 // killed the entire remote DATA path, not just the WebView.
 func TestPairingBearerAuthorizesInsteadOfTheCookie(t *testing.T) {
 	backend := newFakeController()

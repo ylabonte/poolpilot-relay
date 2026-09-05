@@ -83,7 +83,7 @@ type RedeemResult struct {
 // Redeem exchanges a one-time enrollment code for the per-relay credentials.
 // The caller persists the result (this keeps redeem side-effect free on error).
 //
-// agent_id (issue #32B) is this relay's own identity; the cloud rejects the
+// agent_id (issue poolpilot-cloud#32B) is this relay's own identity; the cloud rejects the
 // redeem 403 when the code was bound (at mint) to a DIFFERENT agent_id. This is
 // DEFENSE IN DEPTH, NOT a boundary against an attacker who has the code:
 // agent_id is public (mDNS TXT `id`, unauthenticated GET /v1/info) and merely
@@ -143,7 +143,7 @@ func (c *Client) RegisterController(ctx context.Context, cfg wire.ControllerConf
 	}
 }
 
-// RotateController rotates a controller's public GUID (issue #27's manual
+// RotateController rotates a controller's public GUID (issue poolpilot-cloud#27's manual
 // "regenerate a leaked public link" trigger): the cloud revokes the OLD guid
 // and mints a fresh one for the SAME controller (lan_address/preset/label
 // copied) in a single control-plane transaction, returning the new identity
@@ -404,7 +404,7 @@ func (c *Client) SendAlert(ctx context.Context, req wire.AlertRequest) error {
 
 // alertStaleness bounds how old a queued alert may be, judged by the wire's
 // OccurredAt (agent-stamped at enqueue time, RFC 3339), before Drain drops it
-// unattempted instead of delivering it. It exists for issue #90: while a
+// unattempted instead of delivering it. It exists for issue poolpilot-cloud#90: while a
 // household is lapsed, the cloud answers 401/403 at postAlert and Drain
 // deliberately KEEPS the queue for that status (see this function's doc) —
 // that is the right call for a short cloud-side auth hiccup, but a billing
@@ -440,7 +440,7 @@ func (c *Client) SendAlert(ctx context.Context, req wire.AlertRequest) error {
 // weeks-long lapse closes and reopens the same rule's condition repeatedly,
 // queueing one Enter/Recover pair per episode — up to ~25 pairs inside
 // state.OutboxLimit's 50-entry cap. Exempting every Recover unconditionally
-// would flush all of them on reactivation: #90's exact "burst of stale
+// would flush all of them on reactivation: poolpilot-cloud#90's exact "burst of stale
 // pushes" bug, merely relocated onto Recover instead of Enter/Renotify. Only
 // the rule's LAST queued entry describes its CURRENT state — every earlier
 // entry for the same RuleID (Enter, Renotify, or Recover alike) describes an

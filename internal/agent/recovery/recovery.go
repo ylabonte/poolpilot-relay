@@ -118,7 +118,7 @@ func CodeAt(keyPEM, agentID string, t time.Time) (string, error) {
 //
 // It accepts the CURRENT window and the one before it. That tolerance is not
 // generosity: without it a code printed at 10:09:58 would be refused at
-// 10:00:02, which reads to the user as "the code is broken" and drives them to
+// 10:10:02, which reads to the user as "the code is broken" and drives them to
 // re-run the command in a loop. Two windows bound the exposure at ~20 minutes.
 //
 // minWindow is the single-use guard: the agent passes (last accepted window +

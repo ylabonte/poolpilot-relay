@@ -25,7 +25,7 @@ import (
 const Validity = 10 * 365 * 24 * time.Hour
 
 // Generate mints a self-signed ECDSA P-256 certificate for the agent. SANs
-// cover the mDNS host names; the agent ID is the CN so the cert is
+// need not match the published mDNS name; the agent ID is the CN so the cert is
 // self-describing in debugging tools.
 func Generate(agentID string) (certPEM, keyPEM []byte, err error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

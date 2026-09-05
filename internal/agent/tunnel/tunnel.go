@@ -24,7 +24,7 @@ import (
 
 // ProxySpec is one controller's tunnel: GUID names the proxy ("ctrl-<GUID>")
 // and the public subdomain, LocalAddr is the host:port the proxy forwards to
-// (the controller itself, or — once issue #27's authenticated proxy is wired
+// (the controller itself, or — once poolpilot-cloud#27's authenticated proxy is wired
 // in — the loopback ctrlfilter.Server that stands in front of it).
 type ProxySpec struct {
 	GUID      string
@@ -56,7 +56,7 @@ type Config struct {
 	// all forwarding here.
 	APILocalAddr string
 	// FrpsCAFile is the path to the trusted CA PEM the frpc verifies frps
-	// against (issue #31). Empty → no server pinning (legacy relays / an
+	// against (poolpilot-cloud#31). Empty → no server pinning (legacy relays / an
 	// unconfigured control-plane) — frp's own TLS stays on (TLSClientConfig.
 	// Enable defaults true) but unauthenticated, exactly today's behavior.
 	FrpsCAFile string
@@ -356,7 +356,7 @@ func (t *frpTunnel) proxyState(name string) Status {
 //	auth.token              → Auth.Token
 //	metadatas.token         → Metadatas["token"] (per-relay credential)
 //	transport.tls.trustedCaFile/serverName → Transport.TLS.{TrustedCaFile,ServerName}
-//	                          (issue #31 pinning; set only when FrpsCAFile != "")
+//	                          (poolpilot-cloud#31 pinning; set only when FrpsCAFile != "")
 //	[[proxies]] http        → HTTPProxyConfig{name, subdomain, localIP, localPort}
 //
 // For each controller it emits a "ctrl-<GUID>" proxy (subdomain <GUID>) and,
@@ -378,7 +378,7 @@ func translate(cfg Config) (*v1.ClientCommonConfig, []v1.ProxyConfigurer, error)
 	common.Auth.Method = "token"
 	common.Auth.Token = cfg.AuthToken
 
-	// Pin the tunnel server (issue #31): frp's own TLS is already on by
+	// Pin the tunnel server (poolpilot-cloud#31): frp's own TLS is already on by
 	// default (TLSClientConfig.Enable defaults true), but with no
 	// TrustedCaFile it accepts ANY cert (InsecureSkipVerify — see
 	// transport.NewClientTLSConfig), so today's connection is encrypted but

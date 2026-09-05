@@ -418,7 +418,7 @@ func TestTickUnknownPersistedPresetFailsGracefully(t *testing.T) {
 }
 
 // A schema-v1 document migrated forward (see internal/agent/state/migrate.go)
-// never had a preset field, so its migrated Controller.Preset is "". This
+// may leave the preset field empty, so its migrated Controller.Preset is "". This
 // must default to procon-ip — the only controller preset that existed before
 // VIOLET support — so an existing relay keeps polling its already-configured
 // controller across an agent upgrade, with no state-file bump required.

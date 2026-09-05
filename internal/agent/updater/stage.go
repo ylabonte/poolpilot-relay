@@ -142,8 +142,9 @@ func (u *Updater) stage(version string) error {
 	return update.WriteJSONAtomic(filepath.Join(u.dir, update.RequestFile), req)
 }
 
-// assetURL derives a release-asset URL from the compile-time base — never from
-// the check response — so a compromised control plane cannot redirect the fleet
+// assetURL derives a release-asset URL from the compile-time DEFAULT base
+// (env-overridable via REPO_DL_BASE for dev/e2e) — never from the check
+// response — so a compromised control plane cannot redirect the fleet
 // (design doc §8). Symmetric with install.sh's ${REPO_DL_BASE}/${VERSION}/…
 func (u *Updater) assetURL(version, asset string) string {
 	return u.dlBase + "/" + version + "/" + asset

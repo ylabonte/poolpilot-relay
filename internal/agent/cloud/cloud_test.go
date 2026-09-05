@@ -65,7 +65,7 @@ func TestRedeemHappyPath(t *testing.T) {
 	}
 }
 
-// TestRedeemSendsAgentID (issue #32B): Redeem must send the agent's OWN
+// TestRedeemSendsAgentID (issue poolpilot-cloud#32B): Redeem must send the agent's OWN
 // agent_id (state.State.AgentID) in the body, so the cloud can bind an
 // intercepted-code check to this specific relay at redeem time.
 func TestRedeemSendsAgentID(t *testing.T) {
@@ -561,7 +561,7 @@ func TestDrainKeepsOrder(t *testing.T) {
 	}
 }
 
-// --- stale-queued-alert drop at drain time (issue #90) ---
+// --- stale-queued-alert drop at drain time (issue poolpilot-cloud#90) ---
 
 // alertReqAt is alertReq plus an explicit OccurredAt, for the staleness tests.
 func alertReqAt(rule string, occurredAt time.Time) wire.AlertRequest {
@@ -570,7 +570,7 @@ func alertReqAt(rule string, occurredAt time.Time) wire.AlertRequest {
 	return req
 }
 
-// TestDrainDropsStaleQueuedAlertWithoutAttemptingDelivery is the core of #90:
+// TestDrainDropsStaleQueuedAlertWithoutAttemptingDelivery is the core of poolpilot-cloud#90:
 // a reactivated household's next drain must not flush a weeks-old queued
 // alert as a push. The server errors on any request, proving the stale entry
 // was dropped locally rather than delivered.
@@ -694,14 +694,14 @@ func TestDrainTreatsMissingOrUnparseableOccurredAtAsFresh(t *testing.T) {
 	}
 }
 
-// TestDrainNeverDropsRecoverRegardlessOfAge is the fix for review round 1 on
-// #90: unlike Enter/Renotify, a queued Recover has no renotify-style safety
+// TestDrainKeepsTheLastRecoverPerRuleRegardlessOfAge is the fix for review round 1 on
+// poolpilot-cloud#90: unlike Enter/Renotify, a queued Recover has no renotify-style safety
 // net (renotifyIfDue bails immediately once rs.Notified is false, which is
 // exactly the state a committed recovery leaves behind) — so dropping a
 // stale one would be final, leaving the user's last delivered push
-// permanently claiming an active problem that has actually cleared. A
-// Recover must therefore always be delivered, however old.
-func TestDrainNeverDropsRecoverRegardlessOfAge(t *testing.T) {
+// permanently claiming an active problem that has actually cleared. So a
+// Recover is exempt from the drop ONLY as the last queued entry for its rule.
+func TestDrainKeepsTheLastRecoverPerRuleRegardlessOfAge(t *testing.T) {
 	var delivered atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		delivered.Add(1)
@@ -768,7 +768,7 @@ func TestDrainStillDropsStaleEnterAheadOfAFreshRecover(t *testing.T) {
 }
 
 // TestDrainOnlyExemptsTheLastRecoverPerRule is the fix for round 2's finding
-// on #90: exempting EVERY stale Recover reopens #90 itself, just relocated —
+// on poolpilot-cloud#90: exempting EVERY stale Recover reopens poolpilot-cloud#90 itself, just relocated —
 // a value flapping at a band edge during a weeks-long lapse queues one
 // Enter/Recover pair per closed episode (up to ~25 inside state.OutboxLimit's
 // 50-entry cap), and blanket-exempting all of them would flush every one of

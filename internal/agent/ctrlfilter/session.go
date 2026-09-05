@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// Web-session credentials for the ctrl vhost (issue #27's remaining item).
+// Web-session credentials for the ctrl vhost (issue poolpilot-cloud#27's remaining item).
 //
 // The tunnel host <guid>.remote.<host> used to be a bare capability URL: the
 // 32-hex GUID in the hostname was the ONLY gate, and it leaks through TLS SNI,

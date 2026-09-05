@@ -25,7 +25,7 @@ type parityFixture struct {
 		Expected int    `json:"expected"`
 	} `json:"fractionDigits"`
 	// The "format" section is display-only (locale rendering) and is covered by
-	// the app platforms; the relay formats notification values in internal/push.
+	// the app platforms; the cloud (poolpilot-cloud) formats notification values.
 }
 
 func loadParity(t *testing.T) parityFixture {

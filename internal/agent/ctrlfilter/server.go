@@ -237,7 +237,7 @@ func (s *Server) Lookup(guid string) (Target, bool) {
 // header, refuse an unknown GUID, require a paired-app credential, then
 // reverse-proxy transparently.
 //
-// The credential gate (issue #27) is what stops the tunnel host from being a
+// The credential gate (issue poolpilot-cloud#27) is what stops the tunnel host from being a
 // bare capability URL: a leaked GUID alone gets nothing. It fails closed — no
 // key installed means every request is refused, so a misconfigured relay serves
 // nothing rather than everything. Behind that gate an authenticated caller gets
