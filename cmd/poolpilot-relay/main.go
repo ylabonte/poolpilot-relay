@@ -21,6 +21,9 @@
 //	                 https://pair.poolpilot.eu)
 //	UPDATE_DISABLED  "1" disables self-update (checks, staging, auto-apply); the
 //	                 health marker is still written so a manual update is safe
+//	RESTART_ON_RESET "1" makes a factory reset restart the agent in-process with
+//	                 a fresh identity instead of exiting (the container / HA-app
+//	                 path; systemd relies on Restart=always instead)
 //	REPO_DL_BASE     release-asset base URL for self-update downloads (default
 //	                 the GitHub releases URL) — symmetric with install.sh
 //
@@ -48,6 +51,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -75,9 +79,30 @@ func main() {
 	if code, handled := runCLI(os.Args[1:], os.Stdout, os.Stderr); handled {
 		os.Exit(code)
 	}
-	if err := run(); err != nil && !errors.Is(err, context.Canceled) {
-		slog.Error("agent exited", "err", err)
-		os.Exit(1)
+	os.Exit(runLoop(run))
+}
+
+// errFactoryReset is returned by run when a factory reset asked for an
+// in-process restart (RESTART_ON_RESET=1) rather than a process exit.
+var errFactoryReset = errors.New("factory reset: in-process restart requested")
+
+// runLoop runs the agent, restarting it in-process on a factory reset when the
+// runtime asked for that (the Home Assistant app: the Supervisor reads a clean
+// process exit as "stopped" and would leave the app down until a manual start).
+// Every other outcome is terminal: a context cancellation (SIGINT/SIGTERM) is a
+// clean stop, anything else is a real error.
+func runLoop(runFn func() error) int {
+	for {
+		err := runFn()
+		if errors.Is(err, errFactoryReset) {
+			slog.Info("factory reset: restarting agent in-process with a fresh identity")
+			continue
+		}
+		if err != nil && !errors.Is(err, context.Canceled) {
+			slog.Error("agent exited", "err", err)
+			return 1
+		}
+		return 0
 	}
 }
 
@@ -183,6 +208,16 @@ func run() error {
 	// proxy forwards to instead of the controller itself — see
 	// lanapi.ReconfigureTunnel and package ctrlfilter.
 	ctrlFilter := &ctrlfilter.Server{Addr: ctrlfilter.Listen()}
+
+	// The Home Assistant app sets RESTART_ON_RESET=1 so a factory reset restarts
+	// the agent in-process (see the wg.Wait tail and runLoop) instead of exiting;
+	// under systemd the ExitFn/Restart=always path is correct instead.
+	inProcessReset := os.Getenv("RESTART_ON_RESET") == "1"
+	var resetRequested atomic.Bool
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	api := &lanapi.Server{
 		Store:        store,
 		Cloud:        cloudClient,
@@ -196,7 +231,17 @@ func run() error {
 		CtrlFilter:   ctrlFilter,
 		CloudBaseURL: cloudBaseURL,
 		OnPaired:     announcer,
-		ExitFn:       func() { os.Exit(0) },
+		ExitFn: func() {
+			// In the container, unwind the supervise loop so run() returns
+			// errFactoryReset and runLoop restarts with a fresh identity; a
+			// clean os.Exit(0) here would leave the Home Assistant app "stopped".
+			if inProcessReset {
+				resetRequested.Store(true)
+				stop()
+				return
+			}
+			os.Exit(0)
+		},
 		Updater:      upd,
 	}
 	// The ctrl vhost accepts the pairing bearer as an alternative to the browser
@@ -218,9 +263,6 @@ func run() error {
 		}
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
 	// Supervisor: each subsystem restarts independently with backoff — a
 	// poller panic must not take the tunnel down. Everything stops on ctx.
 	var wg sync.WaitGroup
@@ -232,6 +274,9 @@ func run() error {
 	supervise(ctx, &wg, "announce", announcer.Run)
 	supervise(ctx, &wg, "updater", upd.Run)
 	wg.Wait()
+	if resetRequested.Load() {
+		return errFactoryReset
+	}
 	return ctx.Err()
 }
 

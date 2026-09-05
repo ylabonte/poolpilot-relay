@@ -34,6 +34,7 @@ installer does, and how to scan the pairing code by hand.
 | [Configuration](configuration.md) | The `/etc/poolpilot-relay/config` file |
 | [Self-update](self-update.md) | How automatic updates work and how to control them |
 | [Troubleshooting](troubleshooting.md) | Logs, re-pairing, recovery, reinstalling, removing |
+| [Home Assistant app](home-assistant.md) | Running the relay as a Home Assistant app instead of on a Pi |
 
 > 🇩🇪 Diese Dokumentation gibt es auch **[auf Deutsch](../de/index.md)**.
 

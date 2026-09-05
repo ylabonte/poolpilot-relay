@@ -1,9 +1,17 @@
-# PoolPilot Relay
+<p align="center">
+  <img src="poolpilot_relay/logo.png" alt="PoolPilot" width="112">
+</p>
 
-The edge agent (Go) that talks to your **ProCon.IP** or **VIOLET** pool
-controller on the local network and bridges it to the PoolPilot apps — directly
-over your LAN at home, and through a secure tunnel to the PoolPilot cloud when
-you're away.
+<h1 align="center">PoolPilot Relay</h1>
+
+<p align="center">
+  The edge agent (Go) that bridges your <b>ProCon.IP</b> or <b>VIOLET</b> pool
+  controller to the <a href="https://poolpilot.eu">PoolPilot</a> apps.
+</p>
+
+The edge agent (Go) talks to your **ProCon.IP** or **VIOLET** pool controller on
+the local network and bridges it to the PoolPilot apps — directly over your LAN
+at home, and through a secure tunnel to the PoolPilot cloud when you're away.
 
 📖 **Documentation:** [English](docs/en/index.md) · **[🇩🇪 Deutsch](docs/de/index.md)**
 &nbsp;— installation, pairing, commands, configuration, self-update, troubleshooting.
@@ -55,6 +63,27 @@ Systemd units live in `/etc/systemd/system/` (`poolpilot-relay.service`, plus
 
 > Check a device's version with `poolpilot-relay version` (or `--version`), or in
 > the PoolPilot app. Run `poolpilot-relay help` (or `--help`) to list every command.
+
+## Home Assistant app
+
+Running Home Assistant on your pool network? You can run the relay **as a Home
+Assistant app** (formerly "add-on") instead of on a separate device. This repo
+doubles as a Home Assistant app repository — add its URL under **Settings →
+Add-ons → Add-on store → ⋮ → Repositories**:
+
+```
+https://github.com/ylabonte/poolpilot-relay
+```
+
+Then install **PoolPilot Relay** from the store and pair it from the phone app.
+
+📖 Full guide: **[Home Assistant app](docs/en/home-assistant.md)** ·
+🇩🇪 **[Home-Assistant-App](docs/de/home-assistant.md)** — requirements, pairing,
+data & backups, recovery.
+
+The multi-arch app image is built and published to `ghcr.io` automatically on
+every release tag ([`.github/workflows/addon-release.yml`](.github/workflows/addon-release.yml));
+the app itself lives in [`poolpilot_relay/`](poolpilot_relay/).
 
 ## Building & testing
 
