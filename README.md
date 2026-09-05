@@ -56,6 +56,22 @@ Systemd units live in `/etc/systemd/system/` (`poolpilot-relay.service`, plus
 > Check a device's version with `poolpilot-relay version` (or `--version`), or in
 > the PoolPilot app. Run `poolpilot-relay help` (or `--help`) to list every command.
 
+## Home Assistant app
+
+Running Home Assistant on your pool network? You can run the relay **as a Home
+Assistant app** (formerly "add-on") instead of on a separate device. This repo
+doubles as a Home Assistant app repository — add its URL under **Settings →
+Add-ons → Add-on store → ⋮ → Repositories**:
+
+```
+https://github.com/ylabonte/poolpilot-relay
+```
+
+Then install **PoolPilot Relay** from the store. See
+[`poolpilot_relay/DOCS.md`](poolpilot_relay/DOCS.md) for details. The multi-arch
+app image is built and published to `ghcr.io` automatically on every release tag
+([`.github/workflows/addon-release.yml`](.github/workflows/addon-release.yml)).
+
 ## Building & testing
 
 Standard Go tooling — everything is one module at the repo root:

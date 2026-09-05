@@ -1,0 +1,139 @@
+name: addon-release
+
+# Every relay release tag also produces the Home Assistant app release:
+# build + push the multi-arch image to ghcr, then (stable tags only) bump the
+# app's config.yaml version on main so the Supervisor offers the new build.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/ylabonte/poolpilot-relay
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push to ghcr
+      id-token: write # cosign keyless signing
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      stable: ${{ steps.meta.outputs.stable }}
+    steps:
+      - name: Validate tag shape
+        if: github.ref_type == 'tag'
+        run: |
+          # Mirror release.yml: plain vX.Y.Z, optionally -rc.N, no leading zeros.
+          [[ "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.[1-9][0-9]*)?$ ]] \
+            || { echo "::error::tag '$GITHUB_REF_NAME' is not a plain vX.Y.Z[-rc.N] release tag — refusing to build."; exit 1; }
+
+      - uses: actions/checkout@v7
+
+      - name: Derive version + channel
+        id: meta
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            V="${GITHUB_REF_NAME#v}"
+          else
+            V="0.0.0-dev"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          case "${GITHUB_REF_NAME}" in
+            *-rc.*) echo "stable=false" >> "$GITHUB_OUTPUT" ;;
+            *)      echo "stable=true"  >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push multi-arch image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/386
+          push: true
+          provenance: false
+          sbom: false
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+          tags: ${{ env.IMAGE }}:${{ steps.meta.outputs.version }}
+
+      - name: Tag :latest (stable tags only)
+        if: github.ref_type == 'tag' && steps.meta.outputs.stable == 'true'
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: docker buildx imagetools create -t "${IMAGE}:latest" "${IMAGE}:${VERSION}"
+
+      - uses: sigstore/cosign-installer@v3
+        if: github.ref_type == 'tag'
+      - name: Sign image (cosign keyless)
+        if: github.ref_type == 'tag'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
+  bump:
+    # Stable release tags only: the published app tracks stable, rc images are
+    # built above for rehearsal but never offered to users.
+    needs: image
+    if: github.ref_type == 'tag' && needs.image.outputs.stable == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # commit the version bump to main
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify the image exists before bumping (image-before-bump ordering)
+        env:
+          VERSION: ${{ needs.image.outputs.version }}
+        run: |
+          # The Supervisor reads `version:` from config.yaml on the default
+          # branch; bumping ahead of a published image would offer users a 404.
+          docker buildx imagetools inspect "${IMAGE}:${VERSION}" >/dev/null \
+            || { echo "::error::${IMAGE}:${VERSION} not found — refusing to bump."; exit 1; }
+
+      - name: Bump app version
+        env:
+          VERSION: ${{ needs.image.outputs.version }}
+        run: |
+          python3 - "$VERSION" <<'PY'
+          import re, sys
+          v = sys.argv[1]
+          p = "poolpilot_relay/config.yaml"
+          s = open(p).read()
+          s = re.sub(r'(?m)^version:.*$', f'version: "{v}"', s, count=1)
+          open(p, "w").write(s)
+          PY
+
+      - name: Commit & push to main
+        env:
+          VERSION: ${{ needs.image.outputs.version }}
+        run: |
+          if git diff --quiet -- poolpilot_relay/config.yaml; then
+            echo "config.yaml already at ${VERSION}; nothing to commit."
+            exit 0
+          fi
+          git config user.name "poolpilot-release-bot"
+          git config user.email "noreply@poolpilot.eu"
+          git add poolpilot_relay/config.yaml
+          # [skip ci]: this bump needs no CI, and keeps it from re-triggering.
+          git commit -m "chore(addon): release ${VERSION} [skip ci]"
+          # Explicit refspec (repo carries push.default=upstream in places).
+          git push origin HEAD:refs/heads/main

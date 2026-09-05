@@ -1,0 +1,9 @@
+# Build context for deploy/docker/Dockerfile is the repo root. Keep it lean:
+# only the Go module is needed to build ./cmd/poolpilot-relay.
+.git
+.github
+dist
+docs
+test
+poolpilot_relay
+*.md

@@ -1,0 +1,30 @@
+# Home Assistant app (add-on) configuration for the PoolPilot Relay.
+# https://developers.home-assistant.io/docs/apps/configuration
+#
+# `version` is managed automatically by .github/workflows/addon-release.yml:
+# every `vX.Y.Z` tag on this repo builds and pushes the matching multi-arch
+# image to ghcr and bumps the line below. It stays 0.0.0 until the first
+# release tag after this app is merged (no image is published before then).
+name: PoolPilot Relay
+version: "0.0.0"
+slug: poolpilot_relay
+description: >-
+  Runs the PoolPilot edge agent as a Home Assistant app: bridges your ProCon.IP
+  or VIOLET pool controller to the PoolPilot phone apps — directly over your LAN
+  at home, and through a secure tunnel to the PoolPilot cloud when you are away.
+url: https://github.com/ylabonte/poolpilot-relay
+# Pre-built, generic multi-arch image — the Supervisor pulls it, it is never
+# built on the user's device. The tag is set from `version` above.
+image: ghcr.io/ylabonte/poolpilot-relay
+arch:
+  - aarch64
+  - amd64
+  - armv7
+  - i386
+# The relay is a single static binary; no s6/init layer is needed.
+init: false
+# mDNS discovery, reaching the controller on the LAN, and serving the pinned
+# HTTPS pairing API on :8443 to the phone apps all require the host network.
+host_network: true
+boot: auto
+startup: application
