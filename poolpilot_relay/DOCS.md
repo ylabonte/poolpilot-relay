@@ -32,8 +32,13 @@ same things apply:
 > commands print the pairing link and the owner-recovery code, but there is no
 > shell in this image and Home Assistant has no "exec into app" button. If you
 > ever need them, run them via `docker exec` from a host shell (e.g. the SSH &
-> Web Terminal add-on with Protection mode off):
-> `docker exec addon_poolpilot_relay poolpilot-relay show-pairing`.
+> Web Terminal add-on with Protection mode off). The container name embeds this
+> repository's id (`addon_<repo-id>_poolpilot_relay`), so match it by substring:
+>
+> ```sh
+> docker exec "$(docker ps --filter name=poolpilot_relay --format '{{.Names}}')" \
+>   /usr/local/bin/poolpilot-relay show-pairing
+> ```
 
 ## Configuration
 
@@ -54,9 +59,9 @@ All state — your pairing, controller registration, and the relay's TLS identit
   ready to re-pair.
 
 > The TLS identity in `/data` is the pin your paired phones trust. Losing it
-> (uninstalling, or restoring without a backup) strands paired phones behind a
-> misleading "unreachable" error until they pair again — that is why this volume
-> matters.
+> (uninstalling, or reinstalling without restoring a backup) strands paired
+> phones behind a misleading "unreachable" error until they pair again — that is
+> why this volume matters.
 
 ## Updating
 

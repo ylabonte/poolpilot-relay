@@ -11,11 +11,10 @@ name: addon-release
 # independently.
 #
 # One-time setup required before the first stable release can bump main:
-#   * A GitHub App (or fine-grained token) with `contents: write` +
-#     `pull requests: write` on this repo, exposed as the secrets
-#     ADDON_BUMP_APP_ID / ADDON_BUMP_APP_PRIVATE_KEY. The bump opens an
-#     auto-merging PR (App-authored, so required checks run) rather than pushing
-#     to main directly — main's ruleset requires a PR + status checks.
+#   * A GitHub App with `contents: write` + `pull requests: write` on this repo,
+#     exposed as the secrets ADDON_BUMP_APP_ID / ADDON_BUMP_APP_PRIVATE_KEY. The
+#     bump opens an auto-merging PR (App-authored, so required checks run) rather
+#     than pushing to main directly — main's ruleset requires a PR + checks.
 #   * The ghcr package ghcr.io/ylabonte/poolpilot-relay must be made PUBLIC once
 #     (Packages are private by default); until then the Supervisor and the
 #     image-exists check below cannot pull it anonymously.
@@ -167,11 +166,22 @@ jobs:
           BR="addon-release/${VERSION}"
           git config user.name "${APP_SLUG}[bot]"
           git config user.email "${APP_SLUG}[bot]@users.noreply.github.com"
-          git switch -c "$BR"
+          git switch -C "$BR"
           git add poolpilot_relay/config.yaml
           git commit -m "chore(addon): release ${VERSION}"
-          git push origin "$BR:refs/heads/$BR"
-          gh pr create --base main --head "$BR" \
-            --title "chore(addon): release ${VERSION}" \
-            --body "Automated Home Assistant app version bump to \`${VERSION}\` (image \`${IMAGE}:${VERSION}\` is published). Auto-merges once required checks pass."
+          # Re-runnable: a prior partial run may already have pushed this bot
+          # branch — overwrite our own branch instead of failing on non-fast-forward.
+          if git fetch origin "+refs/heads/${BR}:refs/remotes/origin/${BR}" 2>/dev/null; then
+            git push --force-with-lease origin "HEAD:refs/heads/${BR}"
+          else
+            git push origin "HEAD:refs/heads/${BR}"
+          fi
+          # Open the PR only if one is not already open for this branch.
+          if [ -z "$(gh pr list --head "$BR" --state open --json number --jq '.[].number')" ]; then
+            gh pr create --base main --head "$BR" \
+              --title "chore(addon): release ${VERSION}" \
+              --body "Automated Home Assistant app version bump to \`${VERSION}\` (image \`${IMAGE}:${VERSION}\` is published). Auto-merges once required checks pass."
+          fi
           gh pr merge --auto --squash "$BR"
+          # If strict required checks leave the PR behind main, run:
+          #   gh pr update-branch <number>

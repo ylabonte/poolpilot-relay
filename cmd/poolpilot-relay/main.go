@@ -21,6 +21,9 @@
 //	                 https://pair.poolpilot.eu)
 //	UPDATE_DISABLED  "1" disables self-update (checks, staging, auto-apply); the
 //	                 health marker is still written so a manual update is safe
+//	RESTART_ON_RESET "1" makes a factory reset restart the agent in-process with
+//	                 a fresh identity instead of exiting (the container / HA-app
+//	                 path; systemd relies on Restart=always instead)
 //	REPO_DL_BASE     release-asset base URL for self-update downloads (default
 //	                 the GitHub releases URL) — symmetric with install.sh
 //
