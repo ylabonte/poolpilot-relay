@@ -1131,13 +1131,12 @@ type RcClaimInitRequest struct {
 // nothing left to poll for and nothing left to object to, which is why the
 // poll/object routes and shapes retired (see the section header above). The
 // pre-Option-A "pending" branch, its repeat-init idempotency contract, and
-// the claim/objection window it drove are gone with it. ClaimID and
-// ExpiresAt stay in the shape for wire compatibility, but the deployed cloud
-// never populates either — decode them defensively.
+// the claim/objection window it drove are gone with it. ClaimID and ExpiresAt
+// were kept in the shape only for the deployed-cloud compatibility window;
+// that window is now closed (the cloud runs Option A and never populates
+// them), so both fields are dropped here too.
 type RcClaimInitResponse struct {
-	Status    string `json:"status"` // "free" | "holder_active" | "released"
-	ClaimID   string `json:"claim_id,omitempty"`
-	ExpiresAt string `json:"expires_at,omitempty"` // RFC 3339
+	Status string `json:"status"` // "free" | "holder_active" | "released"
 }
 
 // ---- Agent self-update (LAN API /v1/update) ----
