@@ -94,8 +94,8 @@ func defaultStaleRule() wire.AlertRule {
 // measurement_band rule per banded type the preset measures (notify on "bad"
 // only, OK tolerance pre-filled from DefaultOkTolerance) plus one stale_data
 // watchdog. IDs are stable so app-side edits survive re-seeding decisions later.
-// It is the nil-input special case of ReconcileSeed, used by the boot/main.go
-// path where a controller has no rules yet.
+// It is the nil-input special case of ReconcileSeed. It currently has no
+// non-test caller; the boot path (reconcileControllerSeeds) calls ReconcileSeed.
 func SeedDefaults(presetID string) []wire.AlertRule {
 	return ReconcileSeed(nil, presetID)
 }

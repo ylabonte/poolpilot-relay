@@ -1,4 +1,4 @@
-// Package violet reads and parses a pooldigital VIOLET controller's
+// Package violet reads and parses a PoolDigital VIOLET controller's
 // /getReadings JSON payload. The wire shape is a flat JSON object with ~345
 // keys of mixed value types; only the chemistry-relevant keys are extracted
 // into the controller-neutral measure.Reading shape (internal/measure) —

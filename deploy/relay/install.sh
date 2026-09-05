@@ -185,9 +185,9 @@ main() {
     echo "==> this release predates self-update — installing the agent without the updater helper"
   fi
 
-  # Placeholder detection: MINISIGN_PUBKEY above ships as a literal placeholder
-  # until the one-time minisign key ceremony runs and a real key is baked in
-  # here (see deploy/relay/minisign.pub). Until then, `minisign -Vm -P
+  # Placeholder detection: MINISIGN_PUBKEY above was a literal placeholder
+  # until the one-time minisign key ceremony ran; a real key is now baked in
+  # here (see deploy/relay/minisign.pub). Were it a placeholder again, `minisign -Vm -P
   # "$MINISIGN_PUBKEY"` below would treat the placeholder as the trusted key
   # and FAIL EVERY SIGNATURE CHECK once a release is actually promoted — so
   # both the install offer and the verification block must recognize and skip

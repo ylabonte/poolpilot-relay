@@ -191,7 +191,7 @@ func TestDeleteController(t *testing.T) {
 	}
 }
 
-// Issue #27: POST /v1/controllers/{guid}/rotate swaps the controller's GUID
+// Issue poolpilot-cloud#27: POST /v1/controllers/{guid}/rotate swaps the controller's GUID
 // for a fresh one (the old is revoked cloud-side), preserves every other
 // field, returns the new remote URLs, and pushes the swap into the tunnel —
 // the frpc proxy set must carry the NEW guid, not the old.
@@ -477,7 +477,7 @@ func TestReconfigureTunnelMultipleControllers(t *testing.T) {
 	}
 }
 
-// Issue #31: when the state carries a delivered frps CA (Cloud.FRPS.CAPEM),
+// Issue poolpilot-cloud#31: when the state carries a delivered frps CA (Cloud.FRPS.CAPEM),
 // ReconfigureTunnel must materialize it to a file next to the state document
 // (materializeFrpsCA) and hand the tunnel that PATH plus the server name to
 // pin against — the same Config fields translate()/tunnel_test.go proves get
@@ -518,7 +518,7 @@ func TestReconfigureTunnelMaterializesFrpsCA(t *testing.T) {
 }
 
 // The overwhelming common case today (an unconfigured control-plane, or a
-// legacy relay's state predating issue #31): no CAPEM in state → no file
+// legacy relay's state predating issue poolpilot-cloud#31): no CAPEM in state → no file
 // materialized, FrpsCAFile stays empty, tunnel connects exactly as before
 // this change.
 func TestReconfigureTunnelNoCAPEMLeavesFrpsCAFileEmpty(t *testing.T) {
@@ -536,10 +536,10 @@ func TestReconfigureTunnelNoCAPEMLeavesFrpsCAFileEmpty(t *testing.T) {
 	}
 }
 
-// Issue #31 fail-closed: when a CA IS expected (CAPEM non-empty) but
+// Issue poolpilot-cloud#31 fail-closed: when a CA IS expected (CAPEM non-empty) but
 // materializing it to disk fails, ReconfigureTunnel must return an error and
 // must NOT call Configure at all — silently falling back to an unpinned
-// tunnel would reopen the exact exposure #31 closes. Forces the failure by
+// tunnel would reopen the exact exposure poolpilot-cloud#31 closes. Forces the failure by
 // pointing STATE_PATH at "<a regular file>/state.json": materializeFrpsCA's
 // os.MkdirAll(filepath.Dir(...)) then fails because a path component that
 // must be a directory is actually a file.
@@ -573,7 +573,7 @@ func TestReconfigureTunnelFailsClosedWhenCAMaterializeErrors(t *testing.T) {
 // When a ctrlfilter.Server is supplied, every ctrl-<GUID> proxy's LocalAddr
 // is redirected to the filter's shared listener (not the controller's own
 // address) and the filter's GUID -> Target registry is populated with each
-// controller's real base URL (issue #27's authenticated tunnel gate) — so the
+// controller's real base URL (issue poolpilot-cloud#27's authenticated tunnel gate) — so the
 // filter can authenticate and dial the right backend once the tunneled
 // request reaches it.
 func TestReconfigureTunnelWithCtrlFilterRewiresLocalAddr(t *testing.T) {
@@ -610,7 +610,7 @@ func TestReconfigureTunnelWithCtrlFilterRewiresLocalAddr(t *testing.T) {
 }
 
 // filter == nil (the default in every other test in this file) must fall
-// back to the pre-#27 passthrough: LocalAddr is the controller's own
+// back to the pre-poolpilot-cloud#27 passthrough: LocalAddr is the controller's own
 // address, unfiltered. Locked in explicitly so a future change can't
 // silently make filtering mandatory for callers that don't opt in.
 func TestReconfigureTunnelNilFilterIsPassthrough(t *testing.T) {
@@ -827,7 +827,7 @@ func TestStatusPerControllerTunnelState(t *testing.T) {
 // ---- helpers ----
 
 // putControllerOK PUTs a controller via the canonical route and returns its GUID.
-// Issue #36 SSRF: with the strict (default) validator, a lan_address in a
+// Issue poolpilot-cloud#36 SSRF: with the strict (default) validator, a lan_address in a
 // blocked range (loopback / link-local incl. 169.254.169.254 cloud metadata /
 // unspecified) is rejected with 400 BEFORE the probe — the probe would be the
 // SSRF. (The rest of this suite stubs ValidateLan permissive for its loopback
@@ -892,7 +892,7 @@ func (f *fakeTunnel) last() tunnel.Config {
 	return f.cfg
 }
 
-// Issue #27: POST /v1/controllers/{guid}/web-session mints the single-use
+// Issue poolpilot-cloud#27: POST /v1/controllers/{guid}/web-session mints the single-use
 // bootstrap token the app's in-app browser redeems for a ctrl-vhost session
 // cookie. The relay returns the COMPLETE URL — clients must not assemble it.
 func TestWebSessionMintsABootstrapURL(t *testing.T) {
@@ -1026,7 +1026,7 @@ func TestWebSessionIsAvailableOnTheTunnelLeg(t *testing.T) {
 }
 
 // Revoking a device kills every live ctrl-vhost web session, not just the
-// revoked device's bearer (issue #27). A pp_ctrl cookie already sitting in a
+// revoked device's bearer (issue poolpilot-cloud#27). A pp_ctrl cookie already sitting in a
 // lost phone's WebView would otherwise keep serving the controller UI for up to
 // CookieTTL — the exact window the lost-phone revoke flow exists to close.
 func TestDeviceRevokeKillsLiveWebSessions(t *testing.T) {
@@ -1093,7 +1093,7 @@ func TestDeviceRevokeKillsLiveWebSessions(t *testing.T) {
 	}
 }
 
-// Issue #71: the cloud call must not die with the request context. Every one of
+// Issue poolpilot-cloud#71: the cloud call must not die with the request context. Every one of
 // these calls COMMITS server-side, so a client disconnect landing after that
 // commit but before the agent persists leaves the cloud rotated and the agent
 // still believing in the old guid — unrecoverable, because the cloud then 404s
@@ -1126,7 +1126,7 @@ func TestRotateCompletesDespiteACancelledRequestContext(t *testing.T) {
 		t.Fatal("the cloud rotate never happened — the call died with the request context")
 	}
 	if _, stillThere := f.store.Get().FindController(g1); stillThere {
-		t.Fatal("local state still carries the OLD guid while the cloud revoked it — exactly the #71 desync")
+		t.Fatal("local state still carries the OLD guid while the cloud revoked it — exactly the poolpilot-cloud#71 desync")
 	}
 	if got := len(f.store.Get().Controllers); got != 1 {
 		t.Fatalf("controller count = %d, want 1 (rotate is net-zero)", got)
@@ -1177,7 +1177,7 @@ func TestRotateStillReportsAnUnreachableCloudAs502(t *testing.T) {
 	}
 }
 
-// Issue #71: the RegisterController call site (putControllers' MISS path) is
+// Issue poolpilot-cloud#71: the RegisterController call site (putControllers' MISS path) is
 // deliberately NOT pinned here the same way. It runs
 // probeController(r.Context(), cfg) — a LIVE controller probe — BEFORE the
 // cloud call, and that probe intentionally still uses r.Context() (an
@@ -1188,7 +1188,7 @@ func TestRotateStillReportsAnUnreachableCloudAs502(t *testing.T) {
 // That is a deliberate scope call for a follow-up, not an oversight here.
 //
 // This read "the two call sites" until the singular PUT /v1/controller alias
-// was removed (#113); there is exactly one now.
+// was removed (poolpilot-cloud#113); there is exactly one now.
 
 // TestPairFirstCompletesDespiteACancelledRequestContext pins pairFirst's
 // cloudCtx(r) use: Cloud.Redeem burns the one-time enrollment code
@@ -1238,7 +1238,7 @@ func TestPairJoinCompletesDespiteACancelledRequestContext(t *testing.T) {
 
 // TestDeleteControllerCompletesDespiteACancelledRequestContext pins
 // deleteControllerHandler's cloudCtx(r) use: the best-effort cloud revoke is
-// exactly the #71 desync — local state has already dropped the controller, so
+// exactly the poolpilot-cloud#71 desync — local state has already dropped the controller, so
 // a cloud call that dies with the request context leaves an orphaned row
 // eating a quota slot forever, with no local trace left to retry it from.
 func TestDeleteControllerCompletesDespiteACancelledRequestContext(t *testing.T) {

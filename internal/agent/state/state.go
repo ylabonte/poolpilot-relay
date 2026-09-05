@@ -35,7 +35,7 @@
 // single-controller GET/PUT /v1/alert-rules aliases and the boot-time default
 // alert-rule seed (cmd/poolpilot-relay/main.go); new call sites operate on the
 // Devices/Controllers slices directly. The PUT /v1/controller sibling alias
-// was removed in issue #113.
+// was removed in poolpilot-cloud#113.
 package state
 
 import (

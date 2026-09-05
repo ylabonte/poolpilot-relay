@@ -51,20 +51,20 @@ type fixture struct {
 	// rotateRejects, when set, makes rotate answer 404 — a cloud REFUSAL
 	// (cloud.ErrRejected) rather than the 502 rotateFails simulates. The real
 	// cause is a guid already revoked cloud-side, which is unretryable; see
-	// issue #71.
+	// issue poolpilot-cloud#71.
 	rotateRejects atomic.Bool
 	// subscriptionInactive, when set, makes the relay-authed controller routes
 	// answer 403 — the control plane's relayFromBearer verdict for a lapsed
 	// entitlement. Distinct from rotateRejects on purpose: 403 is recoverable
-	// and leaves both sides consistent, 404 is not (issue #71).
+	// and leaves both sides consistent, 404 is not (issue poolpilot-cloud#71).
 	subscriptionInactive atomic.Bool
 	// rotateThrottled, when set, makes rotate answer 429 — what the
 	// control plane's per-IP throttle middleware returns, in front of the
-	// handler. Transient, so it must NOT be reported as terminal (issue #71).
+	// handler. Transient, so it must NOT be reported as terminal (issue poolpilot-cloud#71).
 	rotateThrottled atomic.Bool
 	// registerThrottled, when set, makes POST /controllers answer 429 — the
 	// per-IP throttle, NOT the quota (which is 409). Transient, so it must not
-	// surface as quota_exceeded (issue #71).
+	// surface as quota_exceeded (issue poolpilot-cloud#71).
 	registerThrottled atomic.Bool
 	// voucherCapReached, when set, makes POST /device-vouchers answer 409 — the
 	// control plane's live-voucher cap, which it checks BEFORE consuming the

@@ -34,13 +34,13 @@ are served from a local HTTP server to disposable VMs.
   unprivileged account in the `kvm` (and ideally `libvirt`) groups — **no root
   needed** to run the VMs. Firmware: `OVMF` (amd64, optional), `AAVMF32_{CODE,VARS}.fd`
   (armv7 UEFI), and `u-boot-qemu` + bundled OpenSBI (riscv64).
-- **Guest images**: Ubuntu cloud images for `amd64`, `armhf`, `riscv64`
+- **Guest images**: Ubuntu cloud images for `amd64`, `armhf` (the 32-bit ARM leg; its release binary is labelled `armv7`), `riscv64`
   (`cloud-images.ubuntu.com`). There is no i386 cloud image — the `386` build is
   exercised inside the amd64 VM via the kernel's ia32 compat layer (see caveats).
 
 ## Layout / conventions
 
-The VM host uses a scratch working directory, `PPR_DIR` (default `/var/tmp/ppr`),
+The VM host uses a scratch working directory, `/var/tmp/ppr` (hard-coded in the scripts, not overridable),
 holding `images/`, the signed `release/` tree, the cloud-init `seed.iso`, and one
 `run-<arch>/` per VM (overlay disk + serial console log). Guests reach the host's
 release server at `http://10.0.2.2:8000` — `10.0.2.2` is QEMU's standard user-mode
@@ -50,7 +50,7 @@ release server at `http://10.0.2.2:8000` — `10.0.2.2` is QEMU's standard user-
 | --- | --- | --- |
 | `build-test-releases.sh` | build host | Build + sign the 3 test releases (v0.2.0/v0.2.1 real, v0.2.2 broken) for amd64/386/armv7/riscv64, with the version-binding line. |
 | `provision-seed.sh` | VM host | Generate a host-local VM ssh key + a cloud-init NoCloud `seed.iso`. |
-| `vm-up.sh <arch>` | VM host | Boot a per-arch cloud VM (amd64 KVM; armv7/riscv64 TCG with the right firmware), daemonized, serial→log, ssh via host-forwarded port. |
+| `vm-up.sh <arch>` | VM host | Boot a per-arch cloud VM (amd64 KVM; armhf/riscv64 TCG with the right firmware), daemonized, serial→log, ssh via host-forwarded port. |
 | `vmssh.sh <arch> [cmd]` | VM host | ssh into a VM (right port + key). |
 | `vm-wait.sh <arch> <timeout>` | VM host | Poll until a VM answers ssh. |
 | `guest-stage.sh <ver> <yes\|no> [arch]` | guest (root) | Stage an update exactly like the agent does: populate `staging/`, then write `request.json` last (the trigger). |
@@ -63,10 +63,10 @@ release server at `http://10.0.2.2:8000` — `10.0.2.2` is QEMU's standard user-
 # 1) Build + sign the test releases (build host):
 ./build-test-releases.sh                      # → $OUT/rel/{v0.2.0,v0.2.1,v0.2.2}
 
-# 2) On the VM host: put the release tree + install.sh under $PPR_DIR/release/rel,
-#    download the Ubuntu cloud images into $PPR_DIR/images/<arch>.img, then:
+# 2) On the VM host: put the release tree + install.sh under /var/tmp/ppr/release/rel,
+#    download the Ubuntu cloud images into /var/tmp/ppr/images/<arch>.img, then:
 ./provision-seed.sh
-python3 -m http.server 8000 --bind 0.0.0.0 --directory "$PPR_DIR/release/rel" &
+python3 -m http.server 8000 --bind 0.0.0.0 --directory /var/tmp/ppr/release/rel &
 
 # 3) Per arch — boot, install v0.2.0, update to v0.2.1, then the rollback drill:
 ./vm-up.sh amd64 && ./vm-wait.sh amd64 240

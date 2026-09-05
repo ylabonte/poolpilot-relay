@@ -8,8 +8,9 @@
 //
 // The control plane, not this agent, decides which version installs, so a bad
 // release can be halted centrally. Download URLs are derived from a compile-time
-// base (never from the check response), so a compromised control plane cannot
-// point the fleet at an arbitrary host (design doc §8).
+// DEFAULT base (env-overridable via REPO_DL_BASE for dev/e2e), never from the
+// check response, so a compromised control plane cannot point the fleet at an
+// arbitrary host (design doc §8).
 package updater
 
 import (

@@ -24,7 +24,7 @@ func Token() string {
 const crockford = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 // EnrollmentCode returns a human-friendly "XXXX-XXXX" one-time code. Also the
-// shape used by household invite codes (internal/api/invites.go).
+// shape used by household invite codes (poolpilot-cloud's internal/api/invites.go).
 func EnrollmentCode() string {
 	var raw [8]byte
 	mustRead(raw[:])
@@ -78,7 +78,7 @@ func mustRead(b []byte) {
 	}
 }
 
-// HashToken is the at-rest form of every bearer credential: the DB stores only
+// HashToken is the at-rest form of every bearer credential: poolpilot-cloud's DB stores only
 // sha256(token) so a dump/backup leak cannot impersonate relays. Hash the
 // presented plaintext before any lookup.
 func HashToken(token string) string {

@@ -142,7 +142,7 @@ type ControllerInfo struct {
 type ControllersResponse []ControllerInfo
 
 // ControllerListRequest is POST /controllers/list on the CONTROL PLANE (not
-// the agent) — the app-authed read behind GUID-rotation repair, issue #27.
+// the agent) — the app-authed read behind GUID-rotation repair, issue poolpilot-cloud#27.
 //
 // The bearer alone identifies the caller. The body exists only to carry the
 // attestation challenge: that guard verifies an iOS assertion over the exact
@@ -185,7 +185,7 @@ type ControllerListResponse struct {
 // it (pairing-bearer authed, on either leg) immediately before opening the
 // controller's native web UI in its in-app browser, and loads SessionURL as the
 // WebView's first navigation. That URL redeems a single-use token for the
-// session cookie the ctrl vhost requires on every request (issue #27) and
+// session cookie the ctrl vhost requires on every request (issue poolpilot-cloud#27) and
 // redirects to the controller's root.
 //
 // The relay builds the whole URL — the client must not assemble it. ExpiresIn
@@ -438,7 +438,7 @@ type AlertRequest struct {
 	PoolLabel string `json:"pool_label,omitempty"`
 	// OccurredAt (RFC 3339) is informational for the CLOUD — it dedupes on
 	// received-at instead, to stay robust against relay clock skew. It is
-	// load-bearing on the AGENT side, though (issue #90):
+	// load-bearing on the AGENT side, though (issue poolpilot-cloud#90):
 	// internal/agent/cloud.Client.Drain reads it to drop a queued Enter/
 	// Renotify that has gone stale (older than its alertStaleness bound)
 	// rather than flush it as a late push once the queue resumes draining.
@@ -481,12 +481,12 @@ type AlertResponse struct {
 // pool-apps#434 (shipped as pool-apps PR #455), which unblocked this — the fixture is
 // owned there, so this repo could never move first.
 //
-// AttestKeyID + Attestation (issue #92) are the iOS BOOTSTRAP, present on all
+// AttestKeyID + Attestation (issue poolpilot-cloud#92) are the iOS BOOTSTRAP, present on all
 // five for the same reason AppBearerMintRequest carries them: under
 // ATTEST_MODE=enforce, a per-request assertion requires an ALREADY-REGISTERED
 // App Attest key (attestguard.go's verifyAppleAssertionGuard still does the
 // GetAttestedDevice lookup even in requireAttestationUnbound's form — only the
-// key-BINDING comparison is skipped), and the only pre-#92 ways to register
+// key-BINDING comparison is skipped), and the only pre-poolpilot-cloud#92 ways to register
 // one required an app bearer, i.e. a household. That would have forced a
 // relay-less VIOLET owner to mint one purely to use the one tier whose whole
 // point is not needing to. So a first call from a fresh iOS install may carry
@@ -519,7 +519,7 @@ type PushSourceCreateRequest struct {
 	// AttestChallenge — see DeviceRegisterRequest.AttestChallenge's doc.
 	AttestChallenge string `json:"attest_challenge,omitempty"`
 	// AttestKeyID + Attestation — see the section doc's iOS bootstrap note
-	// (issue #92). Both together or neither.
+	// (issue poolpilot-cloud#92). Both together or neither.
 	AttestKeyID string `json:"attest_key_id,omitempty"`
 	Attestation string `json:"attestation,omitempty"`
 }
@@ -560,7 +560,7 @@ type PushSourceLookupRequest struct {
 	// AttestChallenge — see DeviceRegisterRequest.AttestChallenge's doc.
 	AttestChallenge string `json:"attest_challenge,omitempty"`
 	// AttestKeyID + Attestation — see the section doc's iOS bootstrap note
-	// (issue #92). Both together or neither.
+	// (issue poolpilot-cloud#92). Both together or neither.
 	AttestKeyID string `json:"attest_key_id,omitempty"`
 	Attestation string `json:"attestation,omitempty"`
 }
@@ -599,7 +599,7 @@ type PushSourceRevokeRequest struct {
 	// AttestChallenge — see DeviceRegisterRequest.AttestChallenge's doc.
 	AttestChallenge string `json:"attest_challenge,omitempty"`
 	// AttestKeyID + Attestation — see the section doc's iOS bootstrap note
-	// (issue #92). Both together or neither.
+	// (issue poolpilot-cloud#92). Both together or neither.
 	AttestKeyID string `json:"attest_key_id,omitempty"`
 	Attestation string `json:"attestation,omitempty"`
 }
@@ -640,7 +640,7 @@ type PushSourceSubscribeRequest struct {
 	// AttestChallenge — see DeviceRegisterRequest.AttestChallenge's doc.
 	AttestChallenge string `json:"attest_challenge,omitempty"`
 	// AttestKeyID + Attestation — see the section doc's iOS bootstrap note
-	// (issue #92). Both together or neither.
+	// (issue poolpilot-cloud#92). Both together or neither.
 	AttestKeyID string `json:"attest_key_id,omitempty"`
 	Attestation string `json:"attestation,omitempty"`
 }
@@ -683,7 +683,7 @@ type StoreProof struct {
 	PlayPurchaseToken string `json:"play_purchase_token,omitempty"` // raw Play Billing purchase token
 }
 
-// ---- App bearer (ownership proof; issue #26 IDOR / #25 ownership / #35A) —
+// ---- App bearer (ownership proof; issue poolpilot-cloud#26 IDOR / poolpilot-cloud#25 ownership / poolpilot-cloud#35A) —
 // see docs/app-bearer-contract.md, the byte-level authority for this pair.
 //
 // The app mints a control-plane bearer ONCE — the mint CREATES a household

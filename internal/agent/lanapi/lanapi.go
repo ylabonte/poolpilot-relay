@@ -99,7 +99,7 @@ type Server struct {
 	// TunnelAddr is the loopback plain-HTTP bind the frp api proxy forwards to
 	// (TUNNEL_LISTEN). Empty disables the tunnel-facing listener.
 	TunnelAddr string
-	// CtrlFilter is the shared issue #27 authenticated tunnel gate every
+	// CtrlFilter is the shared issue poolpilot-cloud#27 authenticated tunnel gate every
 	// controller's ctrl-<GUID> proxy forwards to instead of the
 	// controller itself. Nil disables the gate — the ctrl-<GUID> proxy's
 	// LocalAddr falls back to the controller's raw LAN address, ungated
@@ -116,7 +116,7 @@ type Server struct {
 	// probeTimeout bounds the live controller probe in PUT /v1/controllers.
 	ProbeTimeout time.Duration
 
-	// ValidateLan gates a submitted lan_address (issue #36 SSRF block). nil is
+	// ValidateLan gates a submitted lan_address (issue poolpilot-cloud#36 SSRF block). nil is
 	// the strict default (state.ValidateLanAddress — rejects loopback/link-
 	// local/metadata); tests stub it to allow their loopback mock controllers.
 	ValidateLan func(addr string, useHTTPS bool) error
@@ -142,7 +142,7 @@ type UpdaterAPI interface {
 	SetAuto(auto bool) error
 }
 
-// cloudCtx detaches a cloud call from the request context (issue #71).
+// cloudCtx detaches a cloud call from the request context (issue poolpilot-cloud#71).
 //
 // Every call that uses it COMMITS server-side. If the request context is
 // cancelled after that commit but before the agent finishes reading the
@@ -168,7 +168,7 @@ func cloudCtx(r *http.Request) context.Context {
 	return context.WithoutCancel(r.Context())
 }
 
-// checkLanAddress applies the issue #36 SSRF block to a submitted lan_address —
+// checkLanAddress applies the issue poolpilot-cloud#36 SSRF block to a submitted lan_address —
 // state.ValidateLanAddress by default (rejects loopback/link-local/metadata),
 // or s.ValidateLan when a test has stubbed it to allow loopback mocks.
 func (s *Server) checkLanAddress(addr string, useHTTPS bool) error {
@@ -198,7 +198,7 @@ func (s *Server) baseMux() *http.ServeMux {
 	mux.Handle("GET /v1/controllers", s.authed(s.getControllers))
 	mux.Handle("DELETE /v1/controllers/{guid}", s.authed(s.deleteControllerHandler))
 	mux.Handle("POST /v1/controllers/{guid}/rotate", s.authed(s.rotateControllerHandler))
-	// Mints a web session for the controller's native UI (issue #27). On
+	// Mints a web session for the controller's native UI (issue poolpilot-cloud#27). On
 	// baseMux deliberately, so it is reachable on BOTH legs: a device away from
 	// home has no other way to open that UI, and the tunnel leg already proves
 	// possession of the pairing bearer.
@@ -207,7 +207,7 @@ func (s *Server) baseMux() *http.ServeMux {
 	mux.Handle("PUT /v1/controllers/{guid}/alert-rules", s.authed(s.putControllerRules))
 	// Compat aliases (D4) — kept one release; thin wrappers over controller[0]
 	// semantics so pre-multi apps keep working. The PUT /v1/controller sibling
-	// alias was removed in issue #113: no caller (app or internal) ever spoke
+	// alias was removed in issue poolpilot-cloud#113: no caller (app or internal) ever spoke
 	// it after the app's own compat retry was deleted in pool-apps#474.
 	mux.Handle("GET /v1/alert-rules", s.authed(s.getRules))
 	mux.Handle("PUT /v1/alert-rules", s.authed(s.putRules))
@@ -766,7 +766,7 @@ func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 			}
 			doc.Devices[idx].RevokedAt = now
 			// Revoking a device must also kill any ctrl-vhost web session it
-			// still holds (issue #27). The pairing bearer dies with the row
+			// still holds (issue poolpilot-cloud#27). The pairing bearer dies with the row
 			// above, but a pp_ctrl cookie already sitting in that device's
 			// WebView would otherwise keep serving the controller UI for up to
 			// ctrlfilter.CookieTTL — precisely the lost-phone window this flow
@@ -881,7 +881,7 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "unsupported_preset")
 		return
 	}
-	// Issue #36 SSRF hardening: reject a lan_address pointed at loopback/
+	// Issue poolpilot-cloud#36 SSRF hardening: reject a lan_address pointed at loopback/
 	// link-local/metadata BEFORE we probe it (the probe itself is the SSRF).
 	if err := s.checkLanAddress(cfg.LanAddress, cfg.UseHTTPS); err != nil {
 		writeErr(w, http.StatusBadRequest, "blocked_lan_address")
@@ -1070,7 +1070,7 @@ func (s *Server) deleteControllerHandler(w http.ResponseWriter, r *http.Request)
 }
 
 // rotateControllerHandler serves POST /v1/controllers/{guid}/rotate (issue
-// #27's manual "regenerate a leaked public link" trigger). Order matters and
+// poolpilot-cloud#27's manual "regenerate a leaked public link" trigger). Order matters and
 // is deliberate: the cloud call runs FIRST — it is what actually revokes the
 // old guid and mints the new one — and only on ITS success does this touch
 // state.json or the tunnel, so a cloud failure (uplink down, cloud rejects
@@ -1110,7 +1110,7 @@ func (s *Server) ensureCtrlSessionKey() (ctrlfilter.SessionKey, error) {
 
 // webSessionHandler is POST /v1/controllers/{guid}/web-session: it mints the
 // single-use bootstrap token the app's in-app browser redeems for a ctrl-vhost
-// session cookie (issue #27), and returns the complete URL to load.
+// session cookie (issue poolpilot-cloud#27), and returns the complete URL to load.
 //
 // This is what replaces the tunnel's old forever-URL property. The controller's
 // native UI is reachable only from a paired app, because only a paired app
@@ -1425,14 +1425,14 @@ func (s *Server) reconfigureTunnel() error {
 // materializeFrpsCA), written next to the agent's state file.
 const frpsCAFilename = "frps-ca.pem"
 
-// materializeFrpsCA writes the frps TLS CA (PEM, issue #31 — st.Cloud.FRPS.
+// materializeFrpsCA writes the frps TLS CA (PEM, issue poolpilot-cloud#31 — st.Cloud.FRPS.
 // CAPEM, delivered over the already-authenticated redeem response) to a
 // stable file next to the agent's state document, since tunnel.Config wants a
 // file PATH for frp's TrustedCaFile (frp itself opens the file at connect
 // time; the agent never holds the PEM in a form frp can consume directly).
 // Empty caPEM (legacy relay / a control-plane not configured with a CA)
 // returns "" and writes nothing — the caller's tunnel.Config.FrpsCAFile then
-// stays empty too, exactly today's (pre-#31) unpinned behavior. The file is
+// stays empty too, exactly today's (pre-poolpilot-cloud#31) unpinned behavior. The file is
 // 0600, matching the state document's own at-rest posture (package doc).
 func materializeFrpsCA(caPEM string) (string, error) {
 	if caPEM == "" {
@@ -1486,11 +1486,11 @@ func materializeFrpsCA(caPEM string) (string, error) {
 // controllers not yet registered with the cloud (no GUID) are skipped.
 //
 // It is also the single site (shared by the post-pair Configure call above and
-// main.go's boot-resume path) that materializes the issue #31 frps TLS CA via
+// main.go's boot-resume path) that materializes the issue poolpilot-cloud#31 frps TLS CA via
 // materializeFrpsCA and populates tunnel.Config's FrpsCAFile/FrpsServerName —
 // centralizing the CA-pin so both entry points pin identically.
 //
-// filter is the issue #27 authenticated tunnel gate. When non-nil
+// filter is the issue poolpilot-cloud#27 authenticated tunnel gate. When non-nil
 // (and its Addr is set), every ctrl-<GUID> proxy's LocalAddr is redirected to
 // filter.Addr instead of the controller's own address — mirroring how every
 // api-<GUID> proxy already shares one loopback listener (apiLocalAddr) — and
@@ -1499,7 +1499,7 @@ func materializeFrpsCA(caPEM string) (string, error) {
 // and reverse-proxy to the right
 // backend per request (demuxed by the tunneled request's Host header — see
 // package ctrlfilter). filter == nil (or an empty Addr) falls back to the
-// pre-#27 passthrough behaviour: LocalAddr is the controller's raw address,
+// pre-poolpilot-cloud#27 passthrough behaviour: LocalAddr is the controller's raw address,
 // unfiltered — kept only for callers/tests that don't wire ctrlfilter in; a
 // real deployment always passes one (see main.go).
 func ReconfigureTunnel(t tunnel.Tunnel, st state.State, apiLocalAddr string, filter *ctrlfilter.Server) error {
@@ -1550,13 +1550,13 @@ func ReconfigureTunnel(t tunnel.Tunnel, st state.State, apiLocalAddr string, fil
 	if apiLocalAddr != "" && strings.HasPrefix(apiLocalAddr, ":") {
 		apiLocalAddr = "127.0.0.1" + apiLocalAddr
 	}
-	// Issue #31: materialize the delivered CA (if any) to a file frp can open,
+	// Issue poolpilot-cloud#31: materialize the delivered CA (if any) to a file frp can open,
 	// and pin the tunnel server against it. FAIL CLOSED on error: CAPEM ==
 	// "" (no CA expected — legacy relay / unconfigured control-plane)
 	// short-circuits inside materializeFrpsCA and never reaches here, so an
 	// error here only ever happens when a CA WAS expected — silently
 	// configuring an unpinned tunnel in that case would reopen exactly the
-	// issue #31 exposure this whole feature closes. Return the error instead
+	// issue poolpilot-cloud#31 exposure this whole feature closes. Return the error instead
 	// (no Configure call at all): the caller (reconfigureTunnel / main.go's
 	// boot-resume) surfaces it and the existing tunnel — if any — keeps
 	// running under its last-known-good (pinned) config rather than being

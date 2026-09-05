@@ -7,10 +7,11 @@ import (
 )
 
 // version is a parsed vX.Y.Z release version. Deliberately NOT full semver: no
-// pre-release, no build metadata, no ranges. Release tags are only ever plain
-// vX.Y.Z, and "dev" (the ldflags default for local builds) is unparseable on
-// purpose so it can never win a comparison. This mirrors the control plane's
-// internal/relver so both sides order versions identically (distribution §6.4).
+// pre-release, no build metadata, no ranges. A vX.Y.Z-rc.N tag is refused
+// because an rc is never promoted, and "dev" (the ldflags default for local
+// builds) is unparseable on purpose so it can never win a comparison. This
+// mirrors the control plane's internal/relver so both sides order versions
+// identically (distribution §6.4).
 type version struct {
 	major, minor, patch int
 }

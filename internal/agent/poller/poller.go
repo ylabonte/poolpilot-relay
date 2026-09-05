@@ -23,7 +23,7 @@ import (
 	"github.com/ylabonte/poolpilot-relay/wire"
 )
 
-// DefaultInterval matches the apps' dashboard cadence; e2e overrides via
+// DefaultInterval is the relay's controller poll cadence; e2e overrides via
 // POLL_INTERVAL=1s.
 const DefaultInterval = 60 * time.Second
 

@@ -143,7 +143,7 @@ func TestTranslateNoControllersIsValid(t *testing.T) {
 }
 
 // FrpsCAFile set must populate both Transport.TLS.TrustedCaFile and
-// ServerName — the issue #31 pinning path. Does not require the file to
+// ServerName — the poolpilot-cloud#31 pinning path. Does not require the file to
 // actually exist: translate only builds the frp config struct, it never
 // opens FrpsCAFile itself (frp's own TLS dialer does that at connect time).
 func TestTranslatePinsFrpsCA(t *testing.T) {
@@ -181,7 +181,7 @@ func TestTranslatePinsFrpsCAWithoutServerName(t *testing.T) {
 
 // Backward compatibility: an empty FrpsCAFile (legacy relay / unconfigured
 // control-plane) must leave both TLS fields at their zero value — no pinning,
-// exactly today's (pre-#31) behavior.
+// exactly today's (pre-poolpilot-cloud#31) behavior.
 func TestTranslateNoFrpsCALeavesTLSZero(t *testing.T) {
 	cfg := testConfig()
 	cfg.FrpsServerName = "should-be-ignored.example" // must not leak through without a CA
@@ -270,7 +270,7 @@ func TestStatusLifecycleWithoutNetwork(t *testing.T) {
 }
 
 // needsRestart guards the in-place-reconcile fast path: only a change to one of
-// the transport fields (server endpoint, auth material, or the issue #31 TLS
+// the transport fields (server endpoint, auth material, or the poolpilot-cloud#31 TLS
 // pin) forces a full service restart; everything else (the proxy set,
 // SubdomainHost, APILocalAddr) is hot-reloadable via UpdateConfigSource.
 func TestNeedsRestart(t *testing.T) {

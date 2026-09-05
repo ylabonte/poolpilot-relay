@@ -1,5 +1,5 @@
 [Unit]
-Description=PoolPilot Relay agent (ProCon.IP remote access + alerting)
+Description=PoolPilot Relay agent (ProCon.IP & VIOLET remote access + alerting)
 Documentation=https://github.com/ylabonte/poolpilot-relay
 After=network-online.target
 Wants=network-online.target
