@@ -42,10 +42,12 @@ für dich verwaltet.
 Eine Einstellung, im Reiter **Konfiguration** der App: **`lan_port`**
 (Standard **8443**) — der Port, auf dem die gepinnte Kopplungs-API im
 Host-Netzwerk lauscht. Ändere ihn nur, wenn eine andere App bereits 8443 belegt
-(im Log steht dann `bind: address already in use`). Das Relay kündigt den neuen
-Port per mDNS an, die Handy-App findet ihn also automatisch. Am besten *vor* dem
-Koppeln setzen; bei einem bereits gekoppelten Relay findet das Handy den neuen
-Port beim nächsten Verbinden per mDNS.
+(im Log steht dann `bind: address already in use`). **Setze ihn vor dem
+Koppeln.** Ein Handy, das sich danach koppelt, übernimmt den angekündigten Port
+automatisch per mDNS; ein bereits gekoppeltes Handy behält den Port, mit dem es
+gekoppelt wurde, und löst ihn nicht neu auf — ein Wechsel bei einem bereits
+gekoppelten Relay unterbricht daher den direkten LAN-Pfad, die App fällt auf den
+Cloud-Tunnel zurück, bis du neu koppelst.
 
 Alles Übrige ist fest: Die App spricht mit der PoolPilot-Cloud und legt ihre
 Identität auf ihrem eigenen persistenten Volume ab; gekoppelt wird aus der

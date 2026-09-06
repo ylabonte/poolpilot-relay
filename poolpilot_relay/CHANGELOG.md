@@ -9,8 +9,9 @@ notes live in the relay's GitHub Releases:
 
 - The pairing-API port is now configurable from the app's **Configuration** tab:
   set **`lan_port`** (default `8443`) when another app already holds 8443 on the
-  host network. The relay advertises the chosen port over mDNS, so the phone app
-  follows it automatically — no app-side change.
+  host network. The relay advertises the chosen port over mDNS, so a phone that
+  pairs afterwards picks it up automatically; an already-paired phone keeps the
+  port it paired on, so set this before pairing.
 
 ## 0.5.0
 

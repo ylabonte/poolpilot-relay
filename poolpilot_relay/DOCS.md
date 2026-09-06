@@ -46,10 +46,11 @@ One setting, on the app's **Configuration** tab:
 
 - **`lan_port`** (default **8443**) — the port the relay's pinned HTTPS pairing
   API binds on the host network. Change it only if another app already uses 8443
-  (the log then shows `bind: address already in use`). The relay advertises the
-  new port over mDNS, so the phone app finds it automatically — no app-side
-  change. Prefer setting it *before* pairing; if you change it on an
-  already-paired relay, the phone re-discovers it via mDNS on its next connect.
+  (the log then shows `bind: address already in use`). **Set it before pairing.**
+  A phone that pairs afterwards picks the advertised port up over mDNS
+  automatically; an already-paired phone keeps the port it paired on and does not
+  re-resolve it, so changing the port on an already-paired relay drops the direct
+  LAN path — the app falls back to the cloud tunnel until you re-pair.
 
 Everything else is fixed: the app talks to the PoolPilot cloud at
 `api.poolpilot.eu` and stores its identity on the app's own persistent volume.

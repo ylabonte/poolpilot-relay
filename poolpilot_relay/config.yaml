@@ -27,10 +27,11 @@ host_network: true
 boot: auto
 startup: application
 # The one user-facing setting: the LAN port the pinned HTTPS pairing API binds
-# and advertises over mDNS (the phone app follows whatever is advertised, so no
-# app-side change is needed). Change it only if another app already holds the
-# default 8443 on the host network. The Supervisor writes this to
-# /data/options.json; the agent reads it via HA_OPTIONS (see the Dockerfile).
+# and advertises over mDNS. A phone that pairs afterwards picks the port up from
+# the SRV record; an already-paired phone keeps the port it paired on (the app
+# does not re-resolve it), so set this BEFORE pairing. Change it only if another
+# app already holds the default 8443 on the host network. The Supervisor writes
+# this to /data/options.json; the agent reads it via HA_OPTIONS (see the Dockerfile).
 options:
   lan_port: 8443
 schema:
