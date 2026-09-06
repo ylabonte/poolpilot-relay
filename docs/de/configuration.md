@@ -54,4 +54,4 @@ zu ändern kann das Relay lahmlegen — setze sie nur, wenn du weißt, warum:
 `FRPS_AUTH_TOKEN`, `PAIR_URL_BASE`, `REPO_DL_BASE` — dazu die nur im Container
 genutzten `RESTART_ON_RESET` und `HA_OPTIONS`, die das Image der
 [Home-Assistant-App](home-assistant.md) für dich setzt (auf einer
-systemd-Installation ohne Wirkung).
+systemd-Installation lässt du sie ungesetzt).

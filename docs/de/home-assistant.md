@@ -47,7 +47,11 @@ Koppeln.** Ein Handy, das sich danach koppelt, übernimmt den angekündigten Por
 automatisch per mDNS; ein bereits gekoppeltes Handy behält den Port, mit dem es
 gekoppelt wurde, und löst ihn nicht neu auf — ein Wechsel bei einem bereits
 gekoppelten Relay unterbricht daher den direkten LAN-Pfad, die App fällt auf den
-Cloud-Tunnel zurück, bis du neu koppelst.
+Cloud-Tunnel zurück, bis du neu koppelst. Ein erneutes Koppeln eines bereits
+gekoppelten Relays läuft über Wiederherstellung/Einladung, nicht über frisches
+Koppeln: der **Besitzer** koppelt mit dem einmaligen Wiederherstellungscode neu
+(siehe **Wiederherstellung / Fortgeschritten** unten), andere Handys über eine
+neue **Einladung**.
 
 Alles Übrige ist fest: Die App spricht mit der PoolPilot-Cloud und legt ihre
 Identität auf ihrem eigenen persistenten Volume ab; gekoppelt wird aus der
@@ -103,7 +107,9 @@ docker exec "$(docker ps --filter name=poolpilot_relay --format '{{.Names}}')" \
   (Standard 8443) frei ist.
 - **Im Log steht `bind: address already in use`** — eine andere App belegt den
   Port. Setze im Reiter **Konfiguration** einen anderen **`lan_port`** und starte
-  die App neu.
+  die App neu. War das Relay **bereits gekoppelt**, beachte den Hinweis zum
+  erneuten Koppeln unter **Konfiguration** — deine Handys behalten den Port, mit
+  dem sie gekoppelt wurden.
 - **Logs** — öffne den **Log**-Tab der App.
 
 ---

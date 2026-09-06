@@ -50,7 +50,10 @@ One setting, on the app's **Configuration** tab:
   A phone that pairs afterwards picks the advertised port up over mDNS
   automatically; an already-paired phone keeps the port it paired on and does not
   re-resolve it, so changing the port on an already-paired relay drops the direct
-  LAN path — the app falls back to the cloud tunnel until you re-pair.
+  LAN path — the app falls back to the cloud tunnel until you re-pair. Re-pairing
+  an already-paired relay goes through recovery/invite, not a fresh pairing: the
+  household **owner** re-pairs with the one-time recovery code (`show-recovery`),
+  other phones via a new **invite**.
 
 Everything else is fixed: the app talks to the PoolPilot cloud at
 `api.poolpilot.eu` and stores its identity on the app's own persistent volume.
@@ -92,7 +95,9 @@ set a different **`lan_port`** on the Configuration tab (see above).
   Home Assistant and your phone are on the same LAN, and that the app's port
   (default 8443) is free.
 - **Log shows `bind: address already in use`** — another app already holds the
-  port. Set a different **`lan_port`** on the Configuration tab and restart.
+  port. Set a different **`lan_port`** on the Configuration tab and restart. If
+  the relay was **already paired**, mind the re-pairing note under
+  **Configuration** above — your phones keep the port they paired on.
 - **Logs** — open the app's **Log** tab, or watch it from the Supervisor.
 
 Full relay documentation: <https://github.com/ylabonte/poolpilot-relay>.
