@@ -50,10 +50,15 @@ COPY --from=build /out/poolpilot-relay /usr/local/bin/poolpilot-relay
 #                     systemd the exit path relies on Restart=always, but the
 #                     Supervisor treats a clean exit as "stopped" and would leave
 #                     the app down until someone presses Start.
+#   HA_OPTIONS        where the Supervisor writes the app's user options (the
+#                     `lan_port` from config.yaml). The agent reads this to let
+#                     the pairing-API port be changed from the HA UI when 8443 is
+#                     already taken on the host network.
 ENV CLOUD_BASE_URL=https://api.poolpilot.eu \
     STATE_PATH=/data/state.json \
     UPDATE_DISABLED=1 \
     RESTART_ON_RESET=1 \
+    HA_OPTIONS=/data/options.json \
     TZ=UTC
 
 ENTRYPOINT ["/usr/local/bin/poolpilot-relay"]

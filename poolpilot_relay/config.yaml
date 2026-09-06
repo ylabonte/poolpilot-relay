@@ -1,10 +1,9 @@
 # Home Assistant app (add-on) configuration for the PoolPilot Relay.
 # https://developers.home-assistant.io/docs/apps/configuration
 #
-# `version` is managed automatically by .github/workflows/addon-release.yml:
-# every `vX.Y.Z` tag on this repo builds and pushes the matching multi-arch
-# image to ghcr and bumps the line below. It stays 0.0.0 until the first
-# release tag after this app is merged (no image is published before then).
+# `version` is bumped automatically by .github/workflows/addon-release.yml on
+# every stable `vX.Y.Z` tag, once the matching multi-arch image is published to
+# ghcr — so it always names an image that exists.
 name: PoolPilot Relay
 version: "0.5.0"
 slug: poolpilot_relay
@@ -22,7 +21,17 @@ arch:
   - aarch64
   - amd64
 # mDNS discovery, reaching the controller on the LAN, and serving the pinned
-# HTTPS pairing API on :8443 to the phone apps all require the host network.
+# HTTPS pairing API to the phone apps all require the host network.
 host_network: true
 boot: auto
 startup: application
+# The one user-facing setting: the LAN port the pinned HTTPS pairing API binds
+# and advertises over mDNS. A phone that pairs afterwards picks the port up from
+# the SRV record; an already-paired phone keeps the port it paired on (the app
+# does not re-resolve it), so set this BEFORE pairing. Change it only if another
+# app already holds the default 8443 on the host network. The Supervisor writes
+# this to /data/options.json; the agent reads it via HA_OPTIONS (see the Dockerfile).
+options:
+  lan_port: 8443
+schema:
+  lan_port: port

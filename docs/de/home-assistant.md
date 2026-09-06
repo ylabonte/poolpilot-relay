@@ -39,9 +39,23 @@ für dich verwaltet.
 
 ## Konfiguration
 
-Es gibt nichts zu konfigurieren. Die App spricht mit der PoolPilot-Cloud und
-legt ihre Identität auf ihrem eigenen persistenten Volume ab; gekoppelt wird aus
-der Handy-App.
+Eine Einstellung, im Reiter **Konfiguration** der App: **`lan_port`**
+(Standard **8443**) — der Port, auf dem die gepinnte Kopplungs-API im
+Host-Netzwerk lauscht. Ändere ihn nur, wenn eine andere App bereits 8443 belegt
+(im Log steht dann `bind: address already in use`). **Setze ihn vor dem
+Koppeln.** Ein Handy, das sich danach koppelt, übernimmt den angekündigten Port
+automatisch per mDNS; ein bereits gekoppeltes Handy behält den Port, mit dem es
+gekoppelt wurde, und löst ihn nicht neu auf — ein Wechsel bei einem bereits
+gekoppelten Relay unterbricht daher den direkten LAN-Pfad, die App fällt auf den
+Cloud-Tunnel zurück, bis du neu koppelst. Ein erneutes Koppeln eines bereits
+gekoppelten Relays läuft über Wiederherstellung/Einladung, nicht über frisches
+Koppeln: der **Besitzer** koppelt mit dem einmaligen Wiederherstellungscode neu
+(siehe **Wiederherstellung / Fortgeschritten** unten), andere Handys über eine
+neue **Einladung**.
+
+Alles Übrige ist fest: Die App spricht mit der PoolPilot-Cloud und legt ihre
+Identität auf ihrem eigenen persistenten Volume ab; gekoppelt wird aus der
+Handy-App.
 
 ## Daten & Backups
 
@@ -67,9 +81,10 @@ erscheinen im Add-on-Store wie bei jeder anderen App.
 ## Netzwerk
 
 Die App läuft im **Host-Netzwerk**, damit sie sich per mDNS ankündigen, deinen
-Controller im LAN erreichen und ihre gepinnte Kopplungs-API auf Port **8443** für
-die Handy-Apps bereitstellen kann. Achte darauf, dass Port 8443 auf dem Host
-frei ist.
+Controller im LAN erreichen und ihre gepinnte Kopplungs-API für die Handy-Apps
+bereitstellen kann. Standardmäßig lauscht sie auf Port **8443**; belegt eine
+andere App diesen Port bereits, setze im Reiter **Konfiguration** einen anderen
+**`lan_port`** (siehe oben).
 
 ## Wiederherstellung / Fortgeschritten
 
@@ -88,8 +103,13 @@ docker exec "$(docker ps --filter name=poolpilot_relay --format '{{.Names}}')" \
 ## Fehlerbehebung
 
 - **Die Handy-App findet das Relay nicht** — prüfe, dass die App *gestartet* ist,
-  dass Home Assistant und dein Handy im selben LAN sind und dass Port 8443 frei
-  ist.
+  dass Home Assistant und dein Handy im selben LAN sind und dass der Port der App
+  (Standard 8443) frei ist.
+- **Im Log steht `bind: address already in use`** — eine andere App belegt den
+  Port. Setze im Reiter **Konfiguration** einen anderen **`lan_port`** und starte
+  die App neu. War das Relay **bereits gekoppelt**, beachte den Hinweis zum
+  erneuten Koppeln unter **Konfiguration** — deine Handys behalten den Port, mit
+  dem sie gekoppelt wurden.
 - **Logs** — öffne den **Log**-Tab der App.
 
 ---

@@ -51,4 +51,7 @@ Support. Auf einer normalen Installation zu Hause brauchst du sie nicht, und sie
 zu ändern kann das Relay lahmlegen — setze sie nur, wenn du weißt, warum:
 
 `TUNNEL_LISTEN`, `CTRL_FILTER_LISTEN`, `STATE_PATH`, `MDNS_DISABLED`,
-`FRPS_AUTH_TOKEN`, `PAIR_URL_BASE`, `REPO_DL_BASE`.
+`FRPS_AUTH_TOKEN`, `PAIR_URL_BASE`, `REPO_DL_BASE` — dazu die nur im Container
+genutzten `RESTART_ON_RESET` und `HA_OPTIONS`, die das Image der
+[Home-Assistant-App](home-assistant.md) für dich setzt (auf einer
+systemd-Installation lässt du sie ungesetzt).

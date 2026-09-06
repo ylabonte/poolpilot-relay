@@ -35,8 +35,20 @@ features — just running in a container the Home Assistant Supervisor manages.
 
 ## Configuration
 
-There is nothing to configure. The app talks to the PoolPilot cloud and stores
-its identity on its own persistent volume; pairing happens from the phone app.
+One setting, on the app's **Configuration** tab: **`lan_port`** (default
+**8443**) — the port the pinned pairing API binds on the host network. Change it
+only if another app already uses 8443 (the log then shows `bind: address already
+in use`). **Set it before pairing.** A phone that pairs afterwards picks the
+advertised port up over mDNS automatically; an already-paired phone keeps the
+port it paired on and does not re-resolve it, so changing the port on an
+already-paired relay drops the direct LAN path — the app falls back to the cloud
+tunnel until you re-pair. Re-pairing an already-paired relay goes through
+recovery/invite, not a fresh pairing: the **owner** re-pairs with the one-time
+recovery code (see **Recovery / advanced** below), other phones via a new
+**invite**.
+
+Everything else is fixed: the app talks to the PoolPilot cloud and stores its
+identity on its own persistent volume; pairing happens from the phone app.
 
 ## Data & backups
 
@@ -61,8 +73,9 @@ any other app.
 ## Networking
 
 The app runs on the **host network** so it can discover itself over mDNS, reach
-your controller on the LAN, and serve its pinned pairing API on port **8443** to
-the phone apps. Make sure nothing else on the host uses port 8443.
+your controller on the LAN, and serve its pinned pairing API to the phone apps.
+By default it binds port **8443**; if another app already uses that port, set a
+different **`lan_port`** on the Configuration tab (see above).
 
 ## Recovery / advanced
 
@@ -80,7 +93,12 @@ docker exec "$(docker ps --filter name=poolpilot_relay --format '{{.Names}}')" \
 ## Troubleshooting
 
 - **The phone app can't find the relay** — confirm the app is *started*, that
-  Home Assistant and your phone are on the same LAN, and that port 8443 is free.
+  Home Assistant and your phone are on the same LAN, and that the app's port
+  (default 8443) is free.
+- **Log shows `bind: address already in use`** — another app holds the port. Set
+  a different **`lan_port`** on the Configuration tab and restart the app. If the
+  relay was **already paired**, mind the re-pairing note under **Configuration**
+  — your phones keep the port they paired on.
 - **Logs** — open the app's **Log** tab.
 
 ---
