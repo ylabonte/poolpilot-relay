@@ -1,10 +1,9 @@
 # Home Assistant app (add-on) configuration for the PoolPilot Relay.
 # https://developers.home-assistant.io/docs/apps/configuration
 #
-# `version` is managed automatically by .github/workflows/addon-release.yml:
-# every `vX.Y.Z` tag on this repo builds and pushes the matching multi-arch
-# image to ghcr and bumps the line below. It stays 0.0.0 until the first
-# release tag after this app is merged (no image is published before then).
+# `version` is bumped automatically by .github/workflows/addon-release.yml on
+# every stable `vX.Y.Z` tag, once the matching multi-arch image is published to
+# ghcr — so it always names an image that exists.
 name: PoolPilot Relay
 version: "0.5.0"
 slug: poolpilot_relay
