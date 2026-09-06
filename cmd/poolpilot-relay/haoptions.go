@@ -49,25 +49,32 @@ func resolveLanListen(haOptionsPath string, reserved ...int) string {
 
 // haLanPort reads and validates the `lan_port` key of the Home Assistant options
 // file at path. It returns (port, true) for a usable port; (0, false) silently
-// when path is "" (no HA options — e.g. a systemd install) or the key is absent;
-// and (0, false) with a warning when the file is present but unreadable, not
-// JSON, or carries an out-of-range port — so a hand-written options.json cannot
-// crash-loop the listener on an invalid bind (the HA UI's `port` schema already
-// bounds 1..65535, but a plain container bypasses it).
+// when path is "" (no HA options — a systemd install), the file is absent (the
+// image baked HA_OPTIONS in but is run outside the Supervisor), or the key is
+// absent; and (0, false) with a warning when the file is present but genuinely
+// unreadable, unparseable, or carries an out-of-range port — so a hand-written
+// options.json cannot crash-loop the listener on an invalid bind (the HA UI's
+// `port` schema already bounds 1..65535, but a plain container bypasses it).
 func haLanPort(path string) (int, bool) {
 	if path == "" {
 		return 0, false
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		slog.Warn("Home Assistant options file unreadable; keeping the default LAN port", "path", path, "err", err)
+		// A missing file is the ordinary "not running under the Supervisor" case
+		// (the image bakes HA_OPTIONS in, so a plain `docker run` lands here) — stay
+		// silent; only a real read error (permissions, I/O) is worth a warning.
+		if !os.IsNotExist(err) {
+			slog.Warn("Home Assistant options file unreadable; keeping the default LAN port", "path", path, "err", err)
+		}
 		return 0, false
 	}
 	var opts struct {
 		LanPort int `json:"lan_port"`
 	}
 	if err := json.Unmarshal(data, &opts); err != nil {
-		slog.Warn("Home Assistant options file is not valid JSON; keeping the default LAN port", "path", path, "err", err)
+		// Covers malformed JSON and a wrong-typed lan_port (e.g. a quoted string).
+		slog.Warn("Home Assistant options file could not be parsed; keeping the default LAN port", "path", path, "err", err)
 		return 0, false
 	}
 	if opts.LanPort == 0 {

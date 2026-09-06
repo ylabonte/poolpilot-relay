@@ -1,12 +1,27 @@
 package main
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ylabonte/poolpilot-relay/internal/agent/lanapi"
 )
+
+// captureWarn swaps the default slog logger for one writing to a buffer (WARN+),
+// runs fn, restores it, and returns what was logged.
+func captureWarn(t *testing.T, fn func()) string {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	fn()
+	return buf.String()
+}
 
 // writeOptions drops a Home Assistant-style options file and returns its path.
 func writeOptions(t *testing.T, body string) string {
@@ -51,9 +66,27 @@ func TestHALanPortNoPath(t *testing.T) {
 	}
 }
 
-func TestHALanPortMissingFile(t *testing.T) {
-	if p, ok := haLanPort(filepath.Join(t.TempDir(), "absent.json")); ok || p != 0 {
+// A missing options file is the "not running under the Supervisor" case (the
+// image bakes HA_OPTIONS in): it must be silent, not warn every boot.
+func TestHALanPortMissingFileSilent(t *testing.T) {
+	var (
+		p  int
+		ok bool
+	)
+	out := captureWarn(t, func() { p, ok = haLanPort(filepath.Join(t.TempDir(), "absent.json")) })
+	if ok || p != 0 {
 		t.Errorf("haLanPort(absent) = (%d, %v), want (0, false)", p, ok)
+	}
+	if strings.Contains(out, "WARN") {
+		t.Errorf("a missing options file must be silent; logged: %q", out)
+	}
+}
+
+// A present-but-broken file is a real problem and must warn.
+func TestHALanPortParseWarns(t *testing.T) {
+	out := captureWarn(t, func() { haLanPort(writeOptions(t, `not json`)) })
+	if !strings.Contains(out, "WARN") {
+		t.Errorf("an unparseable options file must warn; logged: %q", out)
 	}
 }
 
