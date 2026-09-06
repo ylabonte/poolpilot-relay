@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -12,13 +13,21 @@ import (
 )
 
 // captureWarn swaps the default slog logger for one writing to a buffer (WARN+),
-// runs fn, restores it, and returns what was logged.
+// runs fn, restores it, and returns what was logged. slog.SetDefault also rewires
+// the stdlib log package's output/flags when it installs a non-default handler and
+// does NOT undo that when the built-in default is restored, so capture and restore
+// those too — otherwise every later test's log line vanishes into this buffer.
 func captureWarn(t *testing.T, fn func()) string {
 	t.Helper()
 	var buf bytes.Buffer
-	prev := slog.Default()
+	prevSlog := slog.Default()
+	prevOut, prevFlags := log.Writer(), log.Flags()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	t.Cleanup(func() {
+		slog.SetDefault(prevSlog)
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
 	fn()
 	return buf.String()
 }
