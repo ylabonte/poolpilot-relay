@@ -7,11 +7,10 @@
 //	CLOUD_BASE_URL   control-plane base URL (required), e.g. https://api.poolpilot.eu
 //	STATE_PATH       state file (default /var/lib/poolpilot-relay/state.json)
 //	LAN_LISTEN       LAN API bind address (default :8443); the mDNS record
-//	                 advertises whatever port this resolves to, so the phone app
-//	                 follows a non-default port automatically
+//	                 advertises this port, so a phone discovers it at pairing time
 //	HA_OPTIONS       path to the Home Assistant Supervisor options file (JSON);
-//	                 when set, its `lan_port` seeds LAN_LISTEN so the app's port
-//	                 is settable from the HA UI — an explicit LAN_LISTEN wins
+//	                 when set (and LAN_LISTEN is not), its `lan_port` sets the LAN
+//	                 API port so the app's port is settable from the HA UI
 //	TUNNEL_LISTEN    loopback HTTP bind the frp api proxy forwards to
 //	                 (default 127.0.0.1:8480) — the tunneled LAN API
 //	CTRL_FILTER_LISTEN loopback HTTP bind every ctrl-<GUID> frp proxy forwards
@@ -137,10 +136,6 @@ func reconcileControllerSeeds(s *state.State) {
 }
 
 func run() error {
-	// Home Assistant app bridge: fold the Supervisor's options file into the
-	// env-based config (currently just LAN_LISTEN) before anything reads it.
-	applyHAOptions()
-
 	cloudBaseURL := os.Getenv("CLOUD_BASE_URL")
 	if cloudBaseURL == "" {
 		return fmt.Errorf("CLOUD_BASE_URL is required")
@@ -206,10 +201,16 @@ func run() error {
 		Disabled: version == "dev" || os.Getenv("UPDATE_DISABLED") == "1" ||
 			archErr != nil || update.PublicKey == "",
 	})
+	// Resolve the LAN API bind once, then feed both the listener and the mDNS
+	// record from it so the advertised port can never diverge from the bind. A
+	// Home Assistant lan_port option (if any) must not land on a port the agent
+	// already uses for its loopback frp proxies.
+	lanListen := resolveLanListen(os.Getenv("HA_OPTIONS"),
+		lanPort(lanapi.TunnelListen()), lanPort(ctrlfilter.Listen()))
 	announcer := announce.New(announce.Config{
 		AgentID:     st.AgentID,
 		Fingerprint: fingerprint,
-		Port:        lanPort(),
+		Port:        lanPort(lanListen),
 		Paired:      st.Paired(),
 		Disabled:    os.Getenv("MDNS_DISABLED") == "1",
 	})
@@ -235,7 +236,7 @@ func run() error {
 		Version:      version,
 		Fingerprint:  fingerprint,
 		Cert:         cert,
-		Addr:         lanapi.Listen(),
+		Addr:         lanListen,
 		TunnelAddr:   lanapi.TunnelListen(),
 		CtrlFilter:   ctrlFilter,
 		CloudBaseURL: cloudBaseURL,
@@ -381,9 +382,9 @@ func bootHasRegisteredController(st state.State) bool {
 	return false
 }
 
-// lanPort extracts the numeric port from LAN_LISTEN for the mDNS record.
-func lanPort() int {
-	addr := lanapi.Listen()
+// lanPort extracts the numeric port from a host:port (or ":port") bind address,
+// for the mDNS record and the internal-port collision check.
+func lanPort(addr string) int {
 	idx := strings.LastIndex(addr, ":")
 	if idx < 0 {
 		return 8443

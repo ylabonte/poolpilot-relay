@@ -18,69 +18,82 @@ func writeOptions(t *testing.T, body string) string {
 	return p
 }
 
-func TestHALanListen(t *testing.T) {
+func TestHALanPort(t *testing.T) {
 	tests := []struct {
-		name string
-		body string // "" means: don't create the file, pass a bogus path
-		want string
+		name     string
+		body     string
+		wantPort int
+		wantOK   bool
 	}{
-		{"valid port", `{"lan_port": 8081}`, ":8081"},
-		{"unknown keys ignored", `{"lan_port": 9000, "note": "hi"}`, ":9000"},
-		{"missing key", `{"other": 1}`, ""},
-		{"zero port", `{"lan_port": 0}`, ""},
-		{"negative port", `{"lan_port": -1}`, ""},
-		{"empty object", `{}`, ""},
-		{"garbage json", `not json`, ""},
+		{"valid port", `{"lan_port": 8081}`, 8081, true},
+		{"max valid", `{"lan_port": 65535}`, 65535, true},
+		{"unknown keys ignored", `{"lan_port": 9000, "note": "hi"}`, 9000, true},
+		{"missing key", `{"other": 1}`, 0, false},
+		{"empty object", `{}`, 0, false},
+		{"zero", `{"lan_port": 0}`, 0, false},
+		{"negative", `{"lan_port": -1}`, 0, false},
+		{"out of range", `{"lan_port": 70000}`, 0, false},
+		{"garbage json", `not json`, 0, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			path := writeOptions(t, tc.body)
-			if got := haLanListen(path); got != tc.want {
-				t.Errorf("haLanListen(%q) = %q, want %q", tc.body, got, tc.want)
+			p, ok := haLanPort(writeOptions(t, tc.body))
+			if p != tc.wantPort || ok != tc.wantOK {
+				t.Errorf("haLanPort(%q) = (%d, %v), want (%d, %v)", tc.body, p, ok, tc.wantPort, tc.wantOK)
 			}
 		})
 	}
 }
 
-func TestHALanListenNoPath(t *testing.T) {
-	if got := haLanListen(""); got != "" {
-		t.Errorf("haLanListen(\"\") = %q, want \"\"", got)
+func TestHALanPortNoPath(t *testing.T) {
+	if p, ok := haLanPort(""); ok || p != 0 {
+		t.Errorf("haLanPort(\"\") = (%d, %v), want (0, false)", p, ok)
 	}
 }
 
-func TestHALanListenMissingFile(t *testing.T) {
-	if got := haLanListen(filepath.Join(t.TempDir(), "absent.json")); got != "" {
-		t.Errorf("haLanListen(absent) = %q, want \"\"", got)
+func TestHALanPortMissingFile(t *testing.T) {
+	if p, ok := haLanPort(filepath.Join(t.TempDir(), "absent.json")); ok || p != 0 {
+		t.Errorf("haLanPort(absent) = (%d, %v), want (0, false)", p, ok)
 	}
 }
 
-// applyHAOptions must make lanapi.Listen() reflect the HA option when no
-// explicit bind address is set.
-func TestApplyHAOptionsSetsListen(t *testing.T) {
+func TestResolveLanListen(t *testing.T) {
+	// An explicit LAN_LISTEN (a systemd install, or a power user) always wins.
+	t.Run("explicit LAN_LISTEN wins", func(t *testing.T) {
+		t.Setenv("LAN_LISTEN", ":9999")
+		if got := resolveLanListen(writeOptions(t, `{"lan_port": 8081}`)); got != ":9999" {
+			t.Errorf("resolveLanListen = %q, want \":9999\"", got)
+		}
+	})
+	// With no explicit bind, the HA option applies.
+	t.Run("HA option applied", func(t *testing.T) {
+		t.Setenv("LAN_LISTEN", "")
+		if got := resolveLanListen(writeOptions(t, `{"lan_port": 8081}`)); got != ":8081" {
+			t.Errorf("resolveLanListen = %q, want \":8081\"", got)
+		}
+	})
+	// No HA options file (a plain systemd install): keep the built-in default.
+	t.Run("no file falls back to default", func(t *testing.T) {
+		t.Setenv("LAN_LISTEN", "")
+		if got := resolveLanListen(""); got != lanapi.DefaultListen {
+			t.Errorf("resolveLanListen = %q, want %q", got, lanapi.DefaultListen)
+		}
+	})
+	// An lan_port colliding with an internal loopback port is refused.
+	t.Run("reserved port refused", func(t *testing.T) {
+		t.Setenv("LAN_LISTEN", "")
+		if got := resolveLanListen(writeOptions(t, `{"lan_port": 8480}`), 8480, 8481); got != lanapi.DefaultListen {
+			t.Errorf("resolveLanListen = %q, want %q (8480 is reserved)", got, lanapi.DefaultListen)
+		}
+	})
+}
+
+// The PR's headline promise is that the mDNS-advertised port follows the option;
+// lanPort() derives that from the resolved listen address, so pin the contract.
+func TestLanPortFollowsResolvedListen(t *testing.T) {
 	t.Setenv("LAN_LISTEN", "")
-	t.Setenv("HA_OPTIONS", writeOptions(t, `{"lan_port": 8081}`))
-	applyHAOptions()
-	if got := lanapi.Listen(); got != ":8081" {
-		t.Errorf("lanapi.Listen() = %q, want \":8081\"", got)
-	}
-}
-
-// An explicit LAN_LISTEN (e.g. a systemd install) always wins over the HA file.
-func TestApplyHAOptionsExplicitWins(t *testing.T) {
-	t.Setenv("LAN_LISTEN", ":9999")
-	t.Setenv("HA_OPTIONS", writeOptions(t, `{"lan_port": 8081}`))
-	applyHAOptions()
-	if got := lanapi.Listen(); got != ":9999" {
-		t.Errorf("lanapi.Listen() = %q, want \":9999\"", got)
-	}
-}
-
-// No HA options file (a plain systemd install): keep the built-in default.
-func TestApplyHAOptionsNoFile(t *testing.T) {
-	t.Setenv("LAN_LISTEN", "")
-	t.Setenv("HA_OPTIONS", "")
-	applyHAOptions()
-	if got := lanapi.Listen(); got != lanapi.DefaultListen {
-		t.Errorf("lanapi.Listen() = %q, want %q", got, lanapi.DefaultListen)
+	addr := resolveLanListen(writeOptions(t, `{"lan_port": 8081}`))
+	if got := lanPort(addr); got != 8081 {
+		t.Errorf("lanPort(%q) = %d, want 8081 (the mDNS-advertised port must follow the HA option)", addr, got)
 	}
 }
