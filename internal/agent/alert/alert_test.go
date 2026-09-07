@@ -665,6 +665,35 @@ func TestBandsFromControl(t *testing.T) {
 	}
 }
 
+func TestBandsFromControlCorridor(t *testing.T) {
+	// A both-directions pH pool doses between two setpoints (7.0 and 7.2). The OK
+	// zone must span the whole [7.0, 7.2] corridor — NOT mean(7.1) ± tolerance —
+	// matching the apps' ideal-band-as-OK-band semantics (issue #31).
+	cc := measure.ControlConfig{Target: 7.1, Min: 6.6, Max: 7.8, OkLow: 7.0, OkHigh: 7.2, HasOkZone: true}
+	got, ok := bandsFromControl(cc, 0.05) // tolerance is ignored for a corridor
+	want := bands.BandsConfig{Min: 6.6, OkMin: 7.0, OkMax: 7.2, Max: 7.8}
+	if !ok || got != want {
+		t.Fatalf("corridor band = %+v,%v want %+v", got, ok, want)
+	}
+	// The corridor is wider than mean±tol would have been ([7.05, 7.15]).
+	if got.OkMin >= 7.05 || got.OkMax <= 7.15 {
+		t.Errorf("corridor OK zone %+v is not wider than mean±tol", got)
+	}
+	// A corridor derives a band even with zero tolerance (unlike a single setpoint).
+	if _, ok := bandsFromControl(cc, 0); !ok {
+		t.Error("corridor must derive a band regardless of tolerance")
+	}
+	// The corridor clamps to the warn limits, same as the single-setpoint path.
+	clamped := measure.ControlConfig{Target: 7.2, Min: 7.1, Max: 7.15, OkLow: 7.0, OkHigh: 7.2, HasOkZone: true}
+	if b, ok := bandsFromControl(clamped, 0); !ok || b.OkMin != 7.1 || b.OkMax != 7.15 {
+		t.Errorf("corridor clamp = %+v,%v want OkMin 7.1 OkMax 7.15", b, ok)
+	}
+	// A corridor entirely outside the limits degenerates → fall back to defaults.
+	if _, ok := bandsFromControl(measure.ControlConfig{Min: 6.6, Max: 7.0, OkLow: 7.2, OkHigh: 7.4, HasOkZone: true}, 0); ok {
+		t.Error("corridor fully outside the limits must not derive a band")
+	}
+}
+
 func TestToleranceFor(t *testing.T) {
 	if got := toleranceFor(wire.AlertRule{MeasurementType: bands.TypePH, OkTolerance: 0.3}); got != 0.3 {
 		t.Errorf("explicit tolerance = %v, want 0.3", got)

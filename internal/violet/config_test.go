@@ -119,8 +119,11 @@ func TestFetchControlConfigDerivesChlorineWhenSetpointPresent(t *testing.T) {
 
 func TestFetchControlConfigMergesTwoActivePhChannels(t *testing.T) {
 	// A both-directions pool doses from pH- AND pH+ (both use=1). The merged band
-	// spans the widest warn window (min low, max high) and centres on the mean of
-	// the two setpoints.
+	// spans the widest warn window (min low, max high). The two distinct setpoints
+	// (7.0, 7.2) do NOT collapse to their mean: the pool regulates BETWEEN them, so
+	// the pair is kept as an explicit OK corridor [7.0, 7.2] (issue #31, exact
+	// parity with the apps' controlBandForMeasurement). Target stays the mean (7.1)
+	// for informational continuity but no longer drives the band.
 	body := []byte(`{
 		"DOSAGE_phminus_use":"1",
 		"DOSAGE_phminus_setpoint":"7.2",
@@ -137,7 +140,37 @@ func TestFetchControlConfigMergesTwoActivePhChannels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
-	assertControl(t, "pH", got[bands.TypePH], 7.1, 6.6, 7.8)
+	ph := got[bands.TypePH]
+	assertControl(t, "pH", ph, 7.1, 6.6, 7.8)
+	if !ph.HasOkZone {
+		t.Fatal("both-directions pool must carry an explicit OK corridor, not a single Target")
+	}
+	if !almostEqual(ph.OkLow, 7.0) || !almostEqual(ph.OkHigh, 7.2) {
+		t.Errorf("OK corridor = [%v, %v], want [7.0, 7.2] (the two setpoints, not mean±tol)", ph.OkLow, ph.OkHigh)
+	}
+}
+
+func TestFetchControlConfigSingleSetpointHasNoCorridor(t *testing.T) {
+	// A single active dosing channel keeps the Target ± tolerance behaviour: no OK
+	// corridor is set, so the alert path derives the band from Target as before.
+	body := []byte(`{
+		"DOSAGE_phminus_use":"1",
+		"DOSAGE_phminus_setpoint":"7.2",
+		"DOSAGE_phminus_limits_warnlow":"6.8",
+		"DOSAGE_phminus_limits_warnhigh":"7.8",
+		"DOSAGE_phplus_use":"0"
+	}`)
+	srv, _ := configServer(t, "", "", body)
+
+	got, err := (&Client{BaseURL: srv.URL}).FetchControlConfig(context.Background())
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	ph := got[bands.TypePH]
+	assertControl(t, "pH", ph, 7.2, 6.8, 7.8)
+	if ph.HasOkZone {
+		t.Errorf("single-setpoint channel must not set an OK corridor, got [%v, %v]", ph.OkLow, ph.OkHigh)
+	}
 }
 
 func TestFetchControlConfigFallsBackToDefaultChannelWithoutUseFlags(t *testing.T) {

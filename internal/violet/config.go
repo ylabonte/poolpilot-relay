@@ -155,23 +155,23 @@ func (c *Client) FetchControlConfig(ctx context.Context) (map[string]measure.Con
 	return out, nil
 }
 
-// resolveControlConfig reduces a measurement's dosing channels to a single
-// setpoint + warn-limit band. It picks the channels the pool actually doses from
+// resolveControlConfig reduces a measurement's dosing channels to a warn-limit
+// band plus an OK zone. It picks the channels the pool actually doses from
 // (their `_use` flag reads 1), falling back to the default channel when none
 // resolves, then merges: Min is the lowest warn-low and Max the highest warn-high
-// across active channels (the widest safe window), and Target is the setpoint —
-// the midpoint when a both-directions pool (pH− + pH+) doses toward two. Reports
-// ok=false when the active channels don't yield all of setpoint + warn-low +
-// warn-high, so the caller omits the type and it falls back to its default band —
-// the same "need the full triple or drop" rule the ProCon.IP INI reader applies.
+// across active channels (the widest safe window). Reports ok=false when the
+// active channels don't yield all of setpoint + warn-low + warn-high, so the
+// caller omits the type and it falls back to its default band — the same "need
+// the full triple or drop" rule the ProCon.IP INI reader applies.
 //
-// The mean is a deliberate approximation of the apps' corridor semantics
-// (controlBandForMeasurement keeps the two setpoints as idealLow..idealHigh):
-// measure.ControlConfig carries a single Target, so a two-setpoint corridor
-// cannot be represented here. The hard warn limits (Min/Max) — where alarms
-// actually fire — stay exact; only the inner ok/warn boundary is approximated,
-// and only materially when the two setpoints sit far apart (atypical). Tracked
-// for exact parity in issue #31.
+// The OK zone follows the apps' controlBandForMeasurement exactly. A single
+// active setpoint sets Target and the alert path grades Target ± tolerance. A
+// both-directions pool (pH− + pH+ both active, two distinct setpoints) does NOT
+// dose toward the mean — it regulates BETWEEN its two targets — so the pair is
+// kept as an explicit OK corridor [OkLow, OkHigh] (the apps' idealLow..idealHigh
+// sub-band, no single marker) that the alert path grades as the OK zone directly.
+// Target is still the mean for informational continuity but no longer drives the
+// band. This closes the mean-approximation gap tracked in issue #31.
 func resolveControlConfig(baseURL string, m controlMeasurement, raw map[string]any) (measure.ControlConfig, bool) {
 	active := activeFields(m, raw)
 
@@ -197,11 +197,20 @@ func resolveControlConfig(baseURL string, m controlMeasurement, raw map[string]a
 		return measure.ControlConfig{}, false
 	}
 
-	return measure.ControlConfig{
+	cc := measure.ControlConfig{
 		Target: mean(setpoints),
 		Min:    minOf(warnLows),
 		Max:    maxOf(warnHighs),
-	}, true
+	}
+	// Both-directions pool: two distinct active setpoints span a regulation
+	// corridor. Keep them as an explicit OK zone [low, high] instead of centring
+	// on the mean, so the alert path grades the whole corridor OK — exact parity
+	// with the apps' controlBandForMeasurement (issue #31). A single setpoint (or
+	// two identical ones) keeps the Target ± tolerance behaviour.
+	if lo, hi := minOf(setpoints), maxOf(setpoints); hi > lo {
+		cc.OkLow, cc.OkHigh, cc.HasOkZone = lo, hi, true
+	}
+	return cc, true
 }
 
 // activeFields returns the measurement's channels whose `_use` flag reads 1,
