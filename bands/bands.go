@@ -1,9 +1,13 @@
 // Package bands mirrors the pool-apps cross-platform measurement parity contract
-// (shared/core MeasurementBands + ValueScale in Kotlin, ValueScale.swift on iOS).
-// The relay is the third consumer: identical thresholds, identical boundary
-// semantics, identical unit/label classification. The vendored
-// testdata/measurement-parity.json is asserted by bands_test.go; when the
-// contract changes in pool-apps, re-vendor the file and this package must follow.
+// (shared/core ValueScale in Kotlin, ValueScale.swift on iOS): identical
+// unit/label classification and per-type precision. The apps' MeasurementBands
+// no longer carries severity thresholds for PH/ORP_MV/CHLORINE_MG_L (the app's
+// D-no-fallback decision moved that contract to live control bands — see
+// internal/agent/alert.effectiveBands and control-band-parity.json), so Defaults
+// below is a historical severity scale kept only as the known-banded-type set,
+// not a live parity contract. The vendored testdata/measurement-parity.json is
+// asserted by bands_test.go; when the classification contract changes in
+// pool-apps, re-vendor the file and this package must follow.
 package bands
 
 import (
@@ -101,9 +105,14 @@ func (c BandsConfig) Banded() Banded {
 	}
 }
 
-// Defaults holds the factory bands per measurement type — the numbers are the
-// parity contract (MeasurementBands.PH / ORP_MV / CHLORINE_MG_L in Kotlin).
-// Temperatures are informational gradients in the apps and carry no alert bands.
+// Defaults holds the historical factory bands per measurement type — a
+// snapshot of the values MeasurementBands.PH / ORP_MV / CHLORINE_MG_L in
+// Kotlin used to carry. The app dropped MeasurementBands as a severity source
+// (the app's D-no-fallback decision), so these numbers no longer track a live
+// parity contract and are never a severity source here either; Defaults
+// survives only as the known-banded-type set consulted by ValidateRules and
+// SeedDefaults/ReconcileSeed's chemistry-type lists. Temperatures are
+// informational gradients in the apps and carry no alert bands.
 var Defaults = map[string]BandsConfig{
 	TypePH:       {Min: 6.6, OkMin: 7.0, OkMax: 7.4, Max: 7.8},
 	TypeORP:      {Min: 600.0, OkMin: 650.0, OkMax: 800.0, Max: 850.0},

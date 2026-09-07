@@ -166,9 +166,13 @@ func (c *Client) FetchControlConfig(ctx context.Context) (map[string]measure.Con
 // the app's D-no-fallback decision) — the same "need the full triple or drop"
 // rule the ProCon.IP INI reader applies.
 //
-// The OK zone follows the apps' controlBandForMeasurement exactly. A single
-// active setpoint sets Target and the alert path grades Target ± tolerance. A
-// both-directions pool (pH− + pH+ both active, two distinct setpoints) does NOT
+// The OK zone follows the apps' controlBandForMeasurement for the dual-setpoint
+// pH−/pH+ corridor case below; VIOLET chlorine's own DOSAGE_chlorine_ideal_*
+// keys are not read yet, so this exactness does not extend there today —
+// HasOkZone (internal/measure) is the hook a future Plan-B change can reuse
+// once it does. A single active setpoint sets Target and the alert path grades
+// Target ± tolerance. A both-directions pool (pH− + pH+ both active, two
+// distinct setpoints) does NOT
 // dose toward the mean — it regulates BETWEEN its two targets — so the pair is
 // kept as an explicit OK corridor [OkLow, OkHigh] (the apps' idealLow..idealHigh
 // sub-band, no single marker) that the alert path grades as the OK zone directly.
