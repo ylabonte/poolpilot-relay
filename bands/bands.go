@@ -3,8 +3,9 @@
 // unit/label classification and per-type precision. The apps' MeasurementBands
 // no longer carries severity thresholds for PH/ORP_MV/CHLORINE_MG_L (the app's
 // D-no-fallback decision moved that contract to live control bands — see
-// internal/agent/alert.effectiveBands and control-band-parity.json), so Defaults
-// below is a historical severity scale kept only as the known-banded-type set,
+// internal/agent/alert.effectiveBands; the control-band parity itself is pinned
+// app-side in shared/test-fixtures/control-band-parity.json, not vendored here), so
+// Defaults below is a historical severity scale kept only as the known-banded-type set,
 // not a live parity contract. The vendored testdata/measurement-parity.json is
 // asserted by bands_test.go; when the classification contract changes in
 // pool-apps, re-vendor the file and this package must follow.
@@ -110,9 +111,11 @@ func (c BandsConfig) Banded() Banded {
 // Kotlin used to carry. The app dropped MeasurementBands as a severity source
 // (the app's D-no-fallback decision), so these numbers no longer track a live
 // parity contract and are never a severity source here either; Defaults
-// survives only as the known-banded-type set consulted by ValidateRules and
-// SeedDefaults/ReconcileSeed's chemistry-type lists. Temperatures are
-// informational gradients in the apps and carry no alert bands.
+// survives only as the known-banded-type set: ValidateRules rejects a rule whose
+// measurement_type is not a key here, and the ProCon.IP Readings() gate
+// (internal/proconip) drops a reading whose type is not banded. (SeedDefaults and
+// ReconcileSeed seed from the hard-coded chemistryTypesFor list, not from this map.)
+// Temperatures are informational gradients in the apps and carry no alert bands.
 var Defaults = map[string]BandsConfig{
 	TypePH:       {Min: 6.6, OkMin: 7.0, OkMax: 7.4, Max: 7.8},
 	TypeORP:      {Min: 600.0, OkMin: 650.0, OkMax: 800.0, Max: 850.0},

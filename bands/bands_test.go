@@ -38,7 +38,8 @@ func loadParity(t *testing.T) parityFixture {
 
 // Severity is no longer pinned here: the app dropped MeasurementBands as a
 // severity source (the app's D-no-fallback decision) and moved the severity
-// contract to control-band-parity.json, so this fixture carries no severity
+// contract to the app-side control-band-parity.json (not vendored here), so this
+// fixture carries no severity
 // array and the relay's bands.Defaults is no longer a severity source either.
 // What remains pinned is the unit/label → type classification and per-type
 // precision.

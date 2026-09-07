@@ -41,10 +41,10 @@ type Reading struct {
 // explicit corridor [OkLow, OkHigh]: the alert engine then grades that corridor
 // itself as the OK band (clamped to Min/Max, tolerance ignored), mirroring the
 // apps' MeasurementControlBand ideal sub-band for that dual-setpoint pH−/pH+
-// case. This is exact parity only there — VIOLET chlorine's own
-// DOSAGE_chlorine_ideal_* keys are not read yet, so a chlorine ControlConfig
-// never sets HasOkZone today; HasOkZone is the hook a future change can reuse
-// to extend exact parity once it does. Target stays the mean of the setpoints
+// case. This is exact parity only there — VIOLET chlorine's own ideal-band keys
+// (DOSAGE_chlorine_lowerval_cl / DOSAGE_chlorine_upperval_cl_day) are not read yet,
+// so a chlorine ControlConfig never sets HasOkZone today; HasOkZone is the hook a
+// future change can reuse to extend exact parity once it does. Target stays the mean of the setpoints
 // for informational continuity but is not used for band derivation while
 // HasOkZone is set. This struct is in-memory only (poller snapshot → alert
 // engine); it is never marshalled to disk or onto the wire.

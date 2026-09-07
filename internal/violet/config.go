@@ -167,8 +167,9 @@ func (c *Client) FetchControlConfig(ctx context.Context) (map[string]measure.Con
 // rule the ProCon.IP INI reader applies.
 //
 // The OK zone follows the apps' controlBandForMeasurement for the dual-setpoint
-// pH−/pH+ corridor case below; VIOLET chlorine's own DOSAGE_chlorine_ideal_*
-// keys are not read yet, so this exactness does not extend there today —
+// pH−/pH+ corridor case below; VIOLET chlorine's own ideal-band keys
+// (DOSAGE_chlorine_lowerval_cl / DOSAGE_chlorine_upperval_cl_day) are not read yet,
+// so this exactness does not extend there today —
 // HasOkZone (internal/measure) is the hook a future Plan-B change can reuse
 // once it does. A single active setpoint sets Target and the alert path grades
 // Target ± tolerance. A both-directions pool (pH− + pH+ both active, two
@@ -211,9 +212,12 @@ func resolveControlConfig(baseURL string, m controlMeasurement, raw map[string]a
 	// Both-directions pool: two distinct active setpoints span a regulation
 	// corridor. Keep them as an explicit OK zone [low, high] instead of centring
 	// on the mean, so the alert path grades the whole corridor OK — exact parity
-	// with the apps' controlBandForMeasurement (issue #31). A single ACTIVE
-	// setpoint is likewise exact parity: both sides fall back to Target ±
-	// tolerance.
+	// with the apps' controlBandForMeasurement (issue #31). A single ACTIVE pH or
+	// ORP setpoint is likewise exact parity: both sides fall back to Target ±
+	// tolerance. A single active CHLORINE channel is NOT — the apps grade that
+	// channel's own ideal band [DOSAGE_chlorine_lowerval_cl, _upperval_cl_day],
+	// whereas this relay, not reading those keys yet, still falls back to Target ±
+	// tolerance (the same chlorine-ideal gap noted above).
 	//
 	// Two IDENTICAL active setpoints are NOT exact parity, though: this relay
 	// still falls back to Target ± tolerance here (hi > lo is false), but the

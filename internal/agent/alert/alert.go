@@ -433,10 +433,10 @@ func toleranceFor(rule wire.AlertRule) float64 {
 // targets) instead grades its explicit [OkLow, OkHigh] corridor as the OK zone,
 // clamped to the limits with the tolerance ignored — matching the apps'
 // ideal-band-as-OK-band semantics for that dual-setpoint pH−/pH+ corridor
-// (issue #31). This is exact parity only there: VIOLET chlorine's own
-// DOSAGE_chlorine_ideal_* keys are not read yet, so a chlorine ControlConfig
-// never sets HasOkZone today — HasOkZone is the hook Plan B can reuse once it
-// does.
+// (issue #31). This is exact parity only there: VIOLET chlorine's own ideal-band
+// keys (DOSAGE_chlorine_lowerval_cl / DOSAGE_chlorine_upperval_cl_day) are not read
+// yet, so a chlorine ControlConfig never sets HasOkZone today — HasOkZone is the
+// hook Plan B can reuse once it does.
 //
 // It returns false for an unusable config (single-setpoint with non-positive
 // tolerance; inverted or EMPTY limits where Min >= Max; or an OK zone so far
