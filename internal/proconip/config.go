@@ -36,9 +36,10 @@ var controlChannels = []struct {
 // FetchControlConfig reads the controller's live dosing config and returns the
 // setpoint + warn limits per measurement type. It is fail-soft: a channel whose
 // INI is unreachable or missing/unparseable TARGET/MIN_VAL/MAX_VAL is simply
-// omitted from the map (the caller falls back to default bands for it), so a
-// partial or empty map is a normal result rather than an error. The only error
-// returned is ctx cancellation during the inter-channel spacing.
+// omitted from the map (that type is then graded neutral — no hardcoded-band
+// fallback, #12), so a partial or empty map is a normal result rather than an
+// error. The only error returned is ctx cancellation during the inter-channel
+// spacing.
 func (c *Client) FetchControlConfig(ctx context.Context) (map[string]measure.ControlConfig, error) {
 	httpClient := c.HTTPClient
 	if httpClient == nil {
@@ -65,12 +66,12 @@ func (c *Client) FetchControlConfig(ctx context.Context) (map[string]measure.Con
 // (transport/HTTP error, or missing/unparseable limits). It deliberately does
 // NOT gate on TYPE (auto-regulation on/off): the apps' ProconIpControlConfig.
 // fromIni reads the configured setpoint/limits regardless of regulation state,
-// so gating here would silently diverge — the relay would fall back to default
-// bands while the app still shows the configured gauge bands. A degenerate or
-// parked config (all-zero, or Min == Max) is still handled safely downstream:
-// alert.bandsFromControl rejects a non-positive range (Min >= Max), so the
-// caller falls back to default bands — bands.BandsConfig.Validate alone would
-// NOT catch it (a collapsed band is monotonic). Each per-channel drop is logged
+// so gating here would silently diverge — the relay would grade the type neutral
+// while the app still shows the configured gauge bands. A degenerate or parked
+// config (all-zero, or Min == Max) is still handled safely downstream:
+// alert.bandsFromControl rejects a non-positive range (Min >= Max), so the type
+// grades neutral — bands.BandsConfig.Validate alone would NOT catch it (a
+// collapsed band is monotonic). Each per-channel drop is logged
 // so an operator can see a flaky INI read (the ProCon.IP's weak-CPU weakness the
 // 250ms spacing guards against), which the whole-fetch error path never surfaces.
 func (c *Client) fetchChannelControl(ctx context.Context, httpClient *http.Client, path string) (measure.ControlConfig, bool) {
@@ -135,7 +136,7 @@ func parseINI(body string) map[string]string {
 // rejects a non-finite result: strconv.ParseFloat accepts "Inf"/"Infinity"/
 // "NaN", which would survive bands.BandsConfig.Validate (±Inf is still
 // monotonic) and yield an alarm-free band. Mirror the finiteOr guard in
-// proconip.go so a garbled INI degrades to the default band instead.
+// proconip.go so a garbled INI grades the type neutral instead.
 func humanValue(raw string) (float64, bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

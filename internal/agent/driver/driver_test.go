@@ -199,8 +199,9 @@ func violetConfigSeed(t *testing.T) []byte {
 // TestVioletDriverIsControlConfigReader is the core VIOLET-parity assertion: the
 // VIOLET driver now satisfies the optional ControlConfigReader capability, so the
 // poller's type-assert (internal/agent/poller) picks it up and the alert engine
-// derives live push bands from the controller's own setpoints/limits instead of
-// the parity defaults — exactly as the ProCon.IP driver already does.
+// derives live push bands from the controller's own setpoints/limits (with no
+// controller band a measurement grades neutral, #12) — exactly as the ProCon.IP
+// driver already does.
 func TestVioletDriverIsControlConfigReader(t *testing.T) {
 	fixture := violetConfigSeed(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

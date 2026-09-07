@@ -364,8 +364,11 @@ func EvaluateStale(rules []wire.AlertRule, states map[string]*RuleState, lastSuc
 }
 
 // EffectiveSeverity classifies a reading through the same band precedence as
-// Evaluate (app override → controller-derived → parity defaults) — shared with
-// /v1/status measurement rendering so the status colour matches what would push.
+// Evaluate (app override → controller-derived band) — shared with /v1/status
+// measurement rendering so the status colour matches what would push. When no
+// enabled rule yields a real band it reports ok=false (neutral, no severity):
+// there is no hardcoded-band fallback (D-no-fallback, coherent with the apps,
+// which dropped MeasurementBands as a severity source — #12).
 func EffectiveSeverity(rules []wire.AlertRule, control map[string]measure.ControlConfig, r measure.Reading) (string, bool) {
 	for _, rule := range rules {
 		if rule.Kind == wire.RuleKindMeasurementBand && rule.Enabled && rule.MeasurementType == r.Type {
@@ -374,16 +377,18 @@ func EffectiveSeverity(rules []wire.AlertRule, control map[string]measure.Contro
 			}
 		}
 	}
-	if cfg, ok := bands.Defaults[r.Type]; ok {
-		return string(cfg.Banded().SeverityAt(r.Value)), true
-	}
 	return "", false
 }
 
 // effectiveBands resolves the band a rule evaluates against, in precedence
 // order: an explicit app override (rule.Bands) wins; else the controller's live
-// config derives min/max = its warn limits and ok = setpoint ± tolerance; else
-// the parity defaults are the last resort (controller config unavailable).
+// config derives min/max = its warn limits and the OK zone (setpoint ± tolerance,
+// or the dual-setpoint corridor). When neither is available it reports ok=false
+// so the caller stays neutral — there
+// is NO hardcoded-band severity fallback (D-no-fallback, #12): a measurement
+// with no real control band yields no severity, exactly as the apps now render
+// it. bands.Defaults survives only as the known-banded-type set, not a source of
+// severity.
 func effectiveBands(rule wire.AlertRule, control map[string]measure.ControlConfig) (bands.BandsConfig, bool) {
 	if rule.Bands != nil {
 		return *rule.Bands, true
@@ -393,8 +398,7 @@ func effectiveBands(rule wire.AlertRule, control map[string]measure.ControlConfi
 			return cfg, true
 		}
 	}
-	cfg, ok := bands.Defaults[rule.MeasurementType]
-	return cfg, ok
+	return bands.BandsConfig{}, false
 }
 
 // toleranceFor is the rule's OK tolerance, or the researched per-type default

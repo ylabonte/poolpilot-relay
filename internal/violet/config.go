@@ -102,8 +102,9 @@ func buildControlConfigQuery() string {
 // It is fail-soft on CONTENT (mirroring the ProCon.IP driver): a measurement
 // whose setpoint or warn limits /getConfig doesn't echo — a Redox-regulated pool
 // has no chlorine sensor, older firmware omits keys — is simply absent from the
-// map, and the alert engine falls back to that type's default band. A partial or
-// empty map is a normal, non-error result.
+// map, so the alert engine grades it neutral (no real control band → no severity;
+// there is no hardcoded-band fallback, #12). A partial or empty map is a normal,
+// non-error result.
 //
 // It DOES return an error on TRANSPORT failure (unreachable, non-200, unreadable
 // or non-JSON body): the poller retains the last-known-good bands on a control
@@ -161,8 +162,8 @@ func (c *Client) FetchControlConfig(ctx context.Context) (map[string]measure.Con
 // resolves, then merges: Min is the lowest warn-low and Max the highest warn-high
 // across active channels (the widest safe window). Reports ok=false when the
 // active channels don't yield all of setpoint + warn-low + warn-high, so the
-// caller omits the type and it falls back to its default band — the same "need
-// the full triple or drop" rule the ProCon.IP INI reader applies.
+// caller omits the type and the alert engine grades it neutral (no severity, #12)
+// — the same "need the full triple or drop" rule the ProCon.IP INI reader applies.
 //
 // The OK zone follows the apps' controlBandForMeasurement exactly. A single
 // active setpoint sets Target and the alert path grades Target ± tolerance. A
@@ -191,7 +192,7 @@ func resolveControlConfig(baseURL string, m controlMeasurement, raw map[string]a
 	}
 
 	if len(setpoints) == 0 || len(warnLows) == 0 || len(warnHighs) == 0 {
-		slog.Warn("violet control config incomplete; type falls back to default band",
+		slog.Warn("violet control config incomplete; type graded neutral (no control band)",
 			"base_url", baseURL, "type", m.bandsType,
 			"setpoints", len(setpoints), "warn_lows", len(warnLows), "warn_highs", len(warnHighs))
 		return measure.ControlConfig{}, false
@@ -232,8 +233,8 @@ func activeFields(m controlMeasurement, raw map[string]any) []controlField {
 // configDouble reads one /getConfig value as a finite float64. The firmware types
 // every value as a string ("7.29", "790"), but a rare key comes back as a bare
 // JSON number, so both are accepted; blank, absent, unparseable or non-finite
-// (strconv accepts "Inf"/"NaN") all report ok=false so a garbled value degrades
-// the type to its default band rather than corrupting one.
+// (strconv accepts "Inf"/"NaN") all report ok=false so a garbled value grades
+// the type neutral rather than corrupting one.
 func configDouble(raw map[string]any, key string) (float64, bool) {
 	v, ok := raw[key]
 	if !ok {

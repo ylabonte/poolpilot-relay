@@ -90,8 +90,8 @@ func TestFetchControlConfigFromSeed(t *testing.T) {
 	assertControl(t, "ORP", orp, 790, 550, 900)
 
 	// Chlorine: the demo box is Redox-regulated, so /getConfig never echoes
-	// DOSAGE_chlorine_setpoint_cl — chlorine must fall back to its default band
-	// (absent from the map), not fabricate one from warn limits alone.
+	// DOSAGE_chlorine_setpoint_cl — chlorine is absent from the map (graded
+	// neutral by the alert engine), not fabricated from warn limits alone.
 	if _, ok := got[bands.TypeChlorine]; ok {
 		t.Errorf("chlorine control config: got one, want none (no setpoint_cl on a Redox pool)")
 	}
@@ -192,8 +192,8 @@ func TestFetchControlConfigFallsBackToDefaultChannelWithoutUseFlags(t *testing.T
 
 func TestFetchControlConfigOmitsIncompleteOrGarbledType(t *testing.T) {
 	// pH- has warn limits but NO setpoint (can't centre a band → omit); ORP's
-	// setpoint is non-numeric (→ omit). Neither type appears; the caller falls
-	// back to default bands for both.
+	// setpoint is non-numeric (→ omit). Neither type appears; the alert engine
+	// grades both neutral (no hardcoded-band fallback, #12).
 	body := []byte(`{
 		"DOSAGE_phminus_use":"1",
 		"DOSAGE_phminus_limits_warnlow":"6.8",

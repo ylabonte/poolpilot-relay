@@ -74,22 +74,24 @@ type Driver interface {
 // ControlConfigReader is the optional capability a Driver implements when its
 // controller exposes live regulation config (setpoint + warn limits) the alert
 // engine can derive push bands from. The ProCon.IP and VIOLET drivers both
-// implement it; the poller type-asserts for it and falls back to the parity
-// default bands for any driver that does not.
+// implement it; the poller type-asserts for it and a driver that does not
+// implement it supplies no control bands, so its measurements grade neutral (no
+// hardcoded-band fallback — D-no-fallback, #12).
 type ControlConfigReader interface {
 	// ControlConfig fetches the controller's live dosing config keyed by
 	// measurement type. CONTENT handling is uniform and fail-soft: a measurement
 	// whose setpoint/limits the controller does not report is simply absent from
-	// the map, and that type falls back to its default band.
+	// the map, and that type is graded neutral (no severity) — there is no
+	// hardcoded-band fallback.
 	//
 	// TRANSPORT-failure handling is implementation-defined, and the poller copes
 	// with both shapes (see internal/agent/poller): an implementation may return
 	// an error — the poller then keeps the last-known-good bands for that poll
 	// (retainControl) — or fail-soft to a partial/empty map with a nil error,
 	// which the poller takes as the freshest truth, so a now-absent type drops to
-	// its default band. The two differ by wire shape: proconDriver reads its INI
+	// neutral. The two differ by wire shape: proconDriver reads its INI
 	// channels separately and fail-softs a failed channel (nil error, that type →
-	// default) while keeping the channels it did read; violetDriver reads all
+	// neutral) while keeping the channels it did read; violetDriver reads all
 	// config in one request, so a transport failure has nothing partial to keep
 	// and returns an error (retain last-known-good).
 	ControlConfig(ctx context.Context) (map[string]measure.ControlConfig, error)

@@ -19,6 +19,13 @@ var t0 = time.Date(2026, 7, 4, 10, 0, 0, 0, time.UTC)
 
 func tick(n int) time.Time { return t0.Add(time.Duration(n) * time.Minute) }
 
+// phControl is a controller control config for pH that derives EXACTLY the old
+// pH parity band {6.6, 7.0, 7.4, 7.8} (Target 7.2 ± the default tolerance 0.2,
+// limits 6.6/7.8). The state-machine tests feed it so their severity stream is
+// unchanged now that the hardcoded-band fallback is gone (#12): the band comes
+// from a real control config, the way a live controller supplies it.
+var phControl = map[string]measure.ControlConfig{bands.TypePH: {Target: 7.2, Min: 6.6, Max: 7.8}}
+
 func phRule() wire.AlertRule {
 	return wire.AlertRule{
 		ID: "r-ph", Kind: wire.RuleKindMeasurementBand, Enabled: true, Source: "default",
@@ -34,7 +41,7 @@ func phReading(v float64) []measure.Reading {
 // poll runs one Evaluate step and returns the emitted alerts.
 func poll(t *testing.T, rules []wire.AlertRule, states map[string]*RuleState, v float64, n int) []wire.AlertRequest {
 	t.Helper()
-	return Evaluate(rules, states, phReading(v), nil, guid, tick(n))
+	return Evaluate(rules, states, phReading(v), phControl, guid, tick(n))
 }
 
 func TestSeedDefaults(t *testing.T) {
@@ -505,11 +512,11 @@ func TestRebootSafetyRoundTrip(t *testing.T) {
 
 	// Still bad right after reboot: must NOT re-enter or renotify (cooldown
 	// timestamp survived the round trip).
-	if got := Evaluate(rules, restored, phReading(7.9), nil, guid, tick(10)); len(got) != 0 {
+	if got := Evaluate(rules, restored, phReading(7.9), phControl, guid, tick(10)); len(got) != 0 {
 		t.Fatalf("reboot re-notified early: %+v", got)
 	}
 	// Cooldown continuity: renotify fires relative to the pre-reboot notify.
-	got := Evaluate(rules, restored, phReading(7.9), nil, guid, tick(3).Add(21601*time.Second))
+	got := Evaluate(rules, restored, phReading(7.9), phControl, guid, tick(3).Add(21601*time.Second))
 	if len(got) != 1 || got[0].Transition != wire.TransitionRenotify {
 		t.Fatalf("cooldown lost across reboot: %+v", got)
 	}
@@ -524,7 +531,7 @@ func TestRebootSafetyRoundTrip(t *testing.T) {
 	raw2, _ := json.Marshal(states2)
 	restored2 := map[string]*RuleState{}
 	_ = json.Unmarshal(raw2, &restored2)
-	got = Evaluate(rules, restored2, phReading(7.2), nil, guid, tick(6))
+	got = Evaluate(rules, restored2, phReading(7.2), phControl, guid, tick(6))
 	if len(got) != 1 || got[0].Transition != wire.TransitionRecover {
 		t.Fatalf("pending debounce count lost across reboot: %+v", got)
 	}
@@ -574,11 +581,14 @@ func TestEffectiveSeverity(t *testing.T) {
 	override.Bands = &bands.BandsConfig{Min: 6.0, OkMin: 6.5, OkMax: 8.5, Max: 9.0}
 	r := measure.Reading{Type: bands.TypePH, Value: 7.9}
 
+	// An explicit app override band grades the reading.
 	if sev, ok := EffectiveSeverity([]wire.AlertRule{override}, nil, r); !ok || sev != "ok" {
 		t.Errorf("override severity = %q, %v", sev, ok)
 	}
-	if sev, ok := EffectiveSeverity(nil, nil, r); !ok || sev != "bad" {
-		t.Errorf("default severity = %q, %v", sev, ok)
+	// No rule and no controller band → neutral: the hardcoded-band fallback is
+	// gone (#12). This used to return the parity default "bad".
+	if sev, ok := EffectiveSeverity(nil, nil, r); ok {
+		t.Errorf("no-band severity = %q, %v; want neutral (no hardcoded fallback)", sev, ok)
 	}
 	if _, ok := EffectiveSeverity(nil, nil, measure.Reading{Type: "generic", Value: 1}); ok {
 		t.Error("unbanded type must report no severity")
@@ -587,17 +597,19 @@ func TestEffectiveSeverity(t *testing.T) {
 
 // Regression for #40: EffectiveSeverity must skip a disabled rule exactly like
 // Evaluate does, so /v1/status cannot colour from a rule an operator turned
-// off. A disabled rule's own override band would call 7.9 "ok"; since the
-// rule must be skipped, the reading falls through to the parity defaults,
-// which call 7.9 "bad" (mirrors TestEffectiveSeverity's default case).
+// off. A disabled rule's own override band would call 7.9 "ok"; since the rule
+// must be skipped and nothing else governs — the hardcoded-band fallback is gone
+// (#12) — the reading is neutral, NOT the disabled rule's verdict. (If the
+// disabled rule were wrongly consulted this would return "ok",ok — the guard
+// below still catches the #40 regression.)
 func TestEffectiveSeverityIgnoresDisabledRule(t *testing.T) {
 	disabled := phRule()
 	disabled.Enabled = false
 	disabled.Bands = &bands.BandsConfig{Min: 6.0, OkMin: 6.5, OkMax: 8.5, Max: 9.0}
 	r := measure.Reading{Type: bands.TypePH, Value: 7.9}
 
-	if sev, ok := EffectiveSeverity([]wire.AlertRule{disabled}, nil, r); !ok || sev != "bad" {
-		t.Errorf("disabled-rule severity = %q, %v; want bad (defaults, disabled rule skipped)", sev, ok)
+	if sev, ok := EffectiveSeverity([]wire.AlertRule{disabled}, nil, r); ok {
+		t.Errorf("disabled-rule severity = %q, %v; want neutral (disabled rule skipped, no fallback)", sev, ok)
 	}
 }
 
@@ -608,13 +620,9 @@ func TestEffectiveSeverityIgnoresDisabledRule(t *testing.T) {
 // must match Evaluate and use the enabled rule, not the disabled one it
 // happens to encounter first.
 //
-// The three candidate verdicts for 7.9 (disabled rule's own band → "ok",
-// parity defaults → "bad", enabled rule's band → "warn") are chosen to be
-// pairwise distinct, so a passing test actually proves the enabled rule's
-// band was consulted — not merely that the disabled rule's own override was
-// skipped (an over-skip straight to the defaults would also satisfy a
-// "bad"-only assertion here, since the defaults happen to agree with what
-// the disabled rule's neighbour band would have said).
+// The two candidate verdicts for 7.9 (disabled rule's own band → "ok", enabled
+// rule's band → "warn") are distinct, so a passing "warn" proves the enabled
+// rule's band was consulted rather than the disabled one it encounters first.
 func TestEffectiveSeverityFallsThroughDisabledRuleToEnabledOne(t *testing.T) {
 	disabled := phRule()
 	disabled.ID = "disabled-ph"
@@ -643,7 +651,7 @@ func TestBandsFromControl(t *testing.T) {
 	if b, ok := bandsFromControl(cc, 1000); !ok || b.OkMin != 200 || b.OkMax != 900 {
 		t.Errorf("wide-tolerance clamp = %+v,%v", b, ok)
 	}
-	// Unusable configs report false so the caller falls back to defaults.
+	// Unusable configs report false so the caller stays neutral (no fallback, #12).
 	if _, ok := bandsFromControl(measure.ControlConfig{Min: 900, Max: 200}, 75); ok {
 		t.Error("inverted limits must not derive a band")
 	}
@@ -719,9 +727,10 @@ func TestEffectiveBandsPrecedence(t *testing.T) {
 	if got, _ := effectiveBands(override, control); got != *override.Bands {
 		t.Errorf("explicit override must win, got %+v", got)
 	}
-	// No control for the type → parity defaults are the last resort.
-	if got, ok := effectiveBands(rule, nil); !ok || got != bands.Defaults[bands.TypeORP] {
-		t.Errorf("fallback to defaults = %+v,%v", got, ok)
+	// No override and no controller config → no band (the hardcoded-band fallback
+	// was removed in #12), so the caller stays neutral.
+	if _, ok := effectiveBands(rule, nil); ok {
+		t.Error("effectiveBands must report no band without an override or a controller config")
 	}
 }
 
