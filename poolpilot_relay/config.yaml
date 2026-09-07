@@ -5,7 +5,7 @@
 # every stable `vX.Y.Z` tag, once the matching multi-arch image is published to
 # ghcr — so it always names an image that exists.
 name: PoolPilot Relay
-version: "0.5.0"
+version: "0.6.0"
 slug: poolpilot_relay
 description: >-
   Runs the PoolPilot edge agent as a Home Assistant app: bridges your ProCon.IP
