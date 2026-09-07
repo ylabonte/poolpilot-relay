@@ -221,6 +221,22 @@ func ValidateRules(rules []wire.AlertRule) error {
 // Evaluate runs every enabled measurement_band rule against one poll's
 // readings. It mutates states in place (creating entries as needed) and
 // returns the alerts to push. guid stamps ControllerGUID on the way out.
+//
+// A rule with NO effective band (effectiveBands reports ok=false — no app
+// override and the controller currently supplies no usable control config for
+// this type, per the app's D-no-fallback decision) is PAUSED for this poll: the
+// loop `continue`s without touching rs at all, so an already-notified "bad"
+// stays latched exactly as {LastSeverity: "bad", Notified: true} — no recover
+// is emitted — until a real band returns. This is deliberate, not an oversight:
+// "no band" is unknown, not "back to ok", the same reasoning EvaluateStale
+// already applies to lastSuccess.IsZero() ("unknown ≠ recovered"). Feeding a
+// synthetic neutral/ok verdict through stepBanded instead would flap a false
+// recovery every time a config fetch drops out — e.g. the ProCon.IP's fail-soft
+// per-channel INI reads (see driver.ControlConfigReader) — and then re-alert
+// once the band comes back, which is worse than staying silently latched. The
+// cost is that /v1/status can show a neutral measurement next to an active
+// "bad" alert for that same type while the band is missing;
+// TestRulePausesAndResumesWhenBandDisappears pins this state machine.
 func Evaluate(rules []wire.AlertRule, states map[string]*RuleState, readings []measure.Reading, control map[string]measure.ControlConfig, guid string, now time.Time) []wire.AlertRequest {
 	var out []wire.AlertRequest
 	for _, rule := range rules {
@@ -233,7 +249,7 @@ func Evaluate(rules []wire.AlertRule, states map[string]*RuleState, readings []m
 		}
 		cfg, ok := effectiveBands(rule, control)
 		if !ok {
-			continue
+			continue // no band this poll: pause (stay latched), do not recover — see doc comment above
 		}
 		observed := string(cfg.Banded().SeverityAt(reading.Value))
 		rs := ensureState(states, rule.ID)

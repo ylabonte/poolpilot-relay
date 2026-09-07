@@ -325,6 +325,57 @@ func TestCooldownRenotify(t *testing.T) {
 	}
 }
 
+// TestRulePausesAndResumesWhenBandDisappears pins the blocking review finding
+// on the no-fallback change: once a rule's measurement loses its live control
+// band (effectiveBands reports ok=false — no app override, and the controller
+// no longer supplies a usable control config for this type), Evaluate PAUSES
+// the rule rather than treating the missing band as a recovery. An
+// already-notified "bad" stays latched exactly as committed — no renotify, no
+// recover — until a real band returns, mirroring EvaluateStale's "unknown is
+// not recovered" reasoning (see the doc comment on Evaluate). This is
+// deliberate: a synthetic ok/neutral verdict fed through stepBanded instead
+// would flap a false recovery (and later a false re-entry) every time a
+// config fetch drops out, e.g. the ProCon.IP's fail-soft per-channel INI reads.
+func TestRulePausesAndResumesWhenBandDisappears(t *testing.T) {
+	rules := []wire.AlertRule{phRule()}
+	states := map[string]*RuleState{}
+
+	// Drive the rule to a notified "bad" the normal way, with a live pH band.
+	for n := 1; n <= 3; n++ {
+		Evaluate(rules, states, phReading(7.9), phControl, guid, tick(n))
+	}
+	latched := *states["r-ph"]
+	if !latched.Notified || latched.LastSeverity != "bad" {
+		t.Fatalf("setup: rule must be notified bad before the band disappears, got %+v", latched)
+	}
+
+	// The controller stops reporting a live pH band (e.g. a config fetch that
+	// fail-softs to an empty/partial map). Poll several times — well past the
+	// rule's 21600s (6h) cooldown — while the reading stays "bad" (7.9): the
+	// rule must emit NOTHING and RuleState must stay exactly latched, because
+	// effectiveBands reports ok=false and Evaluate `continue`s over the rule
+	// entirely without ever reaching stepBanded/renotifyIfDue.
+	noControl := map[string]measure.ControlConfig{}
+	for _, n := range []int{400, 800, 1200} {
+		if got := Evaluate(rules, states, phReading(7.9), noControl, guid, tick(n)); len(got) != 0 {
+			t.Fatalf("poll at tick %d with no live band must emit nothing (paused), got %+v", n, got)
+		}
+		if got := *states["r-ph"]; got != latched {
+			t.Fatalf("poll at tick %d with no live band must not mutate RuleState, got %+v want %+v", n, got, latched)
+		}
+	}
+
+	// The controller's live band returns. The rule resumes exactly where it
+	// left off: LastNotifiedAt is still from the original notify (tick(3)), so
+	// the still-"bad" reading is now well past cooldown and renotifies —
+	// proving evaluation picked back up rather than staying paused forever or
+	// having silently reset while the band was missing.
+	got := Evaluate(rules, states, phReading(7.9), phControl, guid, tick(1201))
+	if len(got) != 1 || got[0].Transition != wire.TransitionRenotify || got[0].Severity != "bad" {
+		t.Fatalf("rule must resume once the band returns, got %+v", got)
+	}
+}
+
 func TestWarnNotNotifiedByDefault(t *testing.T) {
 	rules := []wire.AlertRule{phRule()} // notify_severities = ["bad"]
 	states := map[string]*RuleState{}
