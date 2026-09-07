@@ -150,6 +150,37 @@ func TestFetchControlConfigMergesTwoActivePhChannels(t *testing.T) {
 	}
 }
 
+func TestFetchControlConfigIdenticalActiveSetpointsHaveNoCorridor(t *testing.T) {
+	// Two active channels sharing the SAME setpoint (7.2) are a degenerate case:
+	// minOf(setpoints) == maxOf(setpoints), so `hi > lo` is false and this relay
+	// falls back to Target ± tolerance (HasOkZone stays false, Target is still
+	// the mean — 7.2 either way) rather than an explicit corridor. This is a
+	// known, documented divergence from the apps (which land on a zero-width
+	// ideal band here and grade the whole warn window OK), tracked for the
+	// Plan B rollout — not a bug in the merge/corridor logic above.
+	body := []byte(`{
+		"DOSAGE_phminus_use":"1",
+		"DOSAGE_phminus_setpoint":"7.2",
+		"DOSAGE_phminus_limits_warnlow":"6.6",
+		"DOSAGE_phminus_limits_warnhigh":"7.8",
+		"DOSAGE_phplus_use":"1",
+		"DOSAGE_phplus_setpoint":"7.2",
+		"DOSAGE_phplus_limits_warnlow":"6.6",
+		"DOSAGE_phplus_limits_warnhigh":"7.8"
+	}`)
+	srv, _ := configServer(t, "", "", body)
+
+	got, err := (&Client{BaseURL: srv.URL}).FetchControlConfig(context.Background())
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	ph := got[bands.TypePH]
+	assertControl(t, "pH", ph, 7.2, 6.6, 7.8)
+	if ph.HasOkZone {
+		t.Errorf("identical active setpoints must not set an OK corridor, got [%v, %v]", ph.OkLow, ph.OkHigh)
+	}
+}
+
 func TestFetchControlConfigSingleSetpointHasNoCorridor(t *testing.T) {
 	// A single active dosing channel keeps the Target ± tolerance behaviour: no OK
 	// corridor is set, so the alert path derives the band from Target as before.

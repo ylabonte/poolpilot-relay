@@ -745,12 +745,21 @@ func TestBandsFromControlCorridor(t *testing.T) {
 	if _, ok := bandsFromControl(cc, 0); !ok {
 		t.Error("corridor must derive a band regardless of tolerance")
 	}
+	// The tolerance really is ignored for a corridor — not unioned into the OK
+	// zone. A tolerance far WIDER than the corridor itself (1000 vs. a 0.2-wide
+	// [7.0, 7.2] window) would still expand OkMin/OkMax if bandsFromControl ever
+	// mixed the two, so this catches a "corridor ∪ tol" regression the zero-
+	// tolerance check above cannot.
+	if b, ok := bandsFromControl(cc, 1000); !ok || b.OkMin != 7.0 || b.OkMax != 7.2 {
+		t.Errorf("corridor with wide tolerance = %+v,%v want OkMin 7.0 OkMax 7.2 (tolerance must stay ignored)", b, ok)
+	}
 	// The corridor clamps to the warn limits, same as the single-setpoint path.
 	clamped := measure.ControlConfig{Target: 7.2, Min: 7.1, Max: 7.15, OkLow: 7.0, OkHigh: 7.2, HasOkZone: true}
 	if b, ok := bandsFromControl(clamped, 0); !ok || b.OkMin != 7.1 || b.OkMax != 7.15 {
 		t.Errorf("corridor clamp = %+v,%v want OkMin 7.1 OkMax 7.15", b, ok)
 	}
-	// A corridor entirely outside the limits degenerates → fall back to defaults.
+	// A corridor entirely outside the limits degenerates → report no band (there
+	// is no default-band fallback to fall back to).
 	if _, ok := bandsFromControl(measure.ControlConfig{Min: 6.6, Max: 7.0, OkLow: 7.2, OkHigh: 7.4, HasOkZone: true}, 0); ok {
 		t.Error("corridor fully outside the limits must not derive a band")
 	}
@@ -791,8 +800,10 @@ func TestEffectiveBandsPrecedence(t *testing.T) {
 
 func TestEffectiveSeverityUsesControllerBands(t *testing.T) {
 	// Controller ORP setpoint 700, limits 600/820, tolerance 75 → ok 625..775.
-	// The parity default is {600,650,800,850}; the values below are chosen where
-	// the two disagree, so a correct verdict proves the controller band is used.
+	// bands.Defaults[orp_mv] is still {600,650,800,850} (an inert historical
+	// value now, never consulted as a fallback); the values below are chosen
+	// where the two disagree, so a correct verdict proves the controller band
+	// is used.
 	control := map[string]measure.ControlConfig{bands.TypeORP: {Target: 700, Min: 600, Max: 820}}
 	rule := wire.AlertRule{ID: "orp", Kind: wire.RuleKindMeasurementBand, Enabled: true, MeasurementType: bands.TypeORP, OkTolerance: 75}
 	rules := []wire.AlertRule{rule}
