@@ -206,8 +206,19 @@ func resolveControlConfig(baseURL string, m controlMeasurement, raw map[string]a
 	// Both-directions pool: two distinct active setpoints span a regulation
 	// corridor. Keep them as an explicit OK zone [low, high] instead of centring
 	// on the mean, so the alert path grades the whole corridor OK — exact parity
-	// with the apps' controlBandForMeasurement (issue #31). A single setpoint (or
-	// two identical ones) keeps the Target ± tolerance behaviour.
+	// with the apps' controlBandForMeasurement (issue #31). A single ACTIVE
+	// setpoint is likewise exact parity: both sides fall back to Target ±
+	// tolerance.
+	//
+	// Two IDENTICAL active setpoints are NOT exact parity, though: this relay
+	// still falls back to Target ± tolerance here (hi > lo is false), but the
+	// apps' merge path never collapses two channels back to a single setpoint —
+	// it lands on setpoint=nil plus a degenerate (zero-width) ideal band, which
+	// the apps then grade OK across the ENTIRE warn window. That's the documented
+	// "limits-only → whole-window OK" extension the relay does not yet implement
+	// (docs/ARCHITECTURE.md § Measurement parity in the app repo; tracked for the
+	// Plan B rollout) — a known, deliberate divergence for this rare degenerate
+	// input, not a bug in this corridor logic.
 	if lo, hi := minOf(setpoints), maxOf(setpoints); hi > lo {
 		cc.OkLow, cc.OkHigh, cc.HasOkZone = lo, hi, true
 	}

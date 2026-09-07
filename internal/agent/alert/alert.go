@@ -420,8 +420,10 @@ func toleranceFor(rule wire.AlertRule) float64 {
 //
 // It returns false for an unusable config (single-setpoint with non-positive
 // tolerance; inverted or EMPTY limits where Min >= Max; or an OK zone so far
-// outside the limits that the clamp degenerates) so the caller falls back to
-// defaults. Rejecting Min == Max matters because a parked/all-zero channel
+// outside the limits that the clamp degenerates), and effectiveBands then
+// propagates that false straight through — there is no default-band fallback
+// (D-no-fallback, #12): the measurement simply grades neutral (no severity).
+// Rejecting Min == Max matters because a parked/all-zero channel
 // ({0,0,0}) would otherwise pass bands.BandsConfig.Validate (monotonic
 // non-decreasing ALLOWS equality) as a collapsed band that classifies every
 // reading "bad" — perpetual alarm spam. Newly reachable since the TYPE gate was

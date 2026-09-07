@@ -240,7 +240,7 @@ type Measurement struct {
 	Value    float64 `json:"value"`
 	Unit     string  `json:"unit"`
 	Label    string  `json:"label"`
-	Severity string  `json:"severity,omitempty"` // banded types only
+	Severity string  `json:"severity,omitempty"` // set only when a live control band grades this type (#12); absent otherwise
 }
 
 type AlertsStatus struct {
