@@ -103,8 +103,8 @@ func buildControlConfigQuery() string {
 // whose setpoint or warn limits /getConfig doesn't echo — a Redox-regulated pool
 // has no chlorine sensor, older firmware omits keys — is simply absent from the
 // map, so the alert engine grades it neutral (no real control band → no severity;
-// there is no hardcoded-band fallback, #12). A partial or empty map is a normal,
-// non-error result.
+// there is no hardcoded-band fallback, per the app's D-no-fallback decision). A
+// partial or empty map is a normal, non-error result.
 //
 // It DOES return an error on TRANSPORT failure (unreachable, non-200, unreadable
 // or non-JSON body): the poller retains the last-known-good bands on a control
@@ -162,8 +162,9 @@ func (c *Client) FetchControlConfig(ctx context.Context) (map[string]measure.Con
 // resolves, then merges: Min is the lowest warn-low and Max the highest warn-high
 // across active channels (the widest safe window). Reports ok=false when the
 // active channels don't yield all of setpoint + warn-low + warn-high, so the
-// caller omits the type and the alert engine grades it neutral (no severity, #12)
-// — the same "need the full triple or drop" rule the ProCon.IP INI reader applies.
+// caller omits the type and the alert engine grades it neutral (no severity, per
+// the app's D-no-fallback decision) — the same "need the full triple or drop"
+// rule the ProCon.IP INI reader applies.
 //
 // The OK zone follows the apps' controlBandForMeasurement exactly. A single
 // active setpoint sets Target and the alert path grades Target ± tolerance. A

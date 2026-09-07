@@ -74,9 +74,10 @@ type Driver interface {
 // ControlConfigReader is the optional capability a Driver implements when its
 // controller exposes live regulation config (setpoint + warn limits) the alert
 // engine can derive push bands from. The ProCon.IP and VIOLET drivers both
-// implement it; the poller type-asserts for it and a driver that does not
-// implement it supplies no control bands, so its measurements grade neutral (no
-// hardcoded-band fallback — D-no-fallback, #12).
+// implement it; the poller type-asserts for it, and a driver that does not
+// implement it supplies no control bands, so a measurement of that type grades
+// neutral unless an app-side rule override band (wire.AlertRule.Bands) applies —
+// there is no hardcoded-band fallback (the app's D-no-fallback decision).
 type ControlConfigReader interface {
 	// ControlConfig fetches the controller's live dosing config keyed by
 	// measurement type. CONTENT handling is uniform and fail-soft: a measurement

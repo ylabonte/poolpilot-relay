@@ -367,8 +367,8 @@ func EvaluateStale(rules []wire.AlertRule, states map[string]*RuleState, lastSuc
 // Evaluate (app override → controller-derived band) — shared with /v1/status
 // measurement rendering so the status colour matches what would push. When no
 // enabled rule yields a real band it reports ok=false (neutral, no severity):
-// there is no hardcoded-band fallback (D-no-fallback, coherent with the apps,
-// which dropped MeasurementBands as a severity source — #12).
+// there is no hardcoded-band fallback (the app's D-no-fallback decision,
+// coherent with the apps, which dropped MeasurementBands as a severity source).
 func EffectiveSeverity(rules []wire.AlertRule, control map[string]measure.ControlConfig, r measure.Reading) (string, bool) {
 	for _, rule := range rules {
 		if rule.Kind == wire.RuleKindMeasurementBand && rule.Enabled && rule.MeasurementType == r.Type {
@@ -385,10 +385,10 @@ func EffectiveSeverity(rules []wire.AlertRule, control map[string]measure.Contro
 // config derives min/max = its warn limits and the OK zone (setpoint ± tolerance,
 // or the dual-setpoint corridor). When neither is available it reports ok=false
 // so the caller stays neutral — there
-// is NO hardcoded-band severity fallback (D-no-fallback, #12): a measurement
-// with no real control band yields no severity, exactly as the apps now render
-// it. bands.Defaults survives only as the known-banded-type set, not a source of
-// severity.
+// is NO hardcoded-band severity fallback (the app's D-no-fallback decision): a
+// measurement with no real control band yields no severity, exactly as the apps
+// now render it. bands.Defaults survives only as the known-banded-type set, not
+// a source of severity.
 func effectiveBands(rule wire.AlertRule, control map[string]measure.ControlConfig) (bands.BandsConfig, bool) {
 	if rule.Bands != nil {
 		return *rule.Bands, true
@@ -422,7 +422,8 @@ func toleranceFor(rule wire.AlertRule) float64 {
 // tolerance; inverted or EMPTY limits where Min >= Max; or an OK zone so far
 // outside the limits that the clamp degenerates), and effectiveBands then
 // propagates that false straight through — there is no default-band fallback
-// (D-no-fallback, #12): the measurement simply grades neutral (no severity).
+// (the app's D-no-fallback decision): the measurement simply grades neutral
+// (no severity).
 // Rejecting Min == Max matters because a parked/all-zero channel
 // ({0,0,0}) would otherwise pass bands.BandsConfig.Validate (monotonic
 // non-decreasing ALLOWS equality) as a collapsed band that classifies every

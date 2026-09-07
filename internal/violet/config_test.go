@@ -193,7 +193,8 @@ func TestFetchControlConfigFallsBackToDefaultChannelWithoutUseFlags(t *testing.T
 func TestFetchControlConfigOmitsIncompleteOrGarbledType(t *testing.T) {
 	// pH- has warn limits but NO setpoint (can't centre a band → omit); ORP's
 	// setpoint is non-numeric (→ omit). Neither type appears; the alert engine
-	// grades both neutral (no hardcoded-band fallback, #12).
+	// grades both neutral (no hardcoded-band fallback, per the app's
+	// D-no-fallback decision).
 	body := []byte(`{
 		"DOSAGE_phminus_use":"1",
 		"DOSAGE_phminus_limits_warnlow":"6.8",

@@ -18,8 +18,8 @@ import (
 // change: fed the controller's own /getConfig setpoints/limits, a reading reads
 // "ok" against the wider band the controller is actually configured for. Without
 // that live band there is no severity at all — the hardcoded-band fallback is
-// gone (D-no-fallback, #12), so the relay never invents a verdict the apps would
-// render neutral. It wires the real pieces the poller chains —
+// gone (the app's D-no-fallback decision), so the relay never invents a verdict
+// the apps would render neutral. It wires the real pieces the poller chains —
 // violet.FetchControlConfig → alert.EffectiveSeverity over the seeded VIOLET rule
 // set — so a regression in the reader or the band derivation surfaces here, not
 // just in a unit mock.

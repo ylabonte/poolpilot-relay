@@ -37,9 +37,9 @@ var controlChannels = []struct {
 // setpoint + warn limits per measurement type. It is fail-soft: a channel whose
 // INI is unreachable or missing/unparseable TARGET/MIN_VAL/MAX_VAL is simply
 // omitted from the map (that type is then graded neutral — no hardcoded-band
-// fallback, #12), so a partial or empty map is a normal result rather than an
-// error. The only error returned is ctx cancellation during the inter-channel
-// spacing.
+// fallback, per the app's D-no-fallback decision), so a partial or empty map is
+// a normal result rather than an error. The only error returned is ctx
+// cancellation during the inter-channel spacing.
 func (c *Client) FetchControlConfig(ctx context.Context) (map[string]measure.ControlConfig, error) {
 	httpClient := c.HTTPClient
 	if httpClient == nil {

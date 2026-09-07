@@ -22,8 +22,9 @@ func tick(n int) time.Time { return t0.Add(time.Duration(n) * time.Minute) }
 // phControl is a controller control config for pH that derives EXACTLY the old
 // pH parity band {6.6, 7.0, 7.4, 7.8} (Target 7.2 ± the default tolerance 0.2,
 // limits 6.6/7.8). The state-machine tests feed it so their severity stream is
-// unchanged now that the hardcoded-band fallback is gone (#12): the band comes
-// from a real control config, the way a live controller supplies it.
+// unchanged now that the hardcoded-band fallback is gone (the app's
+// D-no-fallback decision): the band comes from a real control config, the way
+// a live controller supplies it.
 var phControl = map[string]measure.ControlConfig{bands.TypePH: {Target: 7.2, Min: 6.6, Max: 7.8}}
 
 func phRule() wire.AlertRule {
@@ -586,7 +587,8 @@ func TestEffectiveSeverity(t *testing.T) {
 		t.Errorf("override severity = %q, %v", sev, ok)
 	}
 	// No rule and no controller band → neutral: the hardcoded-band fallback is
-	// gone (#12). This used to return the parity default "bad".
+	// gone (the app's D-no-fallback decision). This used to return the parity
+	// default "bad".
 	if sev, ok := EffectiveSeverity(nil, nil, r); ok {
 		t.Errorf("no-band severity = %q, %v; want neutral (no hardcoded fallback)", sev, ok)
 	}
@@ -598,10 +600,10 @@ func TestEffectiveSeverity(t *testing.T) {
 // Regression for #40: EffectiveSeverity must skip a disabled rule exactly like
 // Evaluate does, so /v1/status cannot colour from a rule an operator turned
 // off. A disabled rule's own override band would call 7.9 "ok"; since the rule
-// must be skipped and nothing else governs — the hardcoded-band fallback is gone
-// (#12) — the reading is neutral, NOT the disabled rule's verdict. (If the
-// disabled rule were wrongly consulted this would return "ok",ok — the guard
-// below still catches the #40 regression.)
+// must be skipped and nothing else governs — the hardcoded-band fallback is
+// gone (the app's D-no-fallback decision) — the reading is neutral, NOT the
+// disabled rule's verdict. (If the disabled rule were wrongly consulted this
+// would return "ok",ok — the guard below still catches the #40 regression.)
 func TestEffectiveSeverityIgnoresDisabledRule(t *testing.T) {
 	disabled := phRule()
 	disabled.Enabled = false
@@ -651,7 +653,8 @@ func TestBandsFromControl(t *testing.T) {
 	if b, ok := bandsFromControl(cc, 1000); !ok || b.OkMin != 200 || b.OkMax != 900 {
 		t.Errorf("wide-tolerance clamp = %+v,%v", b, ok)
 	}
-	// Unusable configs report false so the caller stays neutral (no fallback, #12).
+	// Unusable configs report false so the caller stays neutral (no fallback,
+	// per the app's D-no-fallback decision).
 	if _, ok := bandsFromControl(measure.ControlConfig{Min: 900, Max: 200}, 75); ok {
 		t.Error("inverted limits must not derive a band")
 	}
@@ -728,7 +731,8 @@ func TestEffectiveBandsPrecedence(t *testing.T) {
 		t.Errorf("explicit override must win, got %+v", got)
 	}
 	// No override and no controller config → no band (the hardcoded-band fallback
-	// was removed in #12), so the caller stays neutral.
+	// was removed by the app's D-no-fallback decision), so the caller stays
+	// neutral.
 	if _, ok := effectiveBands(rule, nil); ok {
 		t.Error("effectiveBands must report no band without an override or a controller config")
 	}

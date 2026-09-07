@@ -491,7 +491,8 @@ func stubDriver(t *testing.T, drv driver.Driver) {
 // rather than nothing. The ORP reading (830) and control here are chosen so the
 // controller-derived band grades it bad (past the 820 limit) — a value the old
 // default band called warn (< 850), and which now, with no controller band,
-// grades neutral (no hardcoded fallback, #12). A single tick must therefore emit
+// grades neutral (no hardcoded fallback, per the app's D-no-fallback decision).
+// A single tick must therefore emit
 // exactly one "bad" enter alert; deleting `snap.Control = control` in the poller
 // would make Evaluate see nil control, grade 830 neutral, and emit nothing — failing.
 func TestTickUsesControllerDerivedBands(t *testing.T) {

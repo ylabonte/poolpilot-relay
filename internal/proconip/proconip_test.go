@@ -75,8 +75,9 @@ func TestReadingsClassifyAndGrade(t *testing.T) {
 	// The real-wire fixture conveniently exercises non-OK severities out of the box.
 	// bands.Defaults is used purely as a fixed, convenient severity oracle in this
 	// test — exercising Parse()+classification wiring — not as production
-	// behaviour: since #12 a measurement's real severity comes only from the
-	// controller's live control band (or an app override), never bands.Defaults.
+	// behaviour: per the app's D-no-fallback decision, a measurement's real
+	// severity comes only from the controller's live control band (or an app
+	// override), never bands.Defaults.
 	ph, ok := byType[bands.TypePH]
 	if !ok {
 		t.Fatal("no pH reading extracted")

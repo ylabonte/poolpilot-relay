@@ -187,7 +187,7 @@ func (p *Poller) pollController(ctx context.Context, ctrl state.Controller) int 
 	// Fetch the controller's live regulation config (setpoint + warn limits)
 	// when the driver exposes it, so the alert engine derives push bands from
 	// the controller. Without a controller band there is no severity (neutral) —
-	// the hardcoded-band fallback was removed (D-no-fallback, #12). A config
+	// the hardcoded-band fallback was removed (the app's D-no-fallback decision). A config
 	// fetch that ERRORS (cerr != nil) — the ProCon.IP's weak CPU can drop a rapid
 	// INI read, the exact weakness the 250ms spacing guards against — must NOT
 	// wipe the last-known-good bands to neutral for a single poll: retain the
