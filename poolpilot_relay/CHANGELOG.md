@@ -5,6 +5,14 @@ The app version tracks the PoolPilot Relay release it packages. `version` in
 notes live in the relay's GitHub Releases:
 <https://github.com/ylabonte/poolpilot-relay/releases>.
 
+## 0.6.1
+
+- The relay's log no longer repeats the harmless mDNS notice
+  *"…the Recursion Available bit MUST be zero on transmission (RFC6762 18.7)"* on
+  every start — those come from the discovery library and are now suppressed by
+  default. If you need them back to debug discovery, enable **Additional mDNS
+  logs** (`mdns_verbose_logs`) on the **Configuration** tab.
+
 ## 0.6.0
 
 - The pairing-API port is now configurable from the app's **Configuration** tab:

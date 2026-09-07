@@ -1,0 +1,17 @@
+# Home Assistant zeigt diese Beschriftungen/Beschreibungen auf dem
+# Konfigurations-Tab der App, anhand der Options-Namen aus config.yaml.
+configuration:
+  lan_port:
+    name: LAN-Port
+    description: >-
+      Port, unter dem das Relay die abgesicherte HTTPS-Pairing-API bereitstellt
+      und per mDNS ankündigt. Nur ändern, wenn 8443 auf dem Host-Netzwerk schon
+      belegt ist – und vor dem Pairing setzen: ein bereits gekoppeltes Telefon
+      behält den alten Port.
+  mdns_verbose_logs:
+    name: Zusätzliche mDNS-Logs
+    description: >-
+      Standardmäßig aus. Die mDNS-Bibliothek gibt bei jeder Ankündigung harmlose
+      RFC-6762-Hinweise aus; diese werden ausgeblendet, damit das Log sauber
+      bleibt. Nur zum Debuggen von Discovery-Problemen einschalten – dann
+      erscheinen die zusätzlichen Zeilen wieder.

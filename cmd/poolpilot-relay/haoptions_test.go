@@ -139,3 +139,108 @@ func TestLanPortFollowsResolvedListen(t *testing.T) {
 		t.Errorf("lanPort(%q) = %d, want 8081 (the mDNS-advertised port must follow the HA option)", addr, got)
 	}
 }
+
+func TestHABoolOption(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantVal bool
+		wantOK  bool
+	}{
+		{"true", `{"mdns_verbose_logs": true}`, true, true},
+		{"false", `{"mdns_verbose_logs": false}`, false, true},
+		{"other keys ignored", `{"mdns_verbose_logs": true, "lan_port": 8443}`, true, true},
+		{"missing key", `{"lan_port": 8443}`, false, false},
+		{"empty object", `{}`, false, false},
+		{"wrong type", `{"mdns_verbose_logs": "yes"}`, false, false},
+		{"garbage json", `not json`, false, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var val, ok bool
+			// Wrong-type / garbage cases warn; wrap so the suite stays quiet.
+			captureWarn(t, func() { val, ok = haBoolOption(writeOptions(t, tc.body), "mdns_verbose_logs") })
+			if val != tc.wantVal || ok != tc.wantOK {
+				t.Errorf("haBoolOption(%q) = (%v, %v), want (%v, %v)", tc.body, val, ok, tc.wantVal, tc.wantOK)
+			}
+		})
+	}
+}
+
+func TestHABoolOptionNoPath(t *testing.T) {
+	if v, ok := haBoolOption("", "mdns_verbose_logs"); ok || v {
+		t.Errorf(`haBoolOption("", …) = (%v, %v), want (false, false)`, v, ok)
+	}
+}
+
+// A missing options file is the "not running under the Supervisor" case and must
+// be silent, exactly like haLanPort.
+func TestHABoolOptionMissingFileSilent(t *testing.T) {
+	var v, ok bool
+	out := captureWarn(t, func() {
+		v, ok = haBoolOption(filepath.Join(t.TempDir(), "absent.json"), "mdns_verbose_logs")
+	})
+	if ok || v {
+		t.Errorf("haBoolOption(absent) = (%v, %v), want (false, false)", v, ok)
+	}
+	if strings.Contains(out, "WARN") {
+		t.Errorf("a missing options file must be silent; logged: %q", out)
+	}
+}
+
+func TestEnvBool(t *testing.T) {
+	tests := []struct {
+		val     string
+		wantVal bool
+		wantSet bool
+	}{
+		{"1", true, true},
+		{"true", true, true},
+		{"TRUE", true, true},
+		{"yes", true, true},
+		{"on", true, true},
+		{"0", false, true},
+		{"false", false, true},
+		{"nonsense", false, true}, // any explicit value that isn't truthy is an explicit off
+		{"", false, false},        // empty == unset → fall through
+	}
+	for _, tc := range tests {
+		t.Run("val="+tc.val, func(t *testing.T) {
+			t.Setenv("MDNS_VERBOSE_LOGS", tc.val)
+			val, set := envBool("MDNS_VERBOSE_LOGS")
+			if val != tc.wantVal || set != tc.wantSet {
+				t.Errorf("envBool(%q) = (%v, %v), want (%v, %v)", tc.val, val, set, tc.wantVal, tc.wantSet)
+			}
+		})
+	}
+}
+
+func TestResolveMDNSVerbose(t *testing.T) {
+	// An explicit env var always wins over the HA option — including forcing off.
+	t.Run("env on wins over option", func(t *testing.T) {
+		t.Setenv("MDNS_VERBOSE_LOGS", "1")
+		if !resolveMDNSVerbose(writeOptions(t, `{"mdns_verbose_logs": false}`)) {
+			t.Error("MDNS_VERBOSE_LOGS=1 must win over the HA option")
+		}
+	})
+	t.Run("env off wins over option", func(t *testing.T) {
+		t.Setenv("MDNS_VERBOSE_LOGS", "0")
+		if resolveMDNSVerbose(writeOptions(t, `{"mdns_verbose_logs": true}`)) {
+			t.Error("MDNS_VERBOSE_LOGS=0 must win over the HA option")
+		}
+	})
+	// With no env, the HA option applies.
+	t.Run("HA option applied", func(t *testing.T) {
+		t.Setenv("MDNS_VERBOSE_LOGS", "")
+		if !resolveMDNSVerbose(writeOptions(t, `{"mdns_verbose_logs": true}`)) {
+			t.Error("with no env var, the HA mdns_verbose_logs option must apply")
+		}
+	})
+	// Default is off: no env, no file.
+	t.Run("default off", func(t *testing.T) {
+		t.Setenv("MDNS_VERBOSE_LOGS", "")
+		if resolveMDNSVerbose("") {
+			t.Error("default must be off (no env var, no HA option)")
+		}
+	})
+}

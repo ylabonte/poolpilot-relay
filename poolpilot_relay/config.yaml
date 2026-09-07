@@ -25,13 +25,21 @@ arch:
 host_network: true
 boot: auto
 startup: application
-# The one user-facing setting: the LAN port the pinned HTTPS pairing API binds
-# and advertises over mDNS. A phone that pairs afterwards picks the port up from
-# the SRV record; an already-paired phone keeps the port it paired on (the app
-# does not re-resolve it), so set this BEFORE pairing. Change it only if another
-# app already holds the default 8443 on the host network. The Supervisor writes
-# this to /data/options.json; the agent reads it via HA_OPTIONS (see the Dockerfile).
+# User-facing settings. The Supervisor writes these to /data/options.json; the
+# agent reads them via HA_OPTIONS (see the Dockerfile).
+#
+# lan_port: the LAN port the pinned HTTPS pairing API binds and advertises over
+# mDNS. A phone that pairs afterwards picks the port up from the SRV record; an
+# already-paired phone keeps the port it paired on (the app does not re-resolve
+# it), so set this BEFORE pairing. Change it only if another app already holds
+# the default 8443 on the host network.
+#
+# mdns_verbose_logs: off by default. The mDNS library logs harmless RFC 6762
+# "sanitize" notices on every announce; we suppress them so the log stays clean.
+# Turn this on only when debugging discovery — then the extra lines come back.
 options:
   lan_port: 8443
+  mdns_verbose_logs: false
 schema:
   lan_port: port
+  mdns_verbose_logs: bool

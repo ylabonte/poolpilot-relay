@@ -21,6 +21,22 @@ logs separately:
 journalctl -u poolpilot-relay-updater
 ```
 
+## Repeated mDNS RFC6762 log lines
+
+If you see lines like this repeat on every start:
+
+```
+INFO … mdns.go:475: dnssd: In both multicast query and multicast response messages, the Recursion Available bit MUST be zero on transmission. (RFC6762 18.7)
+```
+
+that's **normal and harmless** — nothing is broken. They come from the discovery
+library the relay uses to advertise itself over mDNS: before sending each packet
+it clears a header flag that RFC 6762 requires to be zero and logs a note. The
+packet that actually goes out is correct, and discovery works. Newer relays
+suppress these by default; if you want them back (to debug discovery), set
+`MDNS_VERBOSE_LOGS=1` in the config, or enable **Additional mDNS logs** on the
+Home Assistant app's Configuration tab.
+
 ## The app can't reach the relay
 
 1. **Is it running?** `systemctl status poolpilot-relay` should show

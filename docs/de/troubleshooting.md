@@ -21,6 +21,23 @@ loggt separat:
 journalctl -u poolpilot-relay-updater
 ```
 
+## Wiederkehrende mDNS-RFC6762-Logzeilen
+
+Wenn bei jedem Start Zeilen wie diese auftauchen:
+
+```
+INFO … mdns.go:475: dnssd: In both multicast query and multicast response messages, the Recursion Available bit MUST be zero on transmission. (RFC6762 18.7)
+```
+
+ist das **normal und harmlos** – es ist nichts kaputt. Sie kommen aus der
+Discovery-Bibliothek, mit der sich das Relay per mDNS ankündigt: Vor dem Senden
+jedes Pakets setzt sie ein Header-Flag zurück, das RFC 6762 auf null verlangt,
+und protokolliert einen Hinweis. Das tatsächlich gesendete Paket ist korrekt, und
+die Discovery funktioniert. Neuere Relays blenden diese Zeilen standardmäßig aus;
+wenn du sie zurückhaben willst (zum Debuggen der Discovery), setze
+`MDNS_VERBOSE_LOGS=1` in der Konfiguration oder aktiviere **Zusätzliche
+mDNS-Logs** auf dem Konfigurations-Tab der Home-Assistant-App.
+
 ## Die App erreicht das Relay nicht
 
 1. **Läuft es?** `systemctl status poolpilot-relay` sollte `active (running)`

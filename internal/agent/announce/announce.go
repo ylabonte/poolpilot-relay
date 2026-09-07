@@ -13,10 +13,27 @@ import (
 	"sync"
 
 	"github.com/brutella/dnssd"
+	dnssdlog "github.com/brutella/dnssd/log"
 )
 
 // ServiceType is the registered DNS-SD service type.
 const ServiceType = "_poolpilot-relay._tcp"
+
+// SetVerboseLogging toggles the dnssd library's own INFO logger. That logger is
+// enabled by default and chatters RFC 6762 "sanitize" notices — e.g. "…the
+// Recursion Available bit MUST be zero on transmission (RFC6762 18.7)" — to
+// stdout on every announce burst. The messages are harmless (the library clears
+// the flag and sends a compliant packet), so we suppress them by default and let
+// operators opt back in via the Home Assistant `mdns_verbose_logs` option or the
+// MDNS_VERBOSE_LOGS env var. It mutates a process-global logger, so call it once
+// at startup, before Run.
+func SetVerboseLogging(verbose bool) {
+	if verbose {
+		dnssdlog.Info.Enable()
+	} else {
+		dnssdlog.Info.Disable()
+	}
+}
 
 // Config describes the announcement.
 type Config struct {

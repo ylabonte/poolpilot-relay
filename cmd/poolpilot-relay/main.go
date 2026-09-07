@@ -19,6 +19,9 @@
 //	                 every controller's real address
 //	POLL_INTERVAL    controller poll cadence, Go duration (default 60s; e2e: 1s)
 //	MDNS_DISABLED    "1" disables the mDNS announcer (docker/e2e)
+//	MDNS_VERBOSE_LOGS "1" re-enables the dnssd library's own INFO logging (the
+//	                 RFC 6762 sanitize notices), which is suppressed by default;
+//	                 the HA app exposes this as the `mdns_verbose_logs` option
 //	FRPS_AUTH_TOKEN  fallback frps transport token when the redeem response
 //	                 does not carry one (dev/e2e compose)
 //	PAIR_URL_BASE    Universal Link host for `show-pairing` (default
@@ -207,6 +210,10 @@ func run() error {
 	// already uses for its loopback frp proxies.
 	lanListen := resolveLanListen(os.Getenv("HA_OPTIONS"),
 		lanPort(lanapi.TunnelListen()), lanPort(ctrlfilter.Listen()))
+	// Quiet the dnssd library's own INFO chatter (harmless RFC 6762 sanitize
+	// notices) by default; MDNS_VERBOSE_LOGS / the HA `mdns_verbose_logs` option
+	// re-enables it. Set once, before the announcer starts.
+	announce.SetVerboseLogging(resolveMDNSVerbose(os.Getenv("HA_OPTIONS")))
 	announcer := announce.New(announce.Config{
 		AgentID:     st.AgentID,
 		Fingerprint: fingerprint,

@@ -1,0 +1,15 @@
+# Home Assistant renders these labels/descriptions on the app's Configuration
+# tab, keyed by the option names in config.yaml.
+configuration:
+  lan_port:
+    name: LAN port
+    description: >-
+      Port the relay serves the pinned HTTPS pairing API on and advertises over
+      mDNS. Change it only if another app already holds 8443 on the host network,
+      and set it before pairing — an already-paired phone keeps the old port.
+  mdns_verbose_logs:
+    name: Additional mDNS logs
+    description: >-
+      Off by default. The mDNS library prints harmless RFC 6762 notices on every
+      announce; these are hidden to keep the log clean. Turn this on only to
+      debug discovery problems, then the extra lines reappear.
