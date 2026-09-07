@@ -488,11 +488,13 @@ func stubDriver(t *testing.T, drv driver.Driver) {
 // Finding #5: the ControlConfigReader wiring. The poller must type-assert the
 // driver for driver.ControlConfigReader, fetch its control config, stash it on
 // the snapshot, and hand it to Evaluate — so push bands come from the controller
-// rather than the parity defaults. The ORP reading (830) and control here are
-// chosen where the two DISAGREE: controller-derived → bad (past the 820 limit),
-// parity default → warn (< 850). A single tick must therefore emit exactly one
-// "bad" enter alert; deleting `snap.Control = control` in the poller would make
-// Evaluate see nil control, classify 830 as warn, and emit nothing — failing.
+// rather than nothing. The ORP reading (830) and control here are chosen so the
+// controller-derived band grades it bad (past the 820 limit) — a value the old
+// default band called warn (< 850), and which now, with no controller band,
+// grades neutral (no hardcoded fallback, per the app's D-no-fallback decision).
+// A single tick must therefore emit
+// exactly one "bad" enter alert; deleting `snap.Control = control` in the poller
+// would make Evaluate see nil control, grade 830 neutral, and emit nothing — failing.
 func TestTickUsesControllerDerivedBands(t *testing.T) {
 	control := map[string]measure.ControlConfig{bands.TypeORP: {Target: 700, Min: 600, Max: 820}}
 	stubDriver(t, fakeDriver{
@@ -537,8 +539,8 @@ func TestTickUsesControllerDerivedBands(t *testing.T) {
 	if snap := p.Snapshot("g1"); snap.Control[bands.TypeORP] != control[bands.TypeORP] {
 		t.Fatalf("controller control not stashed on snapshot: %+v", snap.Control)
 	}
-	// And Evaluate used it: 830 is bad under the controller band (parity default
-	// would be warn, which this rule does not notify).
+	// And Evaluate used it: 830 is bad under the controller band (without it the
+	// reading would grade neutral — no hardcoded fallback — so no bad alert).
 	if len(alerts) != 1 || alerts[0].Transition != wire.TransitionEnter ||
 		alerts[0].Severity != "bad" || alerts[0].MeasurementType != bands.TypeORP {
 		t.Fatalf("want one controller-band bad enter alert, got %+v", alerts)

@@ -10,11 +10,6 @@ import (
 )
 
 type parityFixture struct {
-	Severity []struct {
-		Scale    string  `json:"scale"`
-		Input    float64 `json:"input"`
-		Expected string  `json:"expected"`
-	} `json:"severity"`
 	MeasurementType []struct {
 		Unit      string  `json:"unit"`
 		LabelHint *string `json:"labelHint"`
@@ -41,22 +36,13 @@ func loadParity(t *testing.T) parityFixture {
 	return f
 }
 
-func TestSeverityMatchesParityFixture(t *testing.T) {
-	f := loadParity(t)
-	if len(f.Severity) == 0 {
-		t.Fatal("parity fixture has no severity cases")
-	}
-	for _, c := range f.Severity {
-		cfg, ok := Defaults[c.Scale]
-		if !ok {
-			t.Fatalf("severity case references unknown scale %q", c.Scale)
-		}
-		got := cfg.Banded().SeverityAt(c.Input)
-		if string(got) != c.Expected {
-			t.Errorf("%s @ %v: got %q, want %q", c.Scale, c.Input, got, c.Expected)
-		}
-	}
-}
+// Severity is no longer pinned here: the app dropped MeasurementBands as a
+// severity source (the app's D-no-fallback decision) and moved the severity
+// contract to the app-side control-band-parity.json (not vendored here), so this
+// fixture carries no severity
+// array and the relay's bands.Defaults is no longer a severity source either.
+// What remains pinned is the unit/label → type classification and per-type
+// precision.
 
 func TestMeasurementTypeMatchesParityFixture(t *testing.T) {
 	f := loadParity(t)

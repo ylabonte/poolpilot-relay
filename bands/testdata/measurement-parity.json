@@ -1,36 +1,5 @@
 {
-  "_comment": "SINGLE SOURCE OF TRUTH for the cross-platform MeasurementBands<->ValueScale parity contract (CLAUDE.md tripwire / docs/ARCHITECTURE.md#cross-platform-parity-contracts). Asserted by: shared/core jvmTest (Kotlin, severity+type+digits), apps/android/ui-common test (Android, format only -- type+digits ride the shared Kotlin MeasurementBands, covered by the jvmTest above), apps/ios/UICommon Tests (Swift, all). Changing a band threshold or precision rule requires editing this file AND the matching platform code, or one side's test fails. Do not duplicate this file -- the Gradle tests read it via a test-resources srcDir and the Swift test reads it via a #filePath-relative path.",
-  "severity": [
-    { "scale": "ph", "input": 6.0, "expected": "bad" },
-    { "scale": "ph", "input": 6.6, "expected": "warn" },
-    { "scale": "ph", "input": 6.9, "expected": "warn" },
-    { "scale": "ph", "input": 7.0, "expected": "ok" },
-    { "scale": "ph", "input": 7.2, "expected": "ok" },
-    { "scale": "ph", "input": 7.4, "expected": "warn" },
-    { "scale": "ph", "input": 7.7, "expected": "warn" },
-    { "scale": "ph", "input": 7.8, "expected": "bad" },
-    { "scale": "ph", "input": 8.5, "expected": "bad" },
-
-    { "scale": "orp_mv", "input": 500.0, "expected": "bad" },
-    { "scale": "orp_mv", "input": 600.0, "expected": "warn" },
-    { "scale": "orp_mv", "input": 640.0, "expected": "warn" },
-    { "scale": "orp_mv", "input": 650.0, "expected": "ok" },
-    { "scale": "orp_mv", "input": 725.0, "expected": "ok" },
-    { "scale": "orp_mv", "input": 800.0, "expected": "warn" },
-    { "scale": "orp_mv", "input": 840.0, "expected": "warn" },
-    { "scale": "orp_mv", "input": 850.0, "expected": "bad" },
-    { "scale": "orp_mv", "input": 1000.0, "expected": "bad" },
-
-    { "scale": "chlorine_mg_l", "input": 0.1, "expected": "bad" },
-    { "scale": "chlorine_mg_l", "input": 0.2, "expected": "warn" },
-    { "scale": "chlorine_mg_l", "input": 0.3, "expected": "warn" },
-    { "scale": "chlorine_mg_l", "input": 0.4, "expected": "ok" },
-    { "scale": "chlorine_mg_l", "input": 1.0, "expected": "ok" },
-    { "scale": "chlorine_mg_l", "input": 1.5, "expected": "warn" },
-    { "scale": "chlorine_mg_l", "input": 2.0, "expected": "warn" },
-    { "scale": "chlorine_mg_l", "input": 2.5, "expected": "bad" },
-    { "scale": "chlorine_mg_l", "input": 5.0, "expected": "bad" }
-  ],
+  "_comment": "SINGLE SOURCE OF TRUTH for the cross-platform MeasurementBands<->ValueScale parity contract (unit/label -> measurement-type key, per-type precision defaults, value formatting). Severity is NOT part of this file anymore: it derives from the controller's control band, pinned by control-band-parity.json. Asserted by: shared/core jvmTest (Kotlin, type+digits), apps/android/ui-common test (Android, format only), apps/ios/UICommon Tests (Swift, all). Do not duplicate this file -- the Gradle tests read it via a test-resources srcDir and the Swift test reads it via a #filePath-relative path.",
   "measurementType": [
     { "unit": "pH", "labelHint": null, "expected": "ph" },
     { "unit": "mV", "labelHint": null, "expected": "orp_mv" },

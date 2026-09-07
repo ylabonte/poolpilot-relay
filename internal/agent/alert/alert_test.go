@@ -19,6 +19,14 @@ var t0 = time.Date(2026, 7, 4, 10, 0, 0, 0, time.UTC)
 
 func tick(n int) time.Time { return t0.Add(time.Duration(n) * time.Minute) }
 
+// phControl is a controller control config for pH that derives EXACTLY the old
+// pH parity band {6.6, 7.0, 7.4, 7.8} (Target 7.2 ± the default tolerance 0.2,
+// limits 6.6/7.8). The state-machine tests feed it so their severity stream is
+// unchanged now that the hardcoded-band fallback is gone (the app's
+// D-no-fallback decision): the band comes from a real control config, the way
+// a live controller supplies it.
+var phControl = map[string]measure.ControlConfig{bands.TypePH: {Target: 7.2, Min: 6.6, Max: 7.8}}
+
 func phRule() wire.AlertRule {
 	return wire.AlertRule{
 		ID: "r-ph", Kind: wire.RuleKindMeasurementBand, Enabled: true, Source: "default",
@@ -34,7 +42,7 @@ func phReading(v float64) []measure.Reading {
 // poll runs one Evaluate step and returns the emitted alerts.
 func poll(t *testing.T, rules []wire.AlertRule, states map[string]*RuleState, v float64, n int) []wire.AlertRequest {
 	t.Helper()
-	return Evaluate(rules, states, phReading(v), nil, guid, tick(n))
+	return Evaluate(rules, states, phReading(v), phControl, guid, tick(n))
 }
 
 func TestSeedDefaults(t *testing.T) {
@@ -317,6 +325,57 @@ func TestCooldownRenotify(t *testing.T) {
 	}
 }
 
+// TestRulePausesAndResumesWhenBandDisappears pins the blocking review finding
+// on the no-fallback change: once a rule's measurement loses its live control
+// band (effectiveBands reports ok=false — no app override, and the controller
+// no longer supplies a usable control config for this type), Evaluate PAUSES
+// the rule rather than treating the missing band as a recovery. An
+// already-notified "bad" stays latched exactly as committed — no renotify, no
+// recover — until a real band returns, mirroring EvaluateStale's "unknown is
+// not recovered" reasoning (see the doc comment on Evaluate). This is
+// deliberate: a synthetic ok/neutral verdict fed through stepBanded instead
+// would flap a false recovery (and later a false re-entry) every time a
+// config fetch drops out, e.g. the ProCon.IP's fail-soft per-channel INI reads.
+func TestRulePausesAndResumesWhenBandDisappears(t *testing.T) {
+	rules := []wire.AlertRule{phRule()}
+	states := map[string]*RuleState{}
+
+	// Drive the rule to a notified "bad" the normal way, with a live pH band.
+	for n := 1; n <= 3; n++ {
+		Evaluate(rules, states, phReading(7.9), phControl, guid, tick(n))
+	}
+	latched := *states["r-ph"]
+	if !latched.Notified || latched.LastSeverity != "bad" {
+		t.Fatalf("setup: rule must be notified bad before the band disappears, got %+v", latched)
+	}
+
+	// The controller stops reporting a live pH band (e.g. a config fetch that
+	// fail-softs to an empty/partial map). Poll several times — well past the
+	// rule's 21600s (6h) cooldown — while the reading stays "bad" (7.9): the
+	// rule must emit NOTHING and RuleState must stay exactly latched, because
+	// effectiveBands reports ok=false and Evaluate `continue`s over the rule
+	// entirely without ever reaching stepBanded/renotifyIfDue.
+	noControl := map[string]measure.ControlConfig{}
+	for _, n := range []int{400, 800, 1200} {
+		if got := Evaluate(rules, states, phReading(7.9), noControl, guid, tick(n)); len(got) != 0 {
+			t.Fatalf("poll at tick %d with no live band must emit nothing (paused), got %+v", n, got)
+		}
+		if got := *states["r-ph"]; got != latched {
+			t.Fatalf("poll at tick %d with no live band must not mutate RuleState, got %+v want %+v", n, got, latched)
+		}
+	}
+
+	// The controller's live band returns. The rule resumes exactly where it
+	// left off: LastNotifiedAt is still from the original notify (tick(3)), so
+	// the still-"bad" reading is now well past cooldown and renotifies —
+	// proving evaluation picked back up rather than staying paused forever or
+	// having silently reset while the band was missing.
+	got := Evaluate(rules, states, phReading(7.9), phControl, guid, tick(1201))
+	if len(got) != 1 || got[0].Transition != wire.TransitionRenotify || got[0].Severity != "bad" {
+		t.Fatalf("rule must resume once the band returns, got %+v", got)
+	}
+}
+
 func TestWarnNotNotifiedByDefault(t *testing.T) {
 	rules := []wire.AlertRule{phRule()} // notify_severities = ["bad"]
 	states := map[string]*RuleState{}
@@ -505,11 +564,11 @@ func TestRebootSafetyRoundTrip(t *testing.T) {
 
 	// Still bad right after reboot: must NOT re-enter or renotify (cooldown
 	// timestamp survived the round trip).
-	if got := Evaluate(rules, restored, phReading(7.9), nil, guid, tick(10)); len(got) != 0 {
+	if got := Evaluate(rules, restored, phReading(7.9), phControl, guid, tick(10)); len(got) != 0 {
 		t.Fatalf("reboot re-notified early: %+v", got)
 	}
 	// Cooldown continuity: renotify fires relative to the pre-reboot notify.
-	got := Evaluate(rules, restored, phReading(7.9), nil, guid, tick(3).Add(21601*time.Second))
+	got := Evaluate(rules, restored, phReading(7.9), phControl, guid, tick(3).Add(21601*time.Second))
 	if len(got) != 1 || got[0].Transition != wire.TransitionRenotify {
 		t.Fatalf("cooldown lost across reboot: %+v", got)
 	}
@@ -524,7 +583,7 @@ func TestRebootSafetyRoundTrip(t *testing.T) {
 	raw2, _ := json.Marshal(states2)
 	restored2 := map[string]*RuleState{}
 	_ = json.Unmarshal(raw2, &restored2)
-	got = Evaluate(rules, restored2, phReading(7.2), nil, guid, tick(6))
+	got = Evaluate(rules, restored2, phReading(7.2), phControl, guid, tick(6))
 	if len(got) != 1 || got[0].Transition != wire.TransitionRecover {
 		t.Fatalf("pending debounce count lost across reboot: %+v", got)
 	}
@@ -574,11 +633,15 @@ func TestEffectiveSeverity(t *testing.T) {
 	override.Bands = &bands.BandsConfig{Min: 6.0, OkMin: 6.5, OkMax: 8.5, Max: 9.0}
 	r := measure.Reading{Type: bands.TypePH, Value: 7.9}
 
+	// An explicit app override band grades the reading.
 	if sev, ok := EffectiveSeverity([]wire.AlertRule{override}, nil, r); !ok || sev != "ok" {
 		t.Errorf("override severity = %q, %v", sev, ok)
 	}
-	if sev, ok := EffectiveSeverity(nil, nil, r); !ok || sev != "bad" {
-		t.Errorf("default severity = %q, %v", sev, ok)
+	// No rule and no controller band → neutral: the hardcoded-band fallback is
+	// gone (the app's D-no-fallback decision). This used to return the parity
+	// default "bad".
+	if sev, ok := EffectiveSeverity(nil, nil, r); ok {
+		t.Errorf("no-band severity = %q, %v; want neutral (no hardcoded fallback)", sev, ok)
 	}
 	if _, ok := EffectiveSeverity(nil, nil, measure.Reading{Type: "generic", Value: 1}); ok {
 		t.Error("unbanded type must report no severity")
@@ -587,17 +650,19 @@ func TestEffectiveSeverity(t *testing.T) {
 
 // Regression for #40: EffectiveSeverity must skip a disabled rule exactly like
 // Evaluate does, so /v1/status cannot colour from a rule an operator turned
-// off. A disabled rule's own override band would call 7.9 "ok"; since the
-// rule must be skipped, the reading falls through to the parity defaults,
-// which call 7.9 "bad" (mirrors TestEffectiveSeverity's default case).
+// off. A disabled rule's own override band would call 7.9 "ok"; since the rule
+// must be skipped and nothing else governs — the hardcoded-band fallback is
+// gone (the app's D-no-fallback decision) — the reading is neutral, NOT the
+// disabled rule's verdict. (If the disabled rule were wrongly consulted this
+// would return "ok",ok — the guard below still catches the #40 regression.)
 func TestEffectiveSeverityIgnoresDisabledRule(t *testing.T) {
 	disabled := phRule()
 	disabled.Enabled = false
 	disabled.Bands = &bands.BandsConfig{Min: 6.0, OkMin: 6.5, OkMax: 8.5, Max: 9.0}
 	r := measure.Reading{Type: bands.TypePH, Value: 7.9}
 
-	if sev, ok := EffectiveSeverity([]wire.AlertRule{disabled}, nil, r); !ok || sev != "bad" {
-		t.Errorf("disabled-rule severity = %q, %v; want bad (defaults, disabled rule skipped)", sev, ok)
+	if sev, ok := EffectiveSeverity([]wire.AlertRule{disabled}, nil, r); ok {
+		t.Errorf("disabled-rule severity = %q, %v; want neutral (disabled rule skipped, no fallback)", sev, ok)
 	}
 }
 
@@ -608,13 +673,9 @@ func TestEffectiveSeverityIgnoresDisabledRule(t *testing.T) {
 // must match Evaluate and use the enabled rule, not the disabled one it
 // happens to encounter first.
 //
-// The three candidate verdicts for 7.9 (disabled rule's own band → "ok",
-// parity defaults → "bad", enabled rule's band → "warn") are chosen to be
-// pairwise distinct, so a passing test actually proves the enabled rule's
-// band was consulted — not merely that the disabled rule's own override was
-// skipped (an over-skip straight to the defaults would also satisfy a
-// "bad"-only assertion here, since the defaults happen to agree with what
-// the disabled rule's neighbour band would have said).
+// The two candidate verdicts for 7.9 (disabled rule's own band → "ok", enabled
+// rule's band → "warn") are distinct, so a passing "warn" proves the enabled
+// rule's band was consulted rather than the disabled one it encounters first.
 func TestEffectiveSeverityFallsThroughDisabledRuleToEnabledOne(t *testing.T) {
 	disabled := phRule()
 	disabled.ID = "disabled-ph"
@@ -643,7 +704,8 @@ func TestBandsFromControl(t *testing.T) {
 	if b, ok := bandsFromControl(cc, 1000); !ok || b.OkMin != 200 || b.OkMax != 900 {
 		t.Errorf("wide-tolerance clamp = %+v,%v", b, ok)
 	}
-	// Unusable configs report false so the caller falls back to defaults.
+	// Unusable configs report false so the caller stays neutral (no fallback,
+	// per the app's D-no-fallback decision).
 	if _, ok := bandsFromControl(measure.ControlConfig{Min: 900, Max: 200}, 75); ok {
 		t.Error("inverted limits must not derive a band")
 	}
@@ -662,6 +724,44 @@ func TestBandsFromControl(t *testing.T) {
 	}
 	if _, ok := bandsFromControl(measure.ControlConfig{Target: 700, Min: 700, Max: 700}, 75); ok {
 		t.Error("Min == Max (empty range) must not derive a collapsed band")
+	}
+}
+
+func TestBandsFromControlCorridor(t *testing.T) {
+	// A both-directions pH pool doses between two setpoints (7.0 and 7.2). The OK
+	// zone must span the whole [7.0, 7.2] corridor — NOT mean(7.1) ± tolerance —
+	// matching the apps' ideal-band-as-OK-band semantics (issue #31).
+	cc := measure.ControlConfig{Target: 7.1, Min: 6.6, Max: 7.8, OkLow: 7.0, OkHigh: 7.2, HasOkZone: true}
+	got, ok := bandsFromControl(cc, 0.05) // tolerance is ignored for a corridor
+	want := bands.BandsConfig{Min: 6.6, OkMin: 7.0, OkMax: 7.2, Max: 7.8}
+	if !ok || got != want {
+		t.Fatalf("corridor band = %+v,%v want %+v", got, ok, want)
+	}
+	// The corridor is wider than mean±tol would have been ([7.05, 7.15]).
+	if got.OkMin >= 7.05 || got.OkMax <= 7.15 {
+		t.Errorf("corridor OK zone %+v is not wider than mean±tol", got)
+	}
+	// A corridor derives a band even with zero tolerance (unlike a single setpoint).
+	if _, ok := bandsFromControl(cc, 0); !ok {
+		t.Error("corridor must derive a band regardless of tolerance")
+	}
+	// The tolerance really is ignored for a corridor — not unioned into the OK
+	// zone. A tolerance far WIDER than the corridor itself (1000 vs. a 0.2-wide
+	// [7.0, 7.2] window) would still expand OkMin/OkMax if bandsFromControl ever
+	// mixed the two, so this catches a "corridor ∪ tol" regression the zero-
+	// tolerance check above cannot.
+	if b, ok := bandsFromControl(cc, 1000); !ok || b.OkMin != 7.0 || b.OkMax != 7.2 {
+		t.Errorf("corridor with wide tolerance = %+v,%v want OkMin 7.0 OkMax 7.2 (tolerance must stay ignored)", b, ok)
+	}
+	// The corridor clamps to the warn limits, same as the single-setpoint path.
+	clamped := measure.ControlConfig{Target: 7.2, Min: 7.1, Max: 7.15, OkLow: 7.0, OkHigh: 7.2, HasOkZone: true}
+	if b, ok := bandsFromControl(clamped, 0); !ok || b.OkMin != 7.1 || b.OkMax != 7.15 {
+		t.Errorf("corridor clamp = %+v,%v want OkMin 7.1 OkMax 7.15", b, ok)
+	}
+	// A corridor entirely outside the limits degenerates → report no band (there
+	// is no default-band fallback to fall back to).
+	if _, ok := bandsFromControl(measure.ControlConfig{Min: 6.6, Max: 7.0, OkLow: 7.2, OkHigh: 7.4, HasOkZone: true}, 0); ok {
+		t.Error("corridor fully outside the limits must not derive a band")
 	}
 }
 
@@ -690,16 +790,20 @@ func TestEffectiveBandsPrecedence(t *testing.T) {
 	if got, _ := effectiveBands(override, control); got != *override.Bands {
 		t.Errorf("explicit override must win, got %+v", got)
 	}
-	// No control for the type → parity defaults are the last resort.
-	if got, ok := effectiveBands(rule, nil); !ok || got != bands.Defaults[bands.TypeORP] {
-		t.Errorf("fallback to defaults = %+v,%v", got, ok)
+	// No override and no controller config → no band (the hardcoded-band fallback
+	// was removed by the app's D-no-fallback decision), so the caller stays
+	// neutral.
+	if _, ok := effectiveBands(rule, nil); ok {
+		t.Error("effectiveBands must report no band without an override or a controller config")
 	}
 }
 
 func TestEffectiveSeverityUsesControllerBands(t *testing.T) {
 	// Controller ORP setpoint 700, limits 600/820, tolerance 75 → ok 625..775.
-	// The parity default is {600,650,800,850}; the values below are chosen where
-	// the two disagree, so a correct verdict proves the controller band is used.
+	// bands.Defaults[orp_mv] is still {600,650,800,850} (an inert historical
+	// value now, never consulted as a fallback); the values below are chosen
+	// where the two disagree, so a correct verdict proves the controller band
+	// is used.
 	control := map[string]measure.ControlConfig{bands.TypeORP: {Target: 700, Min: 600, Max: 820}}
 	rule := wire.AlertRule{ID: "orp", Kind: wire.RuleKindMeasurementBand, Enabled: true, MeasurementType: bands.TypeORP, OkTolerance: 75}
 	rules := []wire.AlertRule{rule}

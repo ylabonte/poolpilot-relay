@@ -186,15 +186,16 @@ func (p *Poller) pollController(ctx context.Context, ctrl state.Controller) int 
 	}
 	// Fetch the controller's live regulation config (setpoint + warn limits)
 	// when the driver exposes it, so the alert engine derives push bands from
-	// the controller instead of hard-coded defaults. A config fetch that ERRORS
-	// (cerr != nil) — the ProCon.IP's weak CPU can drop a rapid INI read, the
-	// exact weakness the 250ms spacing guards against — must NOT wipe the
-	// last-known-good bands to parity defaults for a single poll: retain the
+	// the controller. Without a controller band there is no severity (neutral) —
+	// the hardcoded-band fallback was removed (the app's D-no-fallback decision). A config
+	// fetch that ERRORS (cerr != nil) — the ProCon.IP's weak CPU can drop a rapid
+	// INI read, the exact weakness the 250ms spacing guards against — must NOT
+	// wipe the last-known-good bands to neutral for a single poll: retain the
 	// previous snapshot's Control instead. A non-error result (even an empty
 	// map) DOES replace it — it reflects the channels successfully read THIS
 	// poll (per-channel drops are fail-soft and logged in fetchChannelControl),
-	// which is the freshest available truth; a per-type miss then falls back to
-	// that type's default band.
+	// which is the freshest available truth; a per-type miss then grades that
+	// type neutral.
 	var control map[string]measure.ControlConfig
 	retainControl := false
 	if err == nil {

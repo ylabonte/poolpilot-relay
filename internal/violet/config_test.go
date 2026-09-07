@@ -90,8 +90,8 @@ func TestFetchControlConfigFromSeed(t *testing.T) {
 	assertControl(t, "ORP", orp, 790, 550, 900)
 
 	// Chlorine: the demo box is Redox-regulated, so /getConfig never echoes
-	// DOSAGE_chlorine_setpoint_cl — chlorine must fall back to its default band
-	// (absent from the map), not fabricate one from warn limits alone.
+	// DOSAGE_chlorine_setpoint_cl — chlorine is absent from the map (graded
+	// neutral by the alert engine), not fabricated from warn limits alone.
 	if _, ok := got[bands.TypeChlorine]; ok {
 		t.Errorf("chlorine control config: got one, want none (no setpoint_cl on a Redox pool)")
 	}
@@ -119,8 +119,11 @@ func TestFetchControlConfigDerivesChlorineWhenSetpointPresent(t *testing.T) {
 
 func TestFetchControlConfigMergesTwoActivePhChannels(t *testing.T) {
 	// A both-directions pool doses from pH- AND pH+ (both use=1). The merged band
-	// spans the widest warn window (min low, max high) and centres on the mean of
-	// the two setpoints.
+	// spans the widest warn window (min low, max high). The two distinct setpoints
+	// (7.0, 7.2) do NOT collapse to their mean: the pool regulates BETWEEN them, so
+	// the pair is kept as an explicit OK corridor [7.0, 7.2] (issue #31, exact
+	// parity with the apps' controlBandForMeasurement). Target stays the mean (7.1)
+	// for informational continuity but no longer drives the band.
 	body := []byte(`{
 		"DOSAGE_phminus_use":"1",
 		"DOSAGE_phminus_setpoint":"7.2",
@@ -137,7 +140,68 @@ func TestFetchControlConfigMergesTwoActivePhChannels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
-	assertControl(t, "pH", got[bands.TypePH], 7.1, 6.6, 7.8)
+	ph := got[bands.TypePH]
+	assertControl(t, "pH", ph, 7.1, 6.6, 7.8)
+	if !ph.HasOkZone {
+		t.Fatal("both-directions pool must carry an explicit OK corridor, not a single Target")
+	}
+	if !almostEqual(ph.OkLow, 7.0) || !almostEqual(ph.OkHigh, 7.2) {
+		t.Errorf("OK corridor = [%v, %v], want [7.0, 7.2] (the two setpoints, not mean±tol)", ph.OkLow, ph.OkHigh)
+	}
+}
+
+func TestFetchControlConfigIdenticalActiveSetpointsHaveNoCorridor(t *testing.T) {
+	// Two active channels sharing the SAME setpoint (7.2) are a degenerate case:
+	// minOf(setpoints) == maxOf(setpoints), so `hi > lo` is false and this relay
+	// falls back to Target ± tolerance (HasOkZone stays false, Target is still
+	// the mean — 7.2 either way) rather than an explicit corridor. This is a
+	// known, documented divergence from the apps (which land on a zero-width
+	// ideal band here and grade the whole warn window OK), tracked for the
+	// Plan B rollout — not a bug in the merge/corridor logic above.
+	body := []byte(`{
+		"DOSAGE_phminus_use":"1",
+		"DOSAGE_phminus_setpoint":"7.2",
+		"DOSAGE_phminus_limits_warnlow":"6.6",
+		"DOSAGE_phminus_limits_warnhigh":"7.8",
+		"DOSAGE_phplus_use":"1",
+		"DOSAGE_phplus_setpoint":"7.2",
+		"DOSAGE_phplus_limits_warnlow":"6.6",
+		"DOSAGE_phplus_limits_warnhigh":"7.8"
+	}`)
+	srv, _ := configServer(t, "", "", body)
+
+	got, err := (&Client{BaseURL: srv.URL}).FetchControlConfig(context.Background())
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	ph := got[bands.TypePH]
+	assertControl(t, "pH", ph, 7.2, 6.6, 7.8)
+	if ph.HasOkZone {
+		t.Errorf("identical active setpoints must not set an OK corridor, got [%v, %v]", ph.OkLow, ph.OkHigh)
+	}
+}
+
+func TestFetchControlConfigSingleSetpointHasNoCorridor(t *testing.T) {
+	// A single active dosing channel keeps the Target ± tolerance behaviour: no OK
+	// corridor is set, so the alert path derives the band from Target as before.
+	body := []byte(`{
+		"DOSAGE_phminus_use":"1",
+		"DOSAGE_phminus_setpoint":"7.2",
+		"DOSAGE_phminus_limits_warnlow":"6.8",
+		"DOSAGE_phminus_limits_warnhigh":"7.8",
+		"DOSAGE_phplus_use":"0"
+	}`)
+	srv, _ := configServer(t, "", "", body)
+
+	got, err := (&Client{BaseURL: srv.URL}).FetchControlConfig(context.Background())
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	ph := got[bands.TypePH]
+	assertControl(t, "pH", ph, 7.2, 6.8, 7.8)
+	if ph.HasOkZone {
+		t.Errorf("single-setpoint channel must not set an OK corridor, got [%v, %v]", ph.OkLow, ph.OkHigh)
+	}
 }
 
 func TestFetchControlConfigFallsBackToDefaultChannelWithoutUseFlags(t *testing.T) {
@@ -159,8 +223,9 @@ func TestFetchControlConfigFallsBackToDefaultChannelWithoutUseFlags(t *testing.T
 
 func TestFetchControlConfigOmitsIncompleteOrGarbledType(t *testing.T) {
 	// pH- has warn limits but NO setpoint (can't centre a band → omit); ORP's
-	// setpoint is non-numeric (→ omit). Neither type appears; the caller falls
-	// back to default bands for both.
+	// setpoint is non-numeric (→ omit). Neither type appears; the alert engine
+	// grades both neutral (no hardcoded-band fallback, per the app's
+	// D-no-fallback decision).
 	body := []byte(`{
 		"DOSAGE_phminus_use":"1",
 		"DOSAGE_phminus_limits_warnlow":"6.8",

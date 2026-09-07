@@ -221,6 +221,22 @@ func ValidateRules(rules []wire.AlertRule) error {
 // Evaluate runs every enabled measurement_band rule against one poll's
 // readings. It mutates states in place (creating entries as needed) and
 // returns the alerts to push. guid stamps ControllerGUID on the way out.
+//
+// A rule with NO effective band (effectiveBands reports ok=false — no app
+// override and the controller currently supplies no usable control config for
+// this type, per the app's D-no-fallback decision) is PAUSED for this poll: the
+// loop `continue`s without touching rs at all, so an already-notified "bad"
+// stays latched exactly as {LastSeverity: "bad", Notified: true} — no recover
+// is emitted — until a real band returns. This is deliberate, not an oversight:
+// "no band" is unknown, not "back to ok", the same reasoning EvaluateStale
+// already applies to lastSuccess.IsZero() ("unknown ≠ recovered"). Feeding a
+// synthetic neutral/ok verdict through stepBanded instead would flap a false
+// recovery every time a config fetch drops out — e.g. the ProCon.IP's fail-soft
+// per-channel INI reads (see driver.ControlConfigReader) — and then re-alert
+// once the band comes back, which is worse than staying silently latched. The
+// cost is that /v1/status can show a neutral measurement next to an active
+// "bad" alert for that same type while the band is missing;
+// TestRulePausesAndResumesWhenBandDisappears pins this state machine.
 func Evaluate(rules []wire.AlertRule, states map[string]*RuleState, readings []measure.Reading, control map[string]measure.ControlConfig, guid string, now time.Time) []wire.AlertRequest {
 	var out []wire.AlertRequest
 	for _, rule := range rules {
@@ -233,7 +249,7 @@ func Evaluate(rules []wire.AlertRule, states map[string]*RuleState, readings []m
 		}
 		cfg, ok := effectiveBands(rule, control)
 		if !ok {
-			continue
+			continue // no band this poll: pause (stay latched), do not recover — see doc comment above
 		}
 		observed := string(cfg.Banded().SeverityAt(reading.Value))
 		rs := ensureState(states, rule.ID)
@@ -364,8 +380,11 @@ func EvaluateStale(rules []wire.AlertRule, states map[string]*RuleState, lastSuc
 }
 
 // EffectiveSeverity classifies a reading through the same band precedence as
-// Evaluate (app override → controller-derived → parity defaults) — shared with
-// /v1/status measurement rendering so the status colour matches what would push.
+// Evaluate (app override → controller-derived band) — shared with /v1/status
+// measurement rendering so the status colour matches what would push. When no
+// enabled rule yields a real band it reports ok=false (neutral, no severity):
+// there is no hardcoded-band fallback (the app's D-no-fallback decision,
+// coherent with the apps, which dropped MeasurementBands as a severity source).
 func EffectiveSeverity(rules []wire.AlertRule, control map[string]measure.ControlConfig, r measure.Reading) (string, bool) {
 	for _, rule := range rules {
 		if rule.Kind == wire.RuleKindMeasurementBand && rule.Enabled && rule.MeasurementType == r.Type {
@@ -374,16 +393,18 @@ func EffectiveSeverity(rules []wire.AlertRule, control map[string]measure.Contro
 			}
 		}
 	}
-	if cfg, ok := bands.Defaults[r.Type]; ok {
-		return string(cfg.Banded().SeverityAt(r.Value)), true
-	}
 	return "", false
 }
 
 // effectiveBands resolves the band a rule evaluates against, in precedence
 // order: an explicit app override (rule.Bands) wins; else the controller's live
-// config derives min/max = its warn limits and ok = setpoint ± tolerance; else
-// the parity defaults are the last resort (controller config unavailable).
+// config derives min/max = its warn limits and the OK zone (setpoint ± tolerance,
+// or the dual-setpoint corridor). When neither is available it reports ok=false
+// so the caller stays neutral — there
+// is NO hardcoded-band severity fallback (the app's D-no-fallback decision): a
+// measurement with no real control band yields no severity, exactly as the apps
+// now render it. bands.Defaults survives only as the known-banded-type set, not
+// a source of severity.
 func effectiveBands(rule wire.AlertRule, control map[string]measure.ControlConfig) (bands.BandsConfig, bool) {
 	if rule.Bands != nil {
 		return *rule.Bands, true
@@ -393,8 +414,7 @@ func effectiveBands(rule wire.AlertRule, control map[string]measure.ControlConfi
 			return cfg, true
 		}
 	}
-	cfg, ok := bands.Defaults[rule.MeasurementType]
-	return cfg, ok
+	return bands.BandsConfig{}, false
 }
 
 // toleranceFor is the rule's OK tolerance, or the researched per-type default
@@ -408,23 +428,46 @@ func toleranceFor(rule wire.AlertRule) float64 {
 
 // bandsFromControl derives the bad/warn/ok/warn/bad band from a controller's
 // live config: min/max are the controller's own warn limits, and the OK zone is
-// setpoint ± tol clamped inside those limits. It returns false for an unusable
-// config (non-positive tolerance; inverted or EMPTY limits where Min >= Max; or
-// a setpoint so far outside the limits that the clamp degenerates) so the caller
-// falls back to defaults. Rejecting Min == Max matters because a parked/all-zero
-// channel ({0,0,0}) would otherwise pass bands.BandsConfig.Validate (monotonic
+// setpoint ± tol clamped inside those limits. A dual-setpoint config
+// (cc.HasOkZone — a both-directions pH−/pH+ pool that regulates BETWEEN two
+// targets) instead grades its explicit [OkLow, OkHigh] corridor as the OK zone,
+// clamped to the limits with the tolerance ignored — matching the apps'
+// ideal-band-as-OK-band semantics for that dual-setpoint pH−/pH+ corridor
+// (issue #31). This is exact parity only there: VIOLET chlorine's own ideal-band
+// keys (DOSAGE_chlorine_lowerval_cl / DOSAGE_chlorine_upperval_cl_day) are not read
+// yet, so a chlorine ControlConfig never sets HasOkZone today — HasOkZone is the
+// hook Plan B can reuse once it does.
+//
+// It returns false for an unusable config (single-setpoint with non-positive
+// tolerance; inverted or EMPTY limits where Min >= Max; or an OK zone so far
+// outside the limits that the clamp degenerates), and effectiveBands then
+// propagates that false straight through — there is no default-band fallback
+// (the app's D-no-fallback decision): the measurement simply grades neutral
+// (no severity).
+// Rejecting Min == Max matters because a parked/all-zero channel
+// ({0,0,0}) would otherwise pass bands.BandsConfig.Validate (monotonic
 // non-decreasing ALLOWS equality) as a collapsed band that classifies every
 // reading "bad" — perpetual alarm spam. Newly reachable since the TYPE gate was
 // dropped, so a disabled/parked channel now reaches here.
 func bandsFromControl(cc measure.ControlConfig, tol float64) (bands.BandsConfig, bool) {
-	if tol <= 0 || cc.Min >= cc.Max {
+	if cc.Min >= cc.Max {
 		return bands.BandsConfig{}, false
 	}
-	okMin := cc.Target - tol
+	var okMin, okMax float64
+	if cc.HasOkZone {
+		// Dual-setpoint corridor: the [OkLow, OkHigh] window IS the OK zone; the
+		// tolerance does not apply (the pool regulates between the two setpoints).
+		okMin, okMax = cc.OkLow, cc.OkHigh
+	} else {
+		// Single setpoint: OK = Target ± tolerance.
+		if tol <= 0 {
+			return bands.BandsConfig{}, false
+		}
+		okMin, okMax = cc.Target-tol, cc.Target+tol
+	}
 	if okMin < cc.Min {
 		okMin = cc.Min
 	}
-	okMax := cc.Target + tol
 	if okMax > cc.Max {
 		okMax = cc.Max
 	}
