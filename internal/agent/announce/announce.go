@@ -7,9 +7,12 @@
 package announce
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
+	"os"
 	"sync"
 
 	"github.com/brutella/dnssd"
@@ -19,20 +22,40 @@ import (
 // ServiceType is the registered DNS-SD service type.
 const ServiceType = "_poolpilot-relay._tcp"
 
-// SetVerboseLogging toggles the dnssd library's own INFO logger. That logger is
+// SetVerboseLogging controls the dnssd library's own INFO logger. That logger is
 // enabled by default and chatters RFC 6762 "sanitize" notices — e.g. "…the
 // Recursion Available bit MUST be zero on transmission (RFC6762 18.7)" — to
 // stdout on every announce burst. The messages are harmless (the library clears
-// the flag and sends a compliant packet), so we suppress them by default and let
+// the flag and sends a compliant packet), so we quiet them by default and let
 // operators opt back in via the Home Assistant `mdns_verbose_logs` option or the
-// MDNS_VERBOSE_LOGS env var. It mutates a process-global logger, so call it once
-// at startup, before Run.
+// MDNS_VERBOSE_LOGS env var.
+//
+// Off (the default) does NOT blanket-disable the logger: dnssd routes genuine
+// diagnostics through the same Info logger (resolve errors, netlink link-update
+// failures, "invalid source address"), and those are worth seeing even when the
+// noise is off. So instead of silencing Info wholesale we filter it — dropping
+// only the sanitize notices, which are exactly the Info lines carrying "RFC6762"
+// (every real diagnostic omits it), and passing everything else to stdout.
+//
+// It mutates a process-global logger, so call it once at startup, before Run.
 func SetVerboseLogging(verbose bool) {
 	if verbose {
-		dnssdlog.Info.Enable()
-	} else {
-		dnssdlog.Info.Disable()
+		dnssdlog.Info.Enable() // restore full stdout logging, notices included
+		return
 	}
+	dnssdlog.Info.SetOutput(rfc6762Filter{w: os.Stdout})
+}
+
+// rfc6762Filter forwards dnssd's formatted Info log lines to w but swallows the
+// harmless RFC 6762 sanitize notices. log.Logger emits one fully-formatted line
+// per Write, so a substring test per Write is line-accurate.
+type rfc6762Filter struct{ w io.Writer }
+
+func (f rfc6762Filter) Write(p []byte) (int, error) {
+	if bytes.Contains(p, []byte("RFC6762")) {
+		return len(p), nil // swallow the notice; report a full, error-free write
+	}
+	return f.w.Write(p)
 }
 
 // Config describes the announcement.
