@@ -50,6 +50,11 @@ should not need them on a normal home install, and changing them can stop the
 relay from working — only set them if you know why:
 
 `TUNNEL_LISTEN`, `CTRL_FILTER_LISTEN`, `STATE_PATH`, `MDNS_DISABLED`,
-`FRPS_AUTH_TOKEN`, `PAIR_URL_BASE`, `REPO_DL_BASE` — plus the container-only
-`RESTART_ON_RESET` and `HA_OPTIONS`, which the [Home Assistant app](home-assistant.md)
-image sets for you (leave them unset on a systemd install).
+`MDNS_VERBOSE_LOGS`, `FRPS_AUTH_TOKEN`, `PAIR_URL_BASE`, `REPO_DL_BASE` — plus the
+container-only `RESTART_ON_RESET` and `HA_OPTIONS`, which the
+[Home Assistant app](home-assistant.md) image sets for you (leave them unset on a
+systemd install).
+
+`MDNS_VERBOSE_LOGS=1` re-enables the discovery library's own INFO logging (see
+[Troubleshooting](troubleshooting.md#repeated-mdns-rfc6762-log-lines)); it is off
+by default.

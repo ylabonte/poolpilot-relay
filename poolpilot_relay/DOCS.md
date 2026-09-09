@@ -42,7 +42,7 @@ same things apply:
 
 ## Configuration
 
-One setting, on the app's **Configuration** tab:
+Two settings, on the app's **Configuration** tab:
 
 - **`lan_port`** (default **8443**) — the port the relay's pinned HTTPS pairing
   API binds on the host network. Change it only if another app already uses 8443
@@ -54,6 +54,11 @@ One setting, on the app's **Configuration** tab:
   an already-paired relay goes through recovery/invite, not a fresh pairing: the
   household **owner** re-pairs with the one-time recovery code (`show-recovery`),
   other phones via a new **invite**.
+- **Additional mDNS logs** (`mdns_verbose_logs`, default **off**) — the discovery
+  library prints harmless RFC 6762 notices (e.g. *"…the Recursion Available bit
+  MUST be zero on transmission (RFC6762 18.7)"*) on every announce; they are
+  hidden by default so the log stays readable. Turn this on only to debug
+  discovery, then the extra lines reappear.
 
 Everything else is fixed: the app talks to the PoolPilot cloud at
 `api.poolpilot.eu` and stores its identity on the app's own persistent volume.

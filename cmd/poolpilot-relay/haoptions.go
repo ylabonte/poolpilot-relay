@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/ylabonte/poolpilot-relay/internal/agent/lanapi"
 )
@@ -85,4 +86,72 @@ func haLanPort(path string) (int, bool) {
 		return 0, false
 	}
 	return opts.LanPort, true
+}
+
+// resolveMDNSVerbose decides whether the underlying dnssd library's own INFO
+// logging is on for this run. The default is OFF (the RFC 6762 sanitize notices
+// are benign noise — see announce.SetVerboseLogging). Precedence mirrors
+// resolveLanListen: an explicit MDNS_VERBOSE_LOGS env var (the systemd
+// EnvironmentFile knob) wins; otherwise the Home Assistant app's
+// `mdns_verbose_logs` option (read from haOptionsPath) applies; otherwise off.
+func resolveMDNSVerbose(haOptionsPath string) bool {
+	if v, ok := envBool("MDNS_VERBOSE_LOGS"); ok {
+		return v
+	}
+	if v, ok := haBoolOption(haOptionsPath, "mdns_verbose_logs"); ok {
+		return v
+	}
+	return false
+}
+
+// envBool reads an on/off env var. It returns (_, false) when the variable is
+// unset or empty (so a caller can fall through to a lower-precedence source);
+// "1"/"true"/"yes"/"on" (case-insensitive) is true, and any other explicit
+// value is an explicit false — so MDNS_VERBOSE_LOGS=0 can override an HA option.
+func envBool(key string) (val, set bool) {
+	s, ok := os.LookupEnv(key)
+	if !ok || s == "" {
+		return false, false
+	}
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "1", "true", "yes", "on":
+		return true, true
+	default:
+		return false, true
+	}
+}
+
+// haBoolOption reads a boolean key from the Home Assistant options file at path.
+// It returns (value, true) when the key is present and a JSON boolean; and
+// (false, false) — the "use the default" signal — when path is "" (a systemd
+// install), the file is absent (run outside the Supervisor), or the key is
+// absent. A present-but-unreadable/unparseable file, or a wrong-typed value,
+// warns and falls back to the default so a hand-written options.json cannot
+// change logging in a surprising way.
+func haBoolOption(path, key string) (val, ok bool) {
+	if path == "" {
+		return false, false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			slog.Warn("Home Assistant options file unreadable; keeping the mDNS logging default", "path", path, "err", err)
+		}
+		return false, false
+	}
+	var opts map[string]json.RawMessage
+	if err := json.Unmarshal(data, &opts); err != nil {
+		slog.Warn("Home Assistant options file could not be parsed; keeping the mDNS logging default", "path", path, "err", err)
+		return false, false
+	}
+	raw, present := opts[key]
+	if !present {
+		return false, false
+	}
+	var b bool
+	if err := json.Unmarshal(raw, &b); err != nil {
+		slog.Warn("Home Assistant option is not a boolean; keeping the default", "key", key, "value", string(raw))
+		return false, false
+	}
+	return b, true
 }
