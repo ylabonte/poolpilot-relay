@@ -52,6 +52,7 @@ import (
 
 	"github.com/ylabonte/poolpilot-relay/idgen"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/alert"
+	"github.com/ylabonte/poolpilot-relay/preset"
 	"github.com/ylabonte/poolpilot-relay/wire"
 )
 
@@ -275,6 +276,22 @@ func (s State) FindControllerByAddr(normalizedAddr string) (Controller, bool) {
 		}
 	}
 	return Controller{}, false
+}
+
+// EffectivePreset is the preset identifier the agent actually drives this
+// controller as. The v1->v2 migration copies Preset verbatim with no backfill
+// (see migrate.go), and Open() doesn't validate it, so a hand-edited or
+// pre-VIOLET state file can still carry Preset == "". That defaults to
+// ProCon.IP — the only preset any pre-VIOLET build could have written — so
+// such a file keeps resolving a driver instead of failing. One definition,
+// shared by the poller (which picks the driver from it) and the LAN API
+// (which reports it as wire.ControllerInfo.Preset), so the type the agent
+// advertises can never differ from the type it polls.
+func (c Controller) EffectivePreset() string {
+	if c.Preset == "" {
+		return preset.ProconIP
+	}
+	return c.Preset
 }
 
 // ControllerByGUID returns a pointer to the controller with the given GUID, or

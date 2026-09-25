@@ -1353,3 +1353,48 @@ func TestRegisterReportsAThrottled429AsTransient(t *testing.T) {
 		t.Fatalf("error code = %q, want cloud_unreachable", code)
 	}
 }
+
+// ---- Controller preset on the wire + cloud config refresh (issues
+// poolpilot-cloud#99 / #100) ----
+
+// GET /v1/controllers reports each controller's preset (issue
+// poolpilot-cloud#100) — the value the agent drives it as, so a legacy state
+// file whose controller carries no preset at all reports the ProCon.IP
+// default the poller applies, never an empty string the app would have to
+// treat as unknown.
+func TestGetControllersCarriesPreset(t *testing.T) {
+	f := newFixture(t)
+	token := f.pair(t)
+	guid := putControllerOK(t, f, token, wire.ControllerConfig{
+		Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: "Pool",
+	})
+	if err := f.store.Update(func(s *state.State) {
+		s.Controllers = append(s.Controllers, state.Controller{
+			LanAddress: "10.0.0.9:80", GUID: "legacy-guid", Label: "Pre-VIOLET file",
+		})
+	}); err != nil {
+		t.Fatalf("seed legacy controller: %v", err)
+	}
+
+	resp, raw := f.do(t, "GET", "/v1/controllers", token, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /v1/controllers: HTTP %d %s", resp.StatusCode, raw)
+	}
+	var list wire.ControllersResponse
+	if err := json.Unmarshal(raw, &list); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	byGUID := map[string]wire.ControllerInfo{}
+	for _, c := range list {
+		byGUID[c.GUID] = c
+	}
+	if got := byGUID[guid].Preset; got != "procon-ip" {
+		t.Errorf("registered controller preset = %q, want procon-ip", got)
+	}
+	if got := byGUID["legacy-guid"].Preset; got != "procon-ip" {
+		t.Errorf("legacy (preset-less) controller preset = %q, want the procon-ip default", got)
+	}
+	if strings.Contains(string(raw), `"preset":""`) {
+		t.Errorf("an empty preset must be omitted, not sent: %s", raw)
+	}
+}

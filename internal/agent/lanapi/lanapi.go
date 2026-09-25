@@ -995,8 +995,9 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 }
 
 // getControllers lists the configured controllers. It NEVER exposes controller
-// credentials — only guid/label/lan_address and the remote URLs. The config-less
-// phantom slot (address-less, holds only boot-seeded rules) is skipped.
+// credentials — only guid/label/lan_address, the remote URLs and the preset the
+// agent drives the controller as. The config-less phantom slot (address-less,
+// holds only boot-seeded rules) is skipped.
 func (s *Server) getControllers(w http.ResponseWriter, _ *http.Request) {
 	st := s.Store.Get()
 	out := wire.ControllersResponse{}
@@ -1010,6 +1011,7 @@ func (s *Server) getControllers(w http.ResponseWriter, _ *http.Request) {
 			LanAddress:   c.LanAddress,
 			RemoteURL:    c.RemoteURL,
 			RemoteAPIURL: c.RemoteAPIURL,
+			Preset:       c.EffectivePreset(),
 		}
 		if info.RemoteAPIURL == "" {
 			info.RemoteAPIURL = deriveRemoteAPIURL(c.GUID, st.Cloud.FRPS.SubdomainHost)

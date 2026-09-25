@@ -135,6 +135,14 @@ type ControllerInfo struct {
 	LanAddress   string `json:"lan_address"`
 	RemoteURL    string `json:"remote_url,omitempty"`
 	RemoteAPIURL string `json:"remote_api_url,omitempty"`
+	// Preset is the controller type the agent DRIVES this controller as — one
+	// of preset.Supported() ("procon-ip" | "violet"), the same vocabulary the
+	// app submitted in ControllerConfig.Preset (issue poolpilot-cloud#100). It
+	// lets a client verify its own per-profile controller type against what the
+	// relay actually talks to instead of probing or guessing. Additive and
+	// omitempty: an agent older than this field sends nothing, and a client
+	// must treat "" as "unknown", never as a mismatch.
+	Preset string `json:"preset,omitempty"`
 }
 
 // ControllersResponse is the GET /v1/controllers body: the agent's configured
@@ -158,13 +166,13 @@ type ControllerListRequest struct {
 }
 
 // CloudControllerInfo is one entry in ControllerListResponse. Its guid, label,
-// lan_address, remote_url and remote_api_url fields carry the SAME JSON names
-// as ControllerInfo (the agent's own GET /v1/controllers) so an app can feed
-// both into a single matcher; relay_id is the one addition, naming the owning
-// relay so a multi-relay entitlement's controllers can be grouped. relay_id is
-// the control plane's opaque row id — never a capability, and never a
-// substitute for the bearer that authorizes the read. Like ControllerInfo it
-// NEVER carries controller credentials.
+// lan_address, remote_url, remote_api_url and preset fields carry the SAME
+// JSON names as ControllerInfo (the agent's own GET /v1/controllers) so an app
+// can feed both into a single matcher; relay_id is the one addition, naming
+// the owning relay so a multi-relay entitlement's controllers can be grouped.
+// relay_id is the control plane's opaque row id — never a capability, and
+// never a substitute for the bearer that authorizes the read. Like
+// ControllerInfo it NEVER carries controller credentials.
 type CloudControllerInfo struct {
 	GUID         string `json:"guid"`
 	Label        string `json:"label,omitempty"`
@@ -172,6 +180,13 @@ type CloudControllerInfo struct {
 	RemoteURL    string `json:"remote_url,omitempty"`
 	RemoteAPIURL string `json:"remote_api_url,omitempty"`
 	RelayID      string `json:"relay_id,omitempty"`
+	// Preset mirrors ControllerInfo.Preset from the control plane's own
+	// controller row. That row is kept current by the agent's relay-authed
+	// PUT /controllers/{guid} (issue poolpilot-cloud#99), so an app resolving
+	// its controller on the away leg learns the same type it would on the LAN.
+	// Empty from a control plane older than that field — same "unknown, not a
+	// mismatch" rule as ControllerInfo.Preset.
+	Preset string `json:"preset,omitempty"`
 }
 
 // ControllerListResponse is the POST /controllers/list body. An object rather

@@ -80,7 +80,8 @@
     "label": "Garden Pool",
     "lan_address": "192.168.1.50",
     "remote_url": "https://fedcba9876543210fedcba9876543210.remote.poolpilot.eu",
-    "remote_api_url": "https://fedcba9876543210fedcba9876543210-api.remote.poolpilot.eu"
+    "remote_api_url": "https://fedcba9876543210fedcba9876543210-api.remote.poolpilot.eu",
+    "preset": "procon-ip"
   },
   "controllers_response": [
     {
@@ -88,14 +89,16 @@
       "label": "Garden Pool",
       "lan_address": "192.168.1.50",
       "remote_url": "https://fedcba9876543210fedcba9876543210.remote.poolpilot.eu",
-      "remote_api_url": "https://fedcba9876543210fedcba9876543210-api.remote.poolpilot.eu"
+      "remote_api_url": "https://fedcba9876543210fedcba9876543210-api.remote.poolpilot.eu",
+      "preset": "procon-ip"
     },
     {
       "guid": "00112233445566770011223344556677",
       "label": "",
       "lan_address": "192.168.1.51",
       "remote_url": "",
-      "remote_api_url": ""
+      "remote_api_url": "",
+      "preset": "violet"
     }
   ],
   "controllers_list_response": {
@@ -106,7 +109,8 @@
         "lan_address": "192.168.1.50:80",
         "remote_url": "https://fedcba9876543210fedcba9876543210.remote.poolpilot.eu",
         "remote_api_url": "https://fedcba9876543210fedcba9876543210-api.remote.poolpilot.eu",
-        "relay_id": "3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f"
+        "relay_id": "3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f",
+        "preset": "procon-ip"
       }
     ]
   },
