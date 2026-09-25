@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -947,5 +948,178 @@ func TestBrokerVoucherRefusesWhenNotEnrolled(t *testing.T) {
 	}
 	if _, err := New(st).BrokerRecoveryVoucher(context.Background()); !errors.Is(err, ErrRejected) {
 		t.Fatalf("err = %v, want ErrRejected", err)
+	}
+}
+
+// ---- UpdateController / SyncControllers (issue poolpilot-cloud#99) ----
+
+func TestUpdateControllerSendsBearerAndBody(t *testing.T) {
+	var gotMethod, gotPath, gotAuth string
+	var gotBody map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath, gotAuth = r.Method, r.URL.Path, r.Header.Get("Authorization")
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]string{"guid": "g1", "remote_url": "https://g1.remote.example"})
+	}))
+	defer srv.Close()
+
+	c := New(newStore(t, srv.URL))
+	err := c.UpdateController(context.Background(), "g1", wire.ControllerConfig{
+		Preset: "violet", LanAddress: "192.168.1.50", Username: "secret-user", Password: "secret-pass", Label: "Pool",
+	})
+	if err != nil {
+		t.Fatalf("UpdateController: %v", err)
+	}
+	if gotMethod != http.MethodPut || gotPath != "/controllers/g1" || gotAuth != "Bearer relay-token" {
+		t.Errorf("request = %s %s auth %q", gotMethod, gotPath, gotAuth)
+	}
+	if gotBody["preset"] != "violet" || gotBody["lan_address"] != "192.168.1.50" || gotBody["label"] != "Pool" {
+		t.Errorf("body = %v", gotBody)
+	}
+	// Credentials never leave the relay — same rule as RegisterController.
+	if _, leaked := gotBody["username"]; leaked || len(gotBody) != 3 {
+		t.Errorf("body must carry exactly preset/lan_address/label, got %v", gotBody)
+	}
+}
+
+func TestUpdateControllerStatusMapping(t *testing.T) {
+	cases := []struct {
+		status int
+		want   error // nil means success
+	}{
+		{http.StatusOK, nil},
+		{http.StatusNoContent, nil},
+		{http.StatusTooManyRequests, ErrUnavailable}, // per-IP throttle: transient
+		{http.StatusForbidden, ErrSubscriptionInactive},
+		{http.StatusNotFound, ErrRejected},         // not ours / unknown
+		{http.StatusMethodNotAllowed, ErrRejected}, // a control plane older than the route
+		{http.StatusBadRequest, ErrRejected},
+		{http.StatusInternalServerError, ErrUnavailable},
+		{http.StatusBadGateway, ErrUnavailable},
+	}
+	for _, tc := range cases {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(tc.status)
+		}))
+		c := New(newStore(t, srv.URL))
+		err := c.UpdateController(context.Background(), "g1", wire.ControllerConfig{Preset: "procon-ip", LanAddress: "a:80"})
+		srv.Close()
+		if tc.want == nil {
+			if err != nil {
+				t.Errorf("status %d: unexpected error %v", tc.status, err)
+			}
+			continue
+		}
+		if !errors.Is(err, tc.want) {
+			t.Errorf("status %d: err = %v, want %v", tc.status, err, tc.want)
+		}
+	}
+}
+
+func TestUpdateControllerNotEnrolledIsRejected(t *testing.T) {
+	c := New(newStore(t, ""))
+	err := c.UpdateController(context.Background(), "g1", wire.ControllerConfig{Preset: "procon-ip", LanAddress: "a:80"})
+	if !errors.Is(err, ErrRejected) {
+		t.Fatalf("err = %v, want ErrRejected", err)
+	}
+}
+
+// SyncControllers walks every flagged controller: a confirmed update and a
+// hard rejection both clear the flag (nothing a retry could change), a
+// transient failure keeps it; a flagged controller with no cloud identity yet
+// is skipped; unflagged ones are never sent. The legacy preset-less controller
+// is pushed as the ProCon.IP default the agent actually drives it as.
+func TestSyncControllersClearsOrKeepsFlagPerOutcome(t *testing.T) {
+	var mu sync.Mutex
+	pushed := map[string]map[string]string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		guid := strings.TrimPrefix(r.URL.Path, "/controllers/")
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		pushed[guid] = body
+		mu.Unlock()
+		switch guid {
+		case "g-ok", "g-legacy":
+			_ = json.NewEncoder(w).Encode(map[string]string{"guid": guid})
+		case "g-rejected":
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+	}))
+	defer srv.Close()
+
+	st := newStore(t, srv.URL)
+	if err := st.Update(func(s *state.State) {
+		s.Controllers = []state.Controller{
+			{GUID: "g-ok", Preset: "violet", LanAddress: "a:80", Label: "A", CloudSyncPending: true},
+			{GUID: "g-rejected", Preset: "procon-ip", LanAddress: "b:80", CloudSyncPending: true},
+			{GUID: "g-down", Preset: "procon-ip", LanAddress: "c:80", CloudSyncPending: true},
+			{GUID: "g-legacy", LanAddress: "d:80", CloudSyncPending: true},    // preset-less state file
+			{GUID: "g-quiet", Preset: "procon-ip", LanAddress: "e:80"},        // not flagged
+			{LanAddress: "f:80", Preset: "procon-ip", CloudSyncPending: true}, // no GUID yet
+		}
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	err := New(st).SyncControllers(context.Background())
+	if !errors.Is(err, ErrUnavailable) {
+		t.Errorf("SyncControllers err = %v, want the transient failure surfaced", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if pushed["g-ok"]["preset"] != "violet" || pushed["g-ok"]["label"] != "A" {
+		t.Errorf("g-ok body = %v", pushed["g-ok"])
+	}
+	if pushed["g-legacy"]["preset"] != "procon-ip" {
+		t.Errorf("legacy body = %v, want the procon-ip default", pushed["g-legacy"])
+	}
+	if _, sent := pushed["g-quiet"]; sent {
+		t.Error("an unflagged controller must not be pushed")
+	}
+	if _, sent := pushed[""]; sent {
+		t.Error("a controller without a GUID must not be pushed")
+	}
+	want := map[string]bool{"g-ok": false, "g-rejected": false, "g-down": true, "g-legacy": false, "g-quiet": false}
+	for _, c := range st.Get().Controllers {
+		if c.GUID == "" {
+			continue
+		}
+		if c.CloudSyncPending != want[c.GUID] {
+			t.Errorf("%s pending = %v, want %v", c.GUID, c.CloudSyncPending, want[c.GUID])
+		}
+	}
+}
+
+// A PUT /v1/controllers landing while the sync's request is in flight changes
+// the config again and re-flags it; the sync's stale success must not clear
+// that newer flag, or the newer change would never reach the cloud.
+func TestSyncControllersKeepsFlagWhenConfigChangedMidFlight(t *testing.T) {
+	var st *state.Store
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// The "concurrent" local change: label moves on while the cloud is
+		// still answering the previous one.
+		_ = st.Update(func(s *state.State) {
+			c := s.ControllerByGUID("g1")
+			c.Label = "Newer"
+			c.CloudSyncPending = true
+		})
+		_ = json.NewEncoder(w).Encode(map[string]string{"guid": "g1"})
+	}))
+	defer srv.Close()
+
+	st = newStore(t, srv.URL)
+	if err := st.Update(func(s *state.State) {
+		s.Controllers = []state.Controller{{GUID: "g1", Preset: "procon-ip", LanAddress: "a:80", Label: "Older", CloudSyncPending: true}}
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := New(st).SyncControllers(context.Background()); err != nil {
+		t.Fatalf("SyncControllers: %v", err)
+	}
+	if c := st.Get().Controller0(); !c.CloudSyncPending || c.Label != "Newer" {
+		t.Errorf("controller = %+v, want the newer change still flagged", c)
 	}
 }

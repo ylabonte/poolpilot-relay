@@ -80,6 +80,14 @@ type fixture struct {
 	brokerHold   func()
 	revokedMu    sync.Mutex
 	revoked      map[string]bool
+	// updated records, per guid, the last body the agent PUT to
+	// /controllers/{guid} (the dedup-HIT config refresh, issue
+	// poolpilot-cloud#99). updateRejects, when set, makes that route answer
+	// 404 — a guid the cloud does not know as this relay's, or a control
+	// plane older than the route — i.e. cloud.ErrRejected, not a transient.
+	updatedMu     sync.Mutex
+	updated       map[string]map[string]string
+	updateRejects atomic.Bool
 
 	// revokedPush records the device_ids the agent asked the cloud to
 	// revoke-push (POST /devices/revoke-push), keyed by device_id.
@@ -100,7 +108,10 @@ type fixture struct {
 // fixture-backed fake controller.
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
-	f := &fixture{notifier: &pairedRecorder{}, revoked: map[string]bool{}, revokedPush: map[string]bool{}}
+	f := &fixture{
+		notifier: &pairedRecorder{}, revoked: map[string]bool{}, revokedPush: map[string]bool{},
+		updated: map[string]map[string]string{},
+	}
 
 	csv, err := os.ReadFile(filepath.Join("..", "..", "proconip", "testdata", "getstate.csv"))
 	if err != nil {
@@ -144,6 +155,36 @@ func newFixture(t *testing.T) *fixture {
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		// Relay-authed PUT /controllers/{guid} (issue poolpilot-cloud#99) —
+		// record the pushed preset/lan_address/label per guid and answer 200
+		// with the UNCHANGED identity (a config refresh, not a rotation).
+		// Mirrors the real handler's verdicts: 403 while the subscription is
+		// inactive, 404 for a guid it does not know as this relay's.
+		if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/controllers/") {
+			if r.Header.Get("Authorization") != "Bearer relay-frpc-token" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			if f.subscriptionInactive.Load() {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			if f.updateRejects.Load() {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"error":"unknown controller"}`))
+				return
+			}
+			guid := strings.TrimPrefix(r.URL.Path, "/controllers/")
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			f.updatedMu.Lock()
+			f.updated[guid] = body
+			f.updatedMu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"guid": guid, "remote_url": "https://" + guid + ".remote.example",
+			})
 			return
 		}
 		// Relay-authed DELETE /controllers/{guid} — record and 204 (idempotent).

@@ -153,6 +153,12 @@ func (p *Poller) tick(ctx context.Context) {
 			slog.Debug("outbox drain deferred", "err", err)
 		}
 	}
+	// Same retry discipline for a controller config change the cloud could not
+	// be told about when it happened (state.Controller.CloudSyncPending): a
+	// no-op unless something is flagged.
+	if err := p.cloud.SyncControllers(ctx); err != nil {
+		slog.Debug("controller cloud sync deferred", "err", err)
+	}
 }
 
 // pollController polls one controller, evaluates its alert rules, persists its

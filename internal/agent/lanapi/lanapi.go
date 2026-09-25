@@ -913,6 +913,14 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 		// Update creds/label in place; reuse the existing GUID + remote URLs so
 		// the tunnel identity stays stable.
 		guid := existing.GUID
+		// The cloud's controller row holds preset/lan_address/label and is
+		// otherwise write-once (issue poolpilot-cloud#99): decide BEFORE the
+		// local write whether any of the three changed, so the cloud is told
+		// exactly when its copy went stale — a creds-only or use_https-only
+		// re-PUT (both never leave the relay) must not generate a cloud call.
+		cloudStale := existing.EffectivePreset() != cfg.Preset ||
+			existing.LanAddress != cfg.LanAddress ||
+			existing.Label != cfg.Label
 		err := s.Store.Update(func(doc *state.State) {
 			c := doc.ControllerByGUID(guid)
 			if c == nil {
@@ -930,11 +938,21 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 			// left untouched.
 			c.AlertRules = alert.ReconcileSeed(c.AlertRules, c.Preset)
 			alert.DropOrphanState(c.AlertState, c.AlertRules)
+			// Flag first, clear on a confirmed cloud update below: a crash or
+			// an unreachable cloud between the two leaves the flag set, and
+			// the poller's SyncControllers retries from it. Only when
+			// something the cloud holds actually changed.
+			if cloudStale {
+				c.CloudSyncPending = true
+			}
 		})
 		if err != nil {
 			slog.Error("persist controller (dedup update)", "err", err)
 			writeErr(w, http.StatusInternalServerError, "persist_failed")
 			return
+		}
+		if cloudStale {
+			s.syncControllerToCloud(cloudCtx(r), guid, cfg)
 		}
 		if err := s.reconfigureTunnel(); err != nil {
 			slog.Warn("tunnel reconfigure", "err", err)
@@ -992,6 +1010,38 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, wire.ControllerConfigResponse{
 		GUID: guid, RemoteURL: remoteURL, RemoteAPIURL: remoteAPIURL,
 	})
+}
+
+// syncControllerToCloud pushes a dedup-HIT config change (preset, lan_address
+// or label) to the control plane's controller row, best-effort and never
+// failing the local reconfigure: the relay's own state is authoritative for
+// what it drives, and a user reconfiguring on a LAN whose uplink is down must
+// not be blocked on the cloud (the MISS path needs the cloud regardless,
+// because that is where the GUID comes from). On success the
+// CloudSyncPending flag the caller just set is cleared; on a hard rejection
+// (cloud.ErrRejected — an unknown guid, or a control plane older than the
+// route) it is cleared too, since a retry cannot change that answer; on
+// anything transient (unreachable, throttled, subscription inactive) it stays
+// set for the poller's SyncControllers to retry every tick. Same
+// cloudCtx(r) discipline as the delete path (issue poolpilot-cloud#71): a
+// client that hung up must not abort a call whose local half already landed.
+func (s *Server) syncControllerToCloud(ctx context.Context, guid string, cfg wire.ControllerConfig) {
+	err := s.Cloud.UpdateController(ctx, guid, cfg)
+	switch {
+	case err == nil:
+	case errors.Is(err, cloud.ErrRejected):
+		slog.Warn("cloud controller update rejected; local config kept, not retrying", "guid", guid, "err", err)
+	default:
+		slog.Warn("cloud controller update deferred; will retry", "guid", guid, "err", err)
+		return
+	}
+	if uerr := s.Store.Update(func(doc *state.State) {
+		if c := doc.ControllerByGUID(guid); c != nil {
+			c.CloudSyncPending = false
+		}
+	}); uerr != nil {
+		slog.Warn("clear cloud sync flag", "guid", guid, "err", uerr)
+	}
 }
 
 // getControllers lists the configured controllers. It NEVER exposes controller

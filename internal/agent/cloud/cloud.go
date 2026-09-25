@@ -143,6 +143,93 @@ func (c *Client) RegisterController(ctx context.Context, cfg wire.ControllerConf
 	}
 }
 
+// UpdateController pushes a configured controller's CURRENT preset,
+// lan_address and label to the control plane's row for guid (relay-authed
+// PUT /controllers/{guid}; issue poolpilot-cloud#99). The row is otherwise
+// write-once — CreateController at registration, copied forward verbatim by a
+// GUID rotation — so without this call a ProCon.IP↔VIOLET switch on the same
+// address (a PUT /v1/controllers dedup HIT) never reached the cloud. The GUID
+// and both remote URLs are unchanged by design: this is a config refresh, not
+// a rotation. Bearer = the stored frpc token.
+//
+// Status mapping mirrors RegisterController's: 429 is the per-IP throttle and
+// 5xx/transport are ErrUnavailable (retry later); 403 is
+// ErrSubscriptionInactive (recoverable — the row can be refreshed once the
+// household is entitled again); every other 4xx is ErrRejected, which covers
+// both "the cloud does not know this guid as ours" (404) and a control plane
+// older than the route (405 from Go's ServeMux, since DELETE and POST
+// /controllers/{guid}/... exist there) — neither is worth retrying.
+func (c *Client) UpdateController(ctx context.Context, guid string, cfg wire.ControllerConfig) error {
+	s := c.store.Get()
+	if !s.Enrolled() {
+		return fmt.Errorf("%w: not enrolled", ErrRejected)
+	}
+	body := map[string]string{"preset": cfg.Preset, "lan_address": cfg.LanAddress, "label": cfg.Label}
+	status, err := c.doJSON(ctx, http.MethodPut, s.Cloud.BaseURL+"/controllers/"+guid, s.Cloud.FrpcToken, body, nil)
+	if err != nil {
+		return err
+	}
+	switch {
+	case status >= 200 && status < 300:
+		return nil
+	case status == http.StatusTooManyRequests:
+		return fmt.Errorf("%w: PUT controllers HTTP 429", ErrUnavailable)
+	case status == http.StatusForbidden:
+		return fmt.Errorf("%w: PUT controllers HTTP 403", ErrSubscriptionInactive)
+	case status >= 400 && status < 500:
+		return fmt.Errorf("%w: PUT controllers HTTP %d", ErrRejected, status)
+	default:
+		return fmt.Errorf("%w: PUT controllers HTTP %d", ErrUnavailable, status)
+	}
+}
+
+// SyncControllers retries UpdateController for every controller whose
+// CloudSyncPending flag is set (a config change the control plane could not be
+// told about at the time — see state.Controller.CloudSyncPending). Called by
+// the poller every tick, like Drain; a no-op when nothing is pending, so the
+// steady-state cost is one state read.
+//
+// The flag is cleared on success and on ErrRejected (nothing a retry could
+// change), and kept on ErrUnavailable / ErrSubscriptionInactive. It is cleared
+// only if the controller still carries the config that was sent: a PUT
+// /v1/controllers landing mid-flight may have changed it again and re-flagged
+// it, and that newer state must not be un-flagged by this call's stale
+// success. Returns the first error encountered so a caller can log it; other
+// pending controllers are still attempted.
+func (c *Client) SyncControllers(ctx context.Context) error {
+	s := c.store.Get()
+	var first error
+	for _, ctrl := range s.Controllers {
+		if !ctrl.CloudSyncPending || ctrl.GUID == "" {
+			continue
+		}
+		sent := wire.ControllerConfig{Preset: ctrl.EffectivePreset(), LanAddress: ctrl.LanAddress, Label: ctrl.Label}
+		err := c.UpdateController(ctx, ctrl.GUID, sent)
+		if err != nil && !errors.Is(err, ErrRejected) {
+			if first == nil {
+				first = err
+			}
+			continue
+		}
+		if err != nil {
+			slog.Warn("controller config sync rejected by the control plane; giving up", "guid", ctrl.GUID, "err", err)
+		}
+		if uerr := c.store.Update(func(st *state.State) {
+			cur := st.ControllerByGUID(ctrl.GUID)
+			if cur == nil {
+				return
+			}
+			if cur.EffectivePreset() != sent.Preset || cur.LanAddress != sent.LanAddress || cur.Label != sent.Label {
+				return // changed again mid-flight; the newer flag stands
+			}
+			cur.CloudSyncPending = false
+		}); uerr != nil && first == nil {
+			first = uerr
+		}
+	}
+	return first
+}
+
 // RotateController rotates a controller's public GUID (issue poolpilot-cloud#27's manual
 // "regenerate a leaked public link" trigger): the cloud revokes the OLD guid
 // and mints a fresh one for the SAME controller (lan_address/preset/label

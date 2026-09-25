@@ -113,6 +113,15 @@ type Controller struct {
 	GUID         string `json:"guid,omitempty"`
 	RemoteURL    string `json:"remote_url,omitempty"`
 	RemoteAPIURL string `json:"remote_api_url,omitempty"` // tunneled LAN API (<guid>-api.<host>)
+	// CloudSyncPending marks a controller whose preset/lan_address/label
+	// changed locally (PUT /v1/controllers dedup HIT) while the control plane
+	// could not be told (unreachable, throttled, or subscription inactive).
+	// The cloud's controller row is otherwise write-once (issue
+	// poolpilot-cloud#99), so the poller retries cloud.Client.SyncControllers
+	// every tick until the row is refreshed or the cloud definitively rejects
+	// the update. Never set on the MISS path: registration already carries the
+	// current config.
+	CloudSyncPending bool `json:"cloud_sync_pending,omitempty"`
 
 	AlertRules []wire.AlertRule            `json:"alert_rules,omitempty"`
 	AlertState map[string]*alert.RuleState `json:"alert_state,omitempty"`
