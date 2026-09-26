@@ -131,6 +131,11 @@ type Server struct {
 	// both miss dedup and double-register with the cloud; holding this across
 	// probe → cloud register → persist closes that race.
 	controllerMu sync.Mutex
+
+	// bgSync tracks the fire-and-forget cloud syncs kickCloudSync starts, so a
+	// caller that tears the server down (tests removing the state dir) can
+	// wait for them via waitBackground instead of racing their state writes.
+	bgSync sync.WaitGroup
 }
 
 // UpdaterAPI is what /v1/update* needs from the agent's updater subsystem
@@ -1049,12 +1054,19 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 // tick safe. ctx is cloudCtx(r) — the app hanging up must not abort a call
 // whose local half already landed (issue poolpilot-cloud#71).
 func (s *Server) kickCloudSync(ctx context.Context) {
+	s.bgSync.Add(1)
 	go func() {
+		defer s.bgSync.Done()
 		if err := s.Cloud.SyncControllers(ctx); err != nil {
 			slog.Debug("cloud controller sync deferred to the next poll tick", "err", err)
 		}
 	}()
 }
+
+// waitBackground blocks until every cloud sync kickCloudSync started has
+// returned. Production never needs it (the process just exits); tests call it
+// before their state directory is removed.
+func (s *Server) waitBackground() { s.bgSync.Wait() }
 
 // getControllers lists the configured controllers. It NEVER exposes controller
 // credentials — only guid/label/lan_address, the remote URLs and the preset the
