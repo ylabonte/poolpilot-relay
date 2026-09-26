@@ -371,12 +371,18 @@ func TestPerControllerAlertRules(t *testing.T) {
 		}
 	}
 
-	// Full replace. The echoed default_ok_tolerance must be stripped before
-	// persisting — it is response-only, recomputed on GET.
+	// Full replace with a valid set. Both rules carry a bogus client-supplied
+	// default_ok_tolerance, to pin that the relay strips it before persisting
+	// and recomputes it on every response instead of trusting the client — the
+	// stale_data rule pins the non-band branch: never enriched, never echoed.
 	newSet := wire.AlertRules{Rules: []wire.AlertRule{{
 		ID: "app-ph", Kind: wire.RuleKindMeasurementBand, Enabled: true, Source: "app",
 		MeasurementType: "ph", NotifySeverities: []string{"warn", "bad"},
 		DebouncePolls: 2, CooldownSeconds: 600, NotifyRecovery: true,
+		DefaultOkTolerance: 9.9,
+	}, {
+		ID: "app-stale", Kind: wire.RuleKindStaleData, Enabled: true, Source: "app",
+		StaleAfterSeconds: 900, CooldownSeconds: 600,
 		DefaultOkTolerance: 9.9,
 	}}}
 	resp, raw = f.do(t, "PUT", "/v1/controllers/"+g1+"/alert-rules", token, newSet)
@@ -384,11 +390,60 @@ func TestPerControllerAlertRules(t *testing.T) {
 		t.Fatalf("put rules: HTTP %d %s", resp.StatusCode, raw)
 	}
 	got, _ := f.store.Get().FindController(g1)
-	if len(got.AlertRules) != 1 || got.AlertRules[0].ID != "app-ph" {
-		t.Errorf("rules after PUT: %+v", got.AlertRules)
+	if len(got.AlertRules) != 2 || got.AlertRules[0].ID != "app-ph" || got.AlertRules[1].ID != "app-stale" {
+		t.Fatalf("rules after PUT (full replace): %+v", got.AlertRules)
 	}
-	if got.AlertRules[0].DefaultOkTolerance != 0 {
-		t.Errorf("default_ok_tolerance persisted as %v, want 0 (stripped)", got.AlertRules[0].DefaultOkTolerance)
+	// Response-only: never persisted (even when the client sends it) …
+	for _, r := range got.AlertRules {
+		if r.DefaultOkTolerance != 0 {
+			t.Errorf("rule %s: default_ok_tolerance persisted as %v, want 0 (stripped)", r.ID, r.DefaultOkTolerance)
+		}
+	}
+	// … the PUT 200 echoes the recomputed relay default (matching GET): the
+	// band rule gets the pH default, the stale rule omits the field — the
+	// client's 9.9 is reflected nowhere.
+	var echoed wire.AlertRules
+	if err := json.Unmarshal(raw, &echoed); err != nil || len(echoed.Rules) != 2 {
+		t.Fatalf("put echo = %s (%v)", raw, err)
+	}
+	if echoed.Rules[0].DefaultOkTolerance != 0.2 {
+		t.Errorf("put echo default_ok_tolerance = %v, want 0.2 (relay pH default)", echoed.Rules[0].DefaultOkTolerance)
+	}
+	if echoed.Rules[1].DefaultOkTolerance != 0 {
+		t.Errorf("stale_data put echo default_ok_tolerance = %v, want omitted", echoed.Rules[1].DefaultOkTolerance)
+	}
+	if strings.Contains(string(raw), "9.9") {
+		t.Errorf("put echo reflects the client-supplied default_ok_tolerance: %s", raw)
+	}
+	// … and a subsequent GET enriches measurement_band rules with the relay's
+	// default the same way.
+	resp, raw = f.do(t, "GET", "/v1/controllers/"+g1+"/alert-rules", token, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get rules after put: HTTP %d", resp.StatusCode)
+	}
+	var enriched wire.AlertRules
+	if err := json.Unmarshal(raw, &enriched); err != nil || len(enriched.Rules) != 2 {
+		t.Fatalf("rules after put = %s (%v)", raw, err)
+	}
+	if enriched.Rules[0].DefaultOkTolerance != 0.2 {
+		t.Errorf("get default_ok_tolerance = %v, want 0.2 (relay pH default)", enriched.Rules[0].DefaultOkTolerance)
+	}
+	if enriched.Rules[1].DefaultOkTolerance != 0 {
+		t.Errorf("stale_data get default_ok_tolerance = %v, want omitted", enriched.Rules[1].DefaultOkTolerance)
+	}
+
+	// Any invalid rule rejects the whole set, leaving the persisted rules
+	// unchanged.
+	bad := wire.AlertRules{Rules: []wire.AlertRule{
+		newSet.Rules[0],
+		{ID: "nope", Kind: "sms", CooldownSeconds: 1},
+	}}
+	resp, raw = f.do(t, "PUT", "/v1/controllers/"+g1+"/alert-rules", token, bad)
+	if resp.StatusCode != http.StatusBadRequest || errCode(t, raw) != "invalid_rule" {
+		t.Errorf("invalid rules: HTTP %d %s", resp.StatusCode, raw)
+	}
+	if got, _ := f.store.Get().FindController(g1); len(got.AlertRules) != 2 || got.AlertRules[0].ID != "app-ph" {
+		t.Errorf("invalid PUT must not mutate rules: %+v", got.AlertRules)
 	}
 
 	// Unknown GUID → 404 on both verbs.

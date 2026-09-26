@@ -31,11 +31,12 @@
 // The v2 shape ships full multi-device pairing (each Device carries its own
 // LAN-API bearer, added/revoked independently) and multi-controller support
 // (the Controllers slice, one entry per registered controller). The
-// Controller0/EnsureController0 helpers remain as the compat bridge behind the
-// single-controller GET/PUT /v1/alert-rules aliases and the boot-time default
-// alert-rule seed (cmd/poolpilot-relay/main.go); new call sites operate on the
-// Devices/Controllers slices directly. The PUT /v1/controller sibling alias
-// was removed in poolpilot-cloud#113.
+// Controller0/EnsureController0 helpers remain only as the compat bridge
+// behind the boot-time default alert-rule seed (cmd/poolpilot-relay/main.go);
+// new call sites operate on the Devices/Controllers slices directly. The PUT
+// /v1/controller sibling alias was removed in poolpilot-cloud#113, and the
+// single-controller GET/PUT /v1/alert-rules aliases were removed once apps
+// moved to the guid-scoped route.
 package state
 
 import (

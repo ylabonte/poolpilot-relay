@@ -171,8 +171,8 @@ func DropOrphanState(states map[string]*RuleState, rules []wire.AlertRule) {
 	}
 }
 
-// ValidateRules enforces the PUT /v1/alert-rules contract (full replace, all
-// rules must be valid).
+// ValidateRules enforces the PUT /v1/controllers/{guid}/alert-rules contract
+// (full replace, all rules must be valid).
 func ValidateRules(rules []wire.AlertRule) error {
 	seen := make(map[string]bool, len(rules))
 	for i, r := range rules {

@@ -275,7 +275,7 @@ type ActiveAlert struct {
 	Since           string  `json:"since"` // RFC 3339
 }
 
-// ---- Alert rules (GET/PUT /v1/alert-rules; PUT is a full replace) ----
+// ---- Alert rules (GET/PUT /v1/controllers/{guid}/alert-rules; PUT is a full replace) ----
 
 // Alert rule kinds. The engine dispatches on Kind — that is the day-one
 // extensibility seam for the future custom-alarm-events UI.
@@ -318,7 +318,7 @@ type AlertRule struct {
 	NotifyRecovery  bool  `json:"notify_recovery"`
 }
 
-// AlertRules is the GET/PUT /v1/alert-rules payload. PUT is a full replace, but
+// AlertRules is the GET/PUT /v1/controllers/{guid}/alert-rules payload. PUT is a full replace, but
 // source=="default" rules are reconciled against the controller's preset at boot
 // and at registration: dropping a default rule from the PUT list resets it to the
 // factory default on the next reconcile rather than removing it permanently — to

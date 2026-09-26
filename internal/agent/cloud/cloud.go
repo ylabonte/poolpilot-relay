@@ -560,9 +560,9 @@ func (c *Client) SendAlert(ctx context.Context, req wire.AlertRequest) error {
 // own once the queue is draining again. The one configuration where that
 // safety net does NOT apply is CooldownSeconds <= 0 (renotifyIfDue returns
 // false forever), but that is not reachable in practice: alert.ValidateRules
-// has rejected CooldownSeconds <= 0 on every path that writes rules (both
-// PUT .../alert-rules aliases, internal/agent/lanapi) since the alert
-// engine's very first commit, and alert.SeedDefaults always seeds a positive
+// has rejected CooldownSeconds <= 0 on every path that writes rules (PUT
+// .../alert-rules, internal/agent/lanapi) since the alert engine's very
+// first commit, and alert.SeedDefaults always seeds a positive
 // default (6h / 24h). So every rule capable of queueing an Enter/Renotify
 // also re-notifies while its condition persists.
 //
