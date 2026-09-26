@@ -231,3 +231,4 @@ func TestWipeBlocksLaterUpdates(t *testing.T) {
 		t.Fatalf("state file exists after wipe+update: %v", err)
 	}
 }
+

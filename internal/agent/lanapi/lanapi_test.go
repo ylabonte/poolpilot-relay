@@ -88,6 +88,15 @@ type fixture struct {
 	updatedMu     sync.Mutex
 	updated       map[string]map[string]string
 	updateRejects atomic.Bool
+	// updateAttempts counts PUT /controllers/{guid} requests that got past the
+	// bearer check, whatever the verdict, so a test can wait for the agent's
+	// ASYNC refresh to have happened before asserting on the flag it leaves.
+	// updateHold, when set, makes that route block until the channel is
+	// closed and then answer 503 — a black-holed uplink from the agent's point
+	// of view, released at cleanup without ever writing agent state.
+	updateAttempts atomic.Int64
+	updateHoldMu   sync.Mutex
+	updateHold     chan struct{}
 
 	// revokedPush records the device_ids the agent asked the cloud to
 	// revoke-push (POST /devices/revoke-push), keyed by device_id.
@@ -165,6 +174,15 @@ func newFixture(t *testing.T) *fixture {
 		if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/controllers/") {
 			if r.Header.Get("Authorization") != "Bearer relay-frpc-token" {
 				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			f.updateAttempts.Add(1)
+			f.updateHoldMu.Lock()
+			hold := f.updateHold
+			f.updateHoldMu.Unlock()
+			if hold != nil {
+				<-hold
+				w.WriteHeader(http.StatusServiceUnavailable)
 				return
 			}
 			if f.subscriptionInactive.Load() {

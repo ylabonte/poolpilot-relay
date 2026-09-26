@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/ylabonte/poolpilot-relay/internal/agent/state"
@@ -61,8 +62,10 @@ const RequestTimeout = 15 * time.Second
 // Client talks to the control-plane. The bearer token and outbox live in the
 // state store so delivery state survives restarts.
 type Client struct {
-	store *state.Store
-	http  *http.Client
+	// syncMu makes SyncControllers single-flight — see its doc.
+	syncMu sync.Mutex
+	store  *state.Store
+	http   *http.Client
 	// now is the clock Drain judges alert staleness against. Defaults to
 	// time.Now; tests in this package (same package, not _test) override it
 	// directly rather than threading a parameter through every call site.
@@ -157,8 +160,10 @@ func (c *Client) RegisterController(ctx context.Context, cfg wire.ControllerConf
 // ErrSubscriptionInactive (recoverable — the row can be refreshed once the
 // household is entitled again); every other 4xx is ErrRejected, which covers
 // both "the cloud does not know this guid as ours" (404) and a control plane
-// older than the route (405 from Go's ServeMux, since DELETE and POST
-// /controllers/{guid}/... exist there) — neither is worth retrying.
+// older than the route (405 from Go's ServeMux: DELETE /controllers/{guid}
+// registers the same path there, and the public mux has no method-less
+// catch-all that would turn a PUT into a handler hit) — neither is worth
+// retrying.
 func (c *Client) UpdateController(ctx context.Context, guid string, cfg wire.ControllerConfig) error {
 	s := c.store.Get()
 	if !s.Enrolled() {
@@ -183,51 +188,69 @@ func (c *Client) UpdateController(ctx context.Context, guid string, cfg wire.Con
 	}
 }
 
-// SyncControllers retries UpdateController for every controller whose
-// CloudSyncPending flag is set (a config change the control plane could not be
-// told about at the time — see state.Controller.CloudSyncPending). Called by
-// the poller every tick, like Drain; a no-op when nothing is pending, so the
-// steady-state cost is one state read.
+// SyncControllers pushes every controller whose CloudSyncPending flag is set
+// (a config change the control plane could not be told about when it
+// happened — see state.Controller.CloudSyncPending) and clears the flag once
+// the cloud has answered. It is the only thing that ever clears that flag,
+// and it runs single-flight: a second caller while one is running returns nil
+// at once (TryLock), because the running one re-reads state every round and
+// picks up anything flagged meanwhile. Callers: the poller's tick (the retry
+// path) and lanapi's kickCloudSync, right after a dedup HIT has answered the
+// app — never the request path itself.
 //
-// The flag is cleared on success and on ErrRejected (nothing a retry could
-// change), and kept on ErrUnavailable / ErrSubscriptionInactive. It is cleared
-// only if the controller still carries the config that was sent: a PUT
-// /v1/controllers landing mid-flight may have changed it again and re-flagged
-// it, and that newer state must not be un-flagged by this call's stale
-// success. Returns the first error encountered so a caller can log it; other
-// pending controllers are still attempted.
+// Per controller the flag is cleared on success and on ErrRejected (nothing a
+// retry could change), kept on ErrUnavailable / ErrSubscriptionInactive. The
+// clear is guarded by ConfigRev, not by comparing the sent values: a
+// PUT /v1/controllers landing while the request is in flight bumps the rev
+// and re-flags, and value equality could not tell that from "unchanged" when
+// the value was changed and changed back (A->B->A) inside one round trip. A
+// guarded-out clear leaves the newer flag standing, and the loop sends it in
+// the next round rather than waiting for the next tick: rounds repeat while
+// the cloud accepted at least one push and something is still pending, and
+// stop as soon as a round made no progress (every remaining push failed
+// transiently). Returns the last round's first transient error so a caller
+// can log it.
 func (c *Client) SyncControllers(ctx context.Context) error {
-	s := c.store.Get()
-	var first error
-	for _, ctrl := range s.Controllers {
-		if !ctrl.CloudSyncPending || ctrl.GUID == "" {
-			continue
-		}
-		sent := wire.ControllerConfig{Preset: ctrl.EffectivePreset(), LanAddress: ctrl.LanAddress, Label: ctrl.Label}
-		err := c.UpdateController(ctx, ctrl.GUID, sent)
-		if err != nil && !errors.Is(err, ErrRejected) {
-			if first == nil {
-				first = err
+	if !c.syncMu.TryLock() {
+		return nil
+	}
+	defer c.syncMu.Unlock()
+	for {
+		s := c.store.Get()
+		var roundErr error
+		pending, accepted := 0, 0
+		for _, ctrl := range s.Controllers {
+			if !ctrl.CloudSyncPending || ctrl.GUID == "" {
+				continue
 			}
-			continue
-		}
-		if err != nil {
-			slog.Warn("controller config sync rejected by the control plane; giving up", "guid", ctrl.GUID, "err", err)
-		}
-		if uerr := c.store.Update(func(st *state.State) {
-			cur := st.ControllerByGUID(ctrl.GUID)
-			if cur == nil {
-				return
+			pending++
+			rev := ctrl.ConfigRev
+			sent := wire.ControllerConfig{Preset: ctrl.EffectivePreset(), LanAddress: ctrl.LanAddress, Label: ctrl.Label}
+			err := c.UpdateController(ctx, ctrl.GUID, sent)
+			if err != nil && !errors.Is(err, ErrRejected) {
+				if roundErr == nil {
+					roundErr = err
+				}
+				continue
 			}
-			if cur.EffectivePreset() != sent.Preset || cur.LanAddress != sent.LanAddress || cur.Label != sent.Label {
-				return // changed again mid-flight; the newer flag stands
+			if err != nil {
+				slog.Warn("controller config sync rejected by the control plane; giving up", "guid", ctrl.GUID, "err", err)
 			}
-			cur.CloudSyncPending = false
-		}); uerr != nil && first == nil {
-			first = uerr
+			accepted++
+			if uerr := c.store.Update(func(st *state.State) {
+				cur := st.ControllerByGUID(ctrl.GUID)
+				if cur == nil || cur.ConfigRev != rev {
+					return // changed again mid-flight: the newer flag stands, the next round sends it
+				}
+				cur.CloudSyncPending = false
+			}); uerr != nil && roundErr == nil {
+				roundErr = uerr
+			}
+		}
+		if pending == 0 || accepted == 0 {
+			return roundErr
 		}
 	}
-	return first
 }
 
 // RotateController rotates a controller's public GUID (issue poolpilot-cloud#27's manual

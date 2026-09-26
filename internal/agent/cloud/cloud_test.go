@@ -1093,33 +1093,85 @@ func TestSyncControllersClearsOrKeepsFlagPerOutcome(t *testing.T) {
 	}
 }
 
-// A PUT /v1/controllers landing while the sync's request is in flight changes
-// the config again and re-flags it; the sync's stale success must not clear
-// that newer flag, or the newer change would never reach the cloud.
-func TestSyncControllersKeepsFlagWhenConfigChangedMidFlight(t *testing.T) {
+// A PUT /v1/controllers landing while a sync's request is in flight bumps
+// ConfigRev and re-flags; the sync's stale success must not clear that newer
+// flag — and comparing values could not catch the case where the change was
+// "A -> B -> A" (what the sync sent is exactly what is stored now), which is
+// why the guard is the rev. The loop then sends the newer config in its next
+// round instead of leaving it for the next tick.
+func TestSyncControllersResendsAConfigChangedMidFlightEvenWhenValuesMatch(t *testing.T) {
 	var st *state.Store
+	var calls atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		// The "concurrent" local change: label moves on while the cloud is
-		// still answering the previous one.
-		_ = st.Update(func(s *state.State) {
-			c := s.ControllerByGUID("g1")
-			c.Label = "Newer"
-			c.CloudSyncPending = true
-		})
+		if calls.Add(1) == 1 {
+			// The "concurrent" A -> B -> A: same values, newer rev, flag raised.
+			_ = st.Update(func(s *state.State) {
+				c := s.ControllerByGUID("g1")
+				c.ConfigRev += 2
+				c.CloudSyncPending = true
+			})
+		}
 		_ = json.NewEncoder(w).Encode(map[string]string{"guid": "g1"})
 	}))
 	defer srv.Close()
 
 	st = newStore(t, srv.URL)
 	if err := st.Update(func(s *state.State) {
-		s.Controllers = []state.Controller{{GUID: "g1", Preset: "procon-ip", LanAddress: "a:80", Label: "Older", CloudSyncPending: true}}
+		s.Controllers = []state.Controller{{GUID: "g1", Preset: "procon-ip", LanAddress: "a:80", Label: "A", ConfigRev: 1, CloudSyncPending: true}}
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	if err := New(st).SyncControllers(context.Background()); err != nil {
 		t.Fatalf("SyncControllers: %v", err)
 	}
-	if c := st.Get().Controller0(); !c.CloudSyncPending || c.Label != "Newer" {
-		t.Errorf("controller = %+v, want the newer change still flagged", c)
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("cloud calls = %d, want 2 (the stale success must not clear the re-raised flag; the next round resends)", got)
+	}
+	if c := st.Get().Controller0(); c.CloudSyncPending || c.ConfigRev != 3 {
+		t.Errorf("controller = %+v, want cleared at rev 3", c)
+	}
+}
+
+// SyncControllers is single-flight: a caller that finds one running returns
+// nil at once without a request of its own — the running one re-reads state
+// every round, so nothing flagged meanwhile is lost.
+func TestSyncControllersIsSingleFlight(t *testing.T) {
+	release := make(chan struct{})
+	var calls atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		<-release
+		w.WriteHeader(http.StatusServiceUnavailable) // transient: keeps the flag, writes no state
+	}))
+	defer srv.Close()
+
+	st := newStore(t, srv.URL)
+	if err := st.Update(func(s *state.State) {
+		s.Controllers = []state.Controller{{GUID: "g1", Preset: "procon-ip", LanAddress: "a:80", CloudSyncPending: true}}
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	c := New(st)
+	done := make(chan error, 1)
+	go func() { done <- c.SyncControllers(context.Background()) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for calls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if calls.Load() != 1 {
+		t.Fatal("the first sync never reached the cloud")
+	}
+	if err := c.SyncControllers(context.Background()); err != nil {
+		t.Fatalf("second caller must return nil at once, got %v", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("second caller made its own request (calls=%d)", calls.Load())
+	}
+	close(release)
+	if err := <-done; !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("first sync err = %v, want ErrUnavailable", err)
+	}
+	if !st.Get().Controller0().CloudSyncPending {
+		t.Error("a transient failure must keep the flag")
 	}
 }

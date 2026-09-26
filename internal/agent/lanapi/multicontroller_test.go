@@ -1393,6 +1393,29 @@ func (f *fixture) cloudUpdateFor(guid string) map[string]string {
 	return f.updated[guid]
 }
 
+// holdCloudUpdates makes the fake cloud hang every PUT /controllers/{guid}
+// until hold is closed (see fixture.updateHold).
+func (f *fixture) holdCloudUpdates(hold chan struct{}) {
+	f.updateHoldMu.Lock()
+	f.updateHold = hold
+	f.updateHoldMu.Unlock()
+}
+
+// waitFor polls cond until it holds or five seconds pass: the agent's cloud
+// refresh runs off the request path (kickCloudSync), so tests observe its
+// outcome instead of awaiting it.
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
 // GET /v1/controllers reports each controller's preset (issue
 // poolpilot-cloud#100) — the value the agent drives it as, so a legacy state
 // file whose controller carries no preset at all reports the ProCon.IP
@@ -1459,13 +1482,14 @@ func TestPutControllersPresetSwitchRefreshesCloudRow(t *testing.T) {
 	if f.guidSeq.Load() != 1 {
 		t.Errorf("preset switch must not re-register (registrations=%d)", f.guidSeq.Load())
 	}
+	waitFor(t, "the cloud refresh", func() bool { return f.cloudUpdateFor(g1) != nil })
 	upd := f.cloudUpdateFor(g1)
-	if upd == nil || upd["preset"] != "violet" || upd["label"] != "Violet Pool" || upd["lan_address"] != addr(dc.URL) {
+	if upd["preset"] != "violet" || upd["label"] != "Violet Pool" || upd["lan_address"] != addr(dc.URL) {
 		t.Fatalf("cloud PUT /controllers/%s body = %v, want preset violet / label Violet Pool", g1, upd)
 	}
-	c := f.store.Get().Controller0()
-	if c.Preset != "violet" || c.CloudSyncPending {
-		t.Errorf("persisted controller = preset %q pending %v, want violet / not pending", c.Preset, c.CloudSyncPending)
+	waitFor(t, "the pending flag to clear", func() bool { return !f.store.Get().Controller0().CloudSyncPending })
+	if c := f.store.Get().Controller0(); c.Preset != "violet" {
+		t.Errorf("persisted controller preset = %q, want violet", c.Preset)
 	}
 }
 
@@ -1527,9 +1551,9 @@ func TestPutControllersConfigChangeCloudRejectionDropsFlag(t *testing.T) {
 	putControllerOK(t, f, token, wire.ControllerConfig{
 		Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: "Renamed",
 	})
-	c := f.store.Get().Controller0()
-	if c.Label != "Renamed" || c.CloudSyncPending {
-		t.Errorf("controller = label %q pending %v, want Renamed / not pending", c.Label, c.CloudSyncPending)
+	waitFor(t, "the rejected refresh to drop the flag", func() bool { return !f.store.Get().Controller0().CloudSyncPending })
+	if c := f.store.Get().Controller0(); c.Label != "Renamed" {
+		t.Errorf("controller label = %q, want Renamed (the local change stands)", c.Label)
 	}
 }
 
@@ -1546,7 +1570,44 @@ func TestPutControllersConfigChangeSubscriptionInactiveKeepsPending(t *testing.T
 	putControllerOK(t, f, token, wire.ControllerConfig{
 		Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: "Renamed",
 	})
+	waitFor(t, "the refresh to be attempted", func() bool { return f.updateAttempts.Load() >= 1 })
 	if c := f.store.Get().Controller0(); !c.CloudSyncPending {
-		t.Errorf("controller = %+v, want pending (403 is recoverable)", c)
+		t.Errorf("controller = %+v, want still pending (403 is recoverable)", c)
 	}
 }
+
+// The refresh must never sit on the request path: cloud.RequestTimeout (15 s)
+// equals the app's own PUT /v1/controllers timeout on both platforms, so a
+// black-holed uplink (router up, WAN down — SYNs dropped, the realistic "LAN
+// works, internet doesn't" case) would stall the response past the app's
+// deadline and the user would see a failed save for a change the relay
+// persisted. Here the fake cloud hangs the PUT for the test's whole life; the
+// app's request must still come back at once, with the change persisted and
+// flagged for the poller's retry.
+func TestPutControllersConfigChangeReturnsPromptlyWhileTheCloudBlackHoles(t *testing.T) {
+	f := newFixture(t)
+	token := f.pair(t)
+	g1 := putControllerOK(t, f, token, wire.ControllerConfig{
+		Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: "Pool",
+	})
+	hold := make(chan struct{})
+	t.Cleanup(func() { close(hold) }) // registered last, so it runs first: release before the server closes
+	f.holdCloudUpdates(hold)
+
+	start := time.Now()
+	g2 := putControllerOK(t, f, token, wire.ControllerConfig{
+		Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: "Renamed",
+	})
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("PUT /v1/controllers took %v with the cloud black-holed — the refresh is on the request path", elapsed)
+	}
+	if g1 != g2 {
+		t.Fatalf("GUID changed across a dedup HIT: %q vs %q", g1, g2)
+	}
+	waitFor(t, "the refresh to be attempted", func() bool { return f.updateAttempts.Load() >= 1 })
+	c := f.store.Get().Controller0()
+	if c.Label != "Renamed" || !c.CloudSyncPending {
+		t.Errorf("controller = label %q pending %v, want Renamed / pending for the poller", c.Label, c.CloudSyncPending)
+	}
+}
+

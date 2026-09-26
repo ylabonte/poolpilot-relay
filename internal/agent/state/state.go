@@ -122,6 +122,14 @@ type Controller struct {
 	// the update. Never set on the MISS path: registration already carries the
 	// current config.
 	CloudSyncPending bool `json:"cloud_sync_pending,omitempty"`
+	// ConfigRev counts local changes to the cloud-visible config (preset,
+	// lan_address, label) and is bumped in the same Update that sets
+	// CloudSyncPending. cloud.Client.SyncControllers clears the flag only when
+	// the rev it read before sending is still current, so a stale success
+	// from a request that overlapped a newer change leaves the newer flag
+	// standing — value comparison could not tell "unchanged" from "changed
+	// and changed back" inside one round trip.
+	ConfigRev uint64 `json:"config_rev,omitempty"`
 
 	AlertRules []wire.AlertRule            `json:"alert_rules,omitempty"`
 	AlertState map[string]*alert.RuleState `json:"alert_state,omitempty"`

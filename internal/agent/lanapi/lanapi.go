@@ -938,12 +938,13 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 			// left untouched.
 			c.AlertRules = alert.ReconcileSeed(c.AlertRules, c.Preset)
 			alert.DropOrphanState(c.AlertState, c.AlertRules)
-			// Flag first, clear on a confirmed cloud update below: a crash or
-			// an unreachable cloud between the two leaves the flag set, and
-			// the poller's SyncControllers retries from it. Only when
+			// Flag + bump the rev in the same write: kickCloudSync below (and
+			// the poller's tick) push from the flag, and SyncControllers
+			// clears it only if the rev it read is still current. Only when
 			// something the cloud holds actually changed.
 			if cloudStale {
 				c.CloudSyncPending = true
+				c.ConfigRev++
 			}
 		})
 		if err != nil {
@@ -952,7 +953,7 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if cloudStale {
-			s.syncControllerToCloud(cloudCtx(r), guid, cfg)
+			s.kickCloudSync(cloudCtx(r))
 		}
 		if err := s.reconfigureTunnel(); err != nil {
 			slog.Warn("tunnel reconfigure", "err", err)
@@ -1012,36 +1013,25 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// syncControllerToCloud pushes a dedup-HIT config change (preset, lan_address
-// or label) to the control plane's controller row, best-effort and never
-// failing the local reconfigure: the relay's own state is authoritative for
-// what it drives, and a user reconfiguring on a LAN whose uplink is down must
-// not be blocked on the cloud (the MISS path needs the cloud regardless,
-// because that is where the GUID comes from). On success the
-// CloudSyncPending flag the caller just set is cleared; on a hard rejection
-// (cloud.ErrRejected — an unknown guid, or a control plane older than the
-// route) it is cleared too, since a retry cannot change that answer; on
-// anything transient (unreachable, throttled, subscription inactive) it stays
-// set for the poller's SyncControllers to retry every tick. Same
-// cloudCtx(r) discipline as the delete path (issue poolpilot-cloud#71): a
-// client that hung up must not abort a call whose local half already landed.
-func (s *Server) syncControllerToCloud(ctx context.Context, guid string, cfg wire.ControllerConfig) {
-	err := s.Cloud.UpdateController(ctx, guid, cfg)
-	switch {
-	case err == nil:
-	case errors.Is(err, cloud.ErrRejected):
-		slog.Warn("cloud controller update rejected; local config kept, not retrying", "guid", guid, "err", err)
-	default:
-		slog.Warn("cloud controller update deferred; will retry", "guid", guid, "err", err)
-		return
-	}
-	if uerr := s.Store.Update(func(doc *state.State) {
-		if c := doc.ControllerByGUID(guid); c != nil {
-			c.CloudSyncPending = false
+// kickCloudSync runs Cloud.SyncControllers off the request path. The dedup-HIT
+// handler has already persisted the change and flagged the controller
+// (CloudSyncPending + a ConfigRev bump) under controllerMu and is about to
+// answer the app; nothing is held while this runs. It must never run inline:
+// cloud.RequestTimeout (15 s) equals the app's own PUT /v1/controllers timeout
+// on both platforms, so a black-holed uplink (router up, WAN down — SYNs
+// dropped, the realistic "LAN works, internet doesn't" case) would stall the
+// response and the app would report a failed save for a change the relay
+// persisted. The flag is the durable hand-off: if this goroutine loses (cloud
+// down, process restart) the poller's tick retries from it, and
+// SyncControllers' single-flight + ConfigRev guard make a concurrent PUT or
+// tick safe. ctx is cloudCtx(r) — the app hanging up must not abort a call
+// whose local half already landed (issue poolpilot-cloud#71).
+func (s *Server) kickCloudSync(ctx context.Context) {
+	go func() {
+		if err := s.Cloud.SyncControllers(ctx); err != nil {
+			slog.Debug("cloud controller sync deferred to the next poll tick", "err", err)
 		}
-	}); uerr != nil {
-		slog.Warn("clear cloud sync flag", "guid", guid, "err", uerr)
-	}
+	}()
 }
 
 // getControllers lists the configured controllers. It NEVER exposes controller
