@@ -594,10 +594,12 @@ type PushSourceLookupResponse struct {
 	Subscribed bool `json:"subscribed"`
 	// ExpiresAt is the RFC3339 deadline by which this device must re-prove the
 	// secret or stop receiving (see PushSourceSubscribeResponse.ExpiresAt).
-	// Present whenever a subscription row exists for DeviceID — including an
-	// already-lapsed one, in which case Subscribed is false and this timestamp
-	// is in the past, which lets the app distinguish "never subscribed" from
-	// "renewal missed" instead of guessing.
+	// Present only while a subscription row for DeviceID still exists — a
+	// teardown deletes the row outright, so an absent ExpiresAt means only "no
+	// live subscription for this device" and is deliberately indistinguishable
+	// between "never subscribed" and "subscription torn down". A PAST
+	// ExpiresAt next to Subscribed==false isn't a distinct signal either — it
+	// is just a lapsed row the janitor hasn't swept yet.
 	ExpiresAt string `json:"expires_at,omitempty"`
 }
 
