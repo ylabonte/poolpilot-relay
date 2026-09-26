@@ -861,6 +861,14 @@ func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 	}
 }
 
+// maxControllerLabelLen / maxControllerLanAddressLen mirror the control
+// plane's caps on POST /controllers and PUT /controllers/{guid} (bytes, like
+// its len()); putControllers rejects above them so both paths agree.
+const (
+	maxControllerLabelLen      = 120
+	maxControllerLanAddressLen = 300
+)
+
 // putControllers is the canonical multi-controller upsert PUT /v1/controllers
 // with on-relay dedup (D5, R3): normalize the submitted address, then
 //
@@ -879,6 +887,20 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 	}
 	if !preset.IsSupported(cfg.Preset) {
 		writeErr(w, http.StatusBadRequest, "unsupported_preset")
+		return
+	}
+	// Mirror the control plane's caps (POST /controllers and PUT
+	// /controllers/{guid} answer 400 above 120/300 bytes) so a body the cloud
+	// will refuse is never persisted locally: on the MISS path registration
+	// would fail visibly anyway, but on a dedup HIT the local write lands
+	// first and the refresh's 400 is a final rejection — the cloud row would
+	// stay stale with nothing but a log line to show for it.
+	if len(cfg.Label) > maxControllerLabelLen {
+		writeErr(w, http.StatusBadRequest, "label_too_long")
+		return
+	}
+	if len(cfg.LanAddress) > maxControllerLanAddressLen {
+		writeErr(w, http.StatusBadRequest, "lan_address_too_long")
 		return
 	}
 	// Issue poolpilot-cloud#36 SSRF hardening: reject a lan_address pointed at loopback/

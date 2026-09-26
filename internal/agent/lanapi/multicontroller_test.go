@@ -1611,3 +1611,33 @@ func TestPutControllersConfigChangeReturnsPromptlyWhileTheCloudBlackHoles(t *tes
 	}
 }
 
+// Over-long label / lan_address are refused up front with the cloud's own caps
+// (120 / 300 bytes): a body the control plane would answer 400 to must never
+// be persisted locally, because on a dedup HIT that 400 would be a final
+// refresh rejection and the cloud row would silently stay stale.
+func TestPutControllersRejectsOverLongLabelOrAddress(t *testing.T) {
+	f := newFixture(t)
+	token := f.pair(t)
+
+	resp, raw := f.do(t, "PUT", "/v1/controllers", token, wire.ControllerConfig{
+		Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: strings.Repeat("x", 121),
+	})
+	if resp.StatusCode != http.StatusBadRequest || errCode(t, raw) != "label_too_long" {
+		t.Errorf("121-byte label: HTTP %d %s, want 400 label_too_long", resp.StatusCode, raw)
+	}
+	resp, raw = f.do(t, "PUT", "/v1/controllers", token, wire.ControllerConfig{
+		Preset: "procon-ip", LanAddress: strings.Repeat("a", 301),
+	})
+	if resp.StatusCode != http.StatusBadRequest || errCode(t, raw) != "lan_address_too_long" {
+		t.Errorf("301-byte lan_address: HTTP %d %s, want 400 lan_address_too_long", resp.StatusCode, raw)
+	}
+	for _, c := range f.store.Get().Controllers {
+		if c.LanAddress != "" {
+			t.Errorf("a refused body must not be persisted: %+v", c)
+		}
+	}
+	// Exactly at the caps is fine (the cloud's check is strict-greater too).
+	putControllerOK(t, f, token, wire.ControllerConfig{
+		Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: strings.Repeat("x", 120),
+	})
+}
