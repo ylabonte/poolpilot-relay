@@ -13,6 +13,19 @@ import (
 	"github.com/ylabonte/poolpilot-relay/wire"
 )
 
+// controller0 returns a copy of the single active controller (index 0), or
+// the zero Controller when none exists. Test-only: the production package
+// dropped its own exported Controller0 once every non-test caller had moved
+// off it (only EnsureController0 still backs the boot-time seed); tests
+// across a few packages still want a read-only accessor for the same slot,
+// so each package duplicates this instead of state re-exporting one.
+func controller0(s State) Controller {
+	if len(s.Controllers) > 0 {
+		return s.Controllers[0]
+	}
+	return Controller{}
+}
+
 func TestOpenFreshMintsIdentityAndPersists(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	st, err := Open(path)
@@ -86,7 +99,7 @@ func TestUpdatePersistsAndRoundTrips(t *testing.T) {
 	if s.Cloud.FRPS.ServerPort != 7000 || s.Cloud.FRPS.AuthToken != "shared" {
 		t.Errorf("frps round-trip: %+v", s.Cloud.FRPS)
 	}
-	rs := s.Controller0().AlertState["r1"]
+	rs := controller0(s).AlertState["r1"]
 	if rs == nil || !rs.Notified || !rs.LastNotifiedAt.Equal(when) {
 		t.Errorf("alert rule state round-trip: %+v", rs)
 	}
@@ -180,7 +193,7 @@ func TestUpdateFailureDoesNotAdvanceMemory(t *testing.T) {
 	if err := st.Update(func(s *State) { s.EnsureController0().Label = "x" }); err == nil {
 		t.Fatal("Update should fail when persistence fails")
 	}
-	if st.Get().Controller0().Label != "" {
+	if controller0(st.Get()).Label != "" {
 		t.Error("in-memory state advanced despite persist failure")
 	}
 }

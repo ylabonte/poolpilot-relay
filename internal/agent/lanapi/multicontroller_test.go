@@ -344,6 +344,21 @@ func TestRotateControllerCloudFailureLeavesStateUnchanged(t *testing.T) {
 	}
 }
 
+// rawRuleFields decodes a GET/PUT alert-rules response body one level less
+// than wire.AlertRules, so a caller can tell an omitted field from a present
+// zero value — something decoding straight into wire.AlertRule can never see
+// (encoding/json can't distinguish `0` from absent through an omitempty tag).
+func rawRuleFields(t *testing.T, raw []byte) []map[string]json.RawMessage {
+	t.Helper()
+	var parsed struct {
+		Rules []map[string]json.RawMessage `json:"rules"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatalf("unmarshal raw rules: %v (%s)", err, raw)
+	}
+	return parsed.Rules
+}
+
 // Per-controller alert rules are independent: a new controller is seeded with
 // defaults, and PUT replaces only its own set. Unknown GUID → 404.
 func TestPerControllerAlertRules(t *testing.T) {
@@ -361,13 +376,28 @@ func TestPerControllerAlertRules(t *testing.T) {
 		t.Fatalf("new controller must be seeded with default rules: %s (%v)", raw, err)
 	}
 	// The per-controller GET enriches measurement_band rules with the relay's
-	// researched default tolerance (response-only); other kinds omit it.
-	for _, r := range rules.Rules {
-		if r.Kind == wire.RuleKindMeasurementBand && r.DefaultOkTolerance == 0 {
-			t.Errorf("band rule %s: GET missing default_ok_tolerance", r.ID)
-		}
-		if r.Kind != wire.RuleKindMeasurementBand && r.DefaultOkTolerance != 0 {
-			t.Errorf("%s rule %s: default_ok_tolerance = %v, want omitted", r.Kind, r.ID, r.DefaultOkTolerance)
+	// researched default tolerance (response-only); other kinds omit it. Check
+	// both the decoded value AND, at the raw level, that a non-band rule's
+	// default_ok_tolerance key is genuinely ABSENT (omitempty) rather than
+	// merely decoding to the zero value — a decoded-struct check alone can't
+	// tell "0" from "absent" apart.
+	rawFields := rawRuleFields(t, raw)
+	for i, r := range rules.Rules {
+		_, present := rawFields[i]["default_ok_tolerance"]
+		if r.Kind == wire.RuleKindMeasurementBand {
+			if r.DefaultOkTolerance == 0 {
+				t.Errorf("band rule %s: GET missing default_ok_tolerance", r.ID)
+			}
+			if !present {
+				t.Errorf("band rule %s: GET must include default_ok_tolerance on the wire", r.ID)
+			}
+		} else {
+			if r.DefaultOkTolerance != 0 {
+				t.Errorf("%s rule %s: default_ok_tolerance = %v, want omitted", r.Kind, r.ID, r.DefaultOkTolerance)
+			}
+			if present {
+				t.Errorf("%s rule %s: GET must omit default_ok_tolerance on the wire, got %s", r.Kind, r.ID, rawFields[i]["default_ok_tolerance"])
+			}
 		}
 	}
 
@@ -415,6 +445,12 @@ func TestPerControllerAlertRules(t *testing.T) {
 	if strings.Contains(string(raw), "9.9") {
 		t.Errorf("put echo reflects the client-supplied default_ok_tolerance: %s", raw)
 	}
+	// At the raw level (not just the decoded zero value): the stale rule's
+	// default_ok_tolerance key must be genuinely absent from the PUT echo.
+	putFields := rawRuleFields(t, raw)
+	if _, present := putFields[1]["default_ok_tolerance"]; present {
+		t.Errorf("stale_data put echo must omit default_ok_tolerance on the wire, got %s", putFields[1]["default_ok_tolerance"])
+	}
 	// … and a subsequent GET enriches measurement_band rules with the relay's
 	// default the same way.
 	resp, raw = f.do(t, "GET", "/v1/controllers/"+g1+"/alert-rules", token, nil)
@@ -431,6 +467,14 @@ func TestPerControllerAlertRules(t *testing.T) {
 	if enriched.Rules[1].DefaultOkTolerance != 0 {
 		t.Errorf("stale_data get default_ok_tolerance = %v, want omitted", enriched.Rules[1].DefaultOkTolerance)
 	}
+	// At the raw level: the stale rule's default_ok_tolerance key must be
+	// genuinely absent from this GET too — this is the omitempty contract the
+	// removed guid-less alias test used to pin (bytes.Contains on a
+	// stale_data-only GET); a decoded-struct check alone can't see it.
+	getFields := rawRuleFields(t, raw)
+	if _, present := getFields[1]["default_ok_tolerance"]; present {
+		t.Errorf("stale_data get must omit default_ok_tolerance on the wire, got %s", getFields[1]["default_ok_tolerance"])
+	}
 
 	// Any invalid rule rejects the whole set, leaving the persisted rules
 	// unchanged.
@@ -442,7 +486,7 @@ func TestPerControllerAlertRules(t *testing.T) {
 	if resp.StatusCode != http.StatusBadRequest || errCode(t, raw) != "invalid_rule" {
 		t.Errorf("invalid rules: HTTP %d %s", resp.StatusCode, raw)
 	}
-	if got, _ := f.store.Get().FindController(g1); len(got.AlertRules) != 2 || got.AlertRules[0].ID != "app-ph" {
+	if got, _ := f.store.Get().FindController(g1); len(got.AlertRules) != 2 || got.AlertRules[0].ID != "app-ph" || got.AlertRules[1].ID != "app-stale" {
 		t.Errorf("invalid PUT must not mutate rules: %+v", got.AlertRules)
 	}
 
@@ -1542,8 +1586,8 @@ func TestPutControllersPresetSwitchRefreshesCloudRow(t *testing.T) {
 	if upd["preset"] != "violet" || upd["label"] != "Violet Pool" || upd["lan_address"] != addr(dc.URL) {
 		t.Fatalf("cloud PUT /controllers/%s body = %v, want preset violet / label Violet Pool", g1, upd)
 	}
-	waitFor(t, "the pending flag to clear", func() bool { return !f.store.Get().Controller0().CloudSyncPending })
-	if c := f.store.Get().Controller0(); c.Preset != "violet" {
+	waitFor(t, "the pending flag to clear", func() bool { return !controller0(f.store.Get()).CloudSyncPending })
+	if c := controller0(f.store.Get()); c.Preset != "violet" {
 		t.Errorf("persisted controller preset = %q, want violet", c.Preset)
 	}
 }
@@ -1563,7 +1607,7 @@ func TestPutControllersCredsOnlyRePutSkipsCloudUpdate(t *testing.T) {
 	if upd := f.cloudUpdateFor(g1); upd != nil {
 		t.Errorf("creds-only re-PUT must not PUT /controllers/{guid}: %v", upd)
 	}
-	if c := f.store.Get().Controller0(); c.CloudSyncPending || c.Username != "admin2" {
+	if c := controller0(f.store.Get()); c.CloudSyncPending || c.Username != "admin2" {
 		t.Errorf("controller = %+v, want creds updated and not pending", c)
 	}
 }
@@ -1586,7 +1630,7 @@ func TestPutControllersConfigChangeCloudDownFlagsPending(t *testing.T) {
 	if g1 != g2 {
 		t.Fatalf("GUID changed across a dedup HIT: %q vs %q", g1, g2)
 	}
-	c := f.store.Get().Controller0()
+	c := controller0(f.store.Get())
 	if c.Label != "Renamed" || !c.CloudSyncPending {
 		t.Errorf("controller = label %q pending %v, want Renamed / pending", c.Label, c.CloudSyncPending)
 	}
@@ -1606,8 +1650,8 @@ func TestPutControllersConfigChangeCloudRejectionDropsFlag(t *testing.T) {
 	putControllerOK(t, f, token, wire.ControllerConfig{
 		Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: "Renamed",
 	})
-	waitFor(t, "the rejected refresh to drop the flag", func() bool { return !f.store.Get().Controller0().CloudSyncPending })
-	if c := f.store.Get().Controller0(); c.Label != "Renamed" {
+	waitFor(t, "the rejected refresh to drop the flag", func() bool { return !controller0(f.store.Get()).CloudSyncPending })
+	if c := controller0(f.store.Get()); c.Label != "Renamed" {
 		t.Errorf("controller label = %q, want Renamed (the local change stands)", c.Label)
 	}
 }
@@ -1626,7 +1670,7 @@ func TestPutControllersConfigChangeSubscriptionInactiveKeepsPending(t *testing.T
 		Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: "Renamed",
 	})
 	waitFor(t, "the refresh to be attempted", func() bool { return f.updateAttempts.Load() >= 1 })
-	if c := f.store.Get().Controller0(); !c.CloudSyncPending {
+	if c := controller0(f.store.Get()); !c.CloudSyncPending {
 		t.Errorf("controller = %+v, want still pending (403 is recoverable)", c)
 	}
 }
@@ -1660,7 +1704,7 @@ func TestPutControllersConfigChangeReturnsPromptlyWhileTheCloudBlackHoles(t *tes
 		t.Fatalf("GUID changed across a dedup HIT: %q vs %q", g1, g2)
 	}
 	waitFor(t, "the refresh to be attempted", func() bool { return f.updateAttempts.Load() >= 1 })
-	c := f.store.Get().Controller0()
+	c := controller0(f.store.Get())
 	if c.Label != "Renamed" || !c.CloudSyncPending {
 		t.Errorf("controller = label %q pending %v, want Renamed / pending for the poller", c.Label, c.CloudSyncPending)
 	}

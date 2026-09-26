@@ -31,12 +31,15 @@
 // The v2 shape ships full multi-device pairing (each Device carries its own
 // LAN-API bearer, added/revoked independently) and multi-controller support
 // (the Controllers slice, one entry per registered controller). The
-// Controller0/EnsureController0 helpers remain only as the compat bridge
-// behind the boot-time default alert-rule seed (cmd/poolpilot-relay/main.go);
-// new call sites operate on the Devices/Controllers slices directly. The PUT
+// EnsureController0 helper remains only as the compat bridge behind the
+// boot-time default alert-rule seed (cmd/poolpilot-relay/main.go); new call
+// sites operate on the Devices/Controllers slices directly. The PUT
 // /v1/controller sibling alias was removed in poolpilot-cloud#113, and the
 // single-controller GET/PUT /v1/alert-rules aliases were removed once apps
-// moved to the guid-scoped route.
+// moved to the guid-scoped route — its read-only sibling Controller0 had no
+// production caller left at that point either, and moved into a
+// package-local test helper (each consuming package's tests duplicate the
+// same few lines rather than re-exporting it from state).
 package state
 
 import (
@@ -248,16 +251,6 @@ func (s State) AutoUpdate() bool { return !s.Update.AutoDisabled }
 // configured at least once.
 func (s State) ControllerConfigured() bool {
 	return len(s.Controllers) > 0 && s.Controllers[0].LanAddress != ""
-}
-
-// Controller0 returns a copy of the single active controller (index 0), or the
-// zero Controller when none exists. Phase-1 bridge for the single-controller
-// consumers; later phases operate on the Controllers slice directly.
-func (s State) Controller0() Controller {
-	if len(s.Controllers) > 0 {
-		return s.Controllers[0]
-	}
-	return Controller{}
 }
 
 // EnsureController0 returns a pointer to the index-0 controller, appending a

@@ -21,6 +21,19 @@ import (
 	"github.com/ylabonte/poolpilot-relay/wire"
 )
 
+// controller0 returns a copy of the single active controller (index 0), or
+// the zero Controller when none exists. Test-only helper, shared by this
+// file and multicontroller_test.go: state.Controller0 was removed once its
+// production callers were all gone; this duplicates the same few lines
+// locally rather than state re-exporting a read-only accessor with no
+// production use.
+func controller0(s state.State) state.Controller {
+	if len(s.Controllers) > 0 {
+		return s.Controllers[0]
+	}
+	return state.Controller{}
+}
+
 type pairedRecorder struct{ paired atomic.Bool }
 
 func (p *pairedRecorder) UpdatePaired(v bool) { p.paired.Store(v) }
@@ -526,7 +539,7 @@ func TestFullPairConfigureFlow(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("reconfigure: HTTP %d %s", resp.StatusCode, raw)
 	}
-	if got := f.store.Get().Controller0(); got.GUID != "guid1" || got.Label != "Renamed" {
+	if got := controller0(f.store.Get()); got.GUID != "guid1" || got.Label != "Renamed" {
 		t.Errorf("controller after reconfigure: %+v", got)
 	}
 
@@ -1169,7 +1182,7 @@ func TestPutControllersAcceptsViolet(t *testing.T) {
 	if guid == "" {
 		t.Fatal("expected a non-empty GUID")
 	}
-	if got := f.store.Get().Controller0(); got.Preset != "violet" || got.GUID != guid {
+	if got := controller0(f.store.Get()); got.Preset != "violet" || got.GUID != guid {
 		t.Errorf("persisted controller = %+v, want preset violet guid %q", got, guid)
 	}
 }

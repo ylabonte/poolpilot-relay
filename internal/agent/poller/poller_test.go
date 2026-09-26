@@ -23,6 +23,18 @@ import (
 	"github.com/ylabonte/poolpilot-relay/wire"
 )
 
+// controller0 returns a copy of the single active controller (index 0), or
+// the zero Controller when none exists. Test-only helper: state.Controller0
+// was removed once its production callers were all gone; this duplicates
+// the same few lines locally rather than state re-exporting a read-only
+// accessor with no production use.
+func controller0(s state.State) state.Controller {
+	if len(s.Controllers) > 0 {
+		return s.Controllers[0]
+	}
+	return state.Controller{}
+}
+
 func TestIntervalParsing(t *testing.T) {
 	t.Setenv("POLL_INTERVAL", "")
 	if d, err := Interval(); err != nil || d != DefaultInterval {
@@ -116,7 +128,7 @@ func TestTickPollsEvaluatesAndDelivers(t *testing.T) {
 		t.Fatalf("alert before debounce satisfied: %+v", alerts)
 	}
 	// Rule state must be persisted mid-debounce (reboot safety).
-	if rs := st.Get().Controller0().AlertState["r-ph"]; rs == nil || rs.PendingCount != 1 {
+	if rs := controller0(st.Get()).AlertState["r-ph"]; rs == nil || rs.PendingCount != 1 {
 		t.Fatalf("persisted rule state after tick 1: %+v", rs)
 	}
 
@@ -640,7 +652,7 @@ func TestTickRetriesPendingControllerCloudSync(t *testing.T) {
 	if len(puts) != 1 || puts[0] != "/controllers/g1 preset=violet" {
 		t.Fatalf("cloud PUTs after tick = %v, want exactly one for g1 carrying preset violet", puts)
 	}
-	if c := st.Get().Controller0(); c.CloudSyncPending {
+	if c := controller0(st.Get()); c.CloudSyncPending {
 		t.Errorf("flag still pending after a confirmed sync: %+v", c)
 	}
 
