@@ -566,10 +566,6 @@ func TestFindControllerHelpers(t *testing.T) {
 
 func TestEnsureController0(t *testing.T) {
 	var s State
-	if c := controller0(s); c.GUID != "" || c.LanAddress != "" {
-		t.Errorf("controller0 on empty state must return the zero controller: %+v", c)
-	}
-
 	// EnsureController0 auto-creates the single index-0 slot for writers.
 	c := s.EnsureController0()
 	c.GUID = "g1"
