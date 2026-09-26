@@ -210,12 +210,10 @@ func (s *Server) baseMux() *http.ServeMux {
 	mux.Handle("POST /v1/controllers/{guid}/web-session", s.authed(s.webSessionHandler))
 	mux.Handle("GET /v1/controllers/{guid}/alert-rules", s.authed(s.getControllerRules))
 	mux.Handle("PUT /v1/controllers/{guid}/alert-rules", s.authed(s.putControllerRules))
-	// Compat aliases (D4) — kept one release; thin wrappers over controller[0]
-	// semantics so pre-multi apps keep working. The PUT /v1/controller sibling
-	// alias was removed in issue poolpilot-cloud#113: no caller (app or internal) ever spoke
-	// it after the app's own compat retry was deleted in pool-apps#474.
-	mux.Handle("GET /v1/alert-rules", s.authed(s.getRules))
-	mux.Handle("PUT /v1/alert-rules", s.authed(s.putRules))
+	// The guid-less GET/PUT /v1/alert-rules compat aliases (thin wrappers over
+	// controller[0], for pre-multi apps) are gone: apps now speak the guid-scoped
+	// route above. The PUT /v1/controller sibling alias was removed earlier, in
+	// issue poolpilot-cloud#113.
 	mux.Handle("GET /v1/status", s.authed(s.status))
 	// Listing devices is identical on both legs; deleting differs (the last-
 	// device guard is LAN-only, D9), so DELETE is mounted per-leg by the callers.
@@ -1741,33 +1739,6 @@ func (s *Server) controllerStatus(st state.State, c state.Controller, ps tunnel.
 		cs.Measurements = append(cs.Measurements, m)
 	}
 	return cs
-}
-
-func (s *Server) getRules(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, wire.AlertRules{Rules: withDefaultOkTolerance(s.Store.Get().Controller0().AlertRules)})
-}
-
-// putRules is a FULL replace: the request body is the complete new rule set.
-func (s *Server) putRules(w http.ResponseWriter, r *http.Request) {
-	var req wire.AlertRules
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_json")
-		return
-	}
-	if err := alert.ValidateRules(req.Rules); err != nil {
-		slog.Info("rejected alert rules", "err", err)
-		writeErr(w, http.StatusBadRequest, "invalid_rule")
-		return
-	}
-	err := s.Store.Update(func(doc *state.State) {
-		setControllerRules(doc.EnsureController0(), req.Rules)
-	})
-	if err != nil {
-		slog.Error("persist rules", "err", err)
-		writeErr(w, http.StatusInternalServerError, "persist_failed")
-		return
-	}
-	writeJSON(w, http.StatusOK, wire.AlertRules{Rules: withDefaultOkTolerance(req.Rules)})
 }
 
 // factoryReset wipes local state, then best-effort releases this relay's

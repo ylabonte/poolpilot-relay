@@ -123,10 +123,11 @@ func runLoop(runFn func() error) int {
 // default chlorine rule has it (and its AlertState entry) removed.
 //
 // Policy: because this runs on every boot (and a self-updating relay restarts on
-// its own), a default rule the user DELETED via a full-replace PUT /v1/alert-rules
-// reappears at the factory default next boot — deleting a default resets it, it
-// does not remove it permanently. To suppress a default durably, keep it in the
-// list with enabled:false (reconcile marks it present regardless of Enabled).
+// its own), a default rule the user DELETED via a full-replace PUT
+// /v1/controllers/{guid}/alert-rules reappears at the factory default next
+// boot — deleting a default resets it, it does not remove it permanently. To
+// suppress a default durably, keep it in the list with enabled:false (reconcile
+// marks it present regardless of Enabled).
 func reconcileControllerSeeds(s *state.State) {
 	if len(s.Controllers) == 0 {
 		s.EnsureController0()

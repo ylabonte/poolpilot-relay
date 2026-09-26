@@ -18,6 +18,18 @@ import (
 	"github.com/ylabonte/poolpilot-relay/wire"
 )
 
+// controller0 returns a copy of the single active controller (index 0), or
+// the zero Controller when none exists. Test-only helper: state.Controller0
+// was removed once its production callers were all gone; this duplicates
+// the same few lines locally rather than state re-exporting a read-only
+// accessor with no production use.
+func controller0(s state.State) state.Controller {
+	if len(s.Controllers) > 0 {
+		return s.Controllers[0]
+	}
+	return state.Controller{}
+}
+
 func newStore(t *testing.T, baseURL string) *state.Store {
 	t.Helper()
 	st, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
@@ -1127,7 +1139,7 @@ func TestSyncControllersResendsAConfigChangedMidFlightEvenWhenValuesMatch(t *tes
 	if got := calls.Load(); got != 2 {
 		t.Fatalf("cloud calls = %d, want 2 (the stale success must not clear the re-raised flag; the next round resends)", got)
 	}
-	if c := st.Get().Controller0(); c.CloudSyncPending || c.ConfigRev != 3 {
+	if c := controller0(st.Get()); c.CloudSyncPending || c.ConfigRev != 3 {
 		t.Errorf("controller = %+v, want cleared at rev 3", c)
 	}
 }
@@ -1171,7 +1183,7 @@ func TestSyncControllersIsSingleFlight(t *testing.T) {
 	if err := <-done; !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("first sync err = %v, want ErrUnavailable", err)
 	}
-	if !st.Get().Controller0().CloudSyncPending {
+	if !controller0(st.Get()).CloudSyncPending {
 		t.Error("a transient failure must keep the flag")
 	}
 	// The loser left a rerun request, and the holder's pass ended without
@@ -1251,7 +1263,7 @@ func TestSyncControllersRerunsForAKickThatLostTheLock(t *testing.T) {
 	if g2 == nil || g2.CloudSyncPending {
 		t.Errorf("g2 = %+v, want cleared by the rerun", g2)
 	}
-	if !st.Get().Controller0().CloudSyncPending {
+	if !controller0(st.Get()).CloudSyncPending {
 		t.Error("g1's transient failure must keep its flag")
 	}
 }
@@ -1321,7 +1333,7 @@ func TestSyncControllersBoundsRoundsWhenTheConfigKeepsChanging(t *testing.T) {
 	if calls.Load() != maxSyncRounds {
 		t.Fatalf("cloud calls = %d, want exactly maxSyncRounds (%d)", calls.Load(), maxSyncRounds)
 	}
-	if !st.Get().Controller0().CloudSyncPending {
+	if !controller0(st.Get()).CloudSyncPending {
 		t.Error("the still-changing controller must stay flagged for the next tick")
 	}
 }

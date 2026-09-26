@@ -275,7 +275,7 @@ type ActiveAlert struct {
 	Since           string  `json:"since"` // RFC 3339
 }
 
-// ---- Alert rules (GET/PUT /v1/alert-rules; PUT is a full replace) ----
+// ---- Alert rules (GET/PUT /v1/controllers/{guid}/alert-rules; PUT is a full replace) ----
 
 // Alert rule kinds. The engine dispatches on Kind — that is the day-one
 // extensibility seam for the future custom-alarm-events UI.
@@ -318,7 +318,7 @@ type AlertRule struct {
 	NotifyRecovery  bool  `json:"notify_recovery"`
 }
 
-// AlertRules is the GET/PUT /v1/alert-rules payload. PUT is a full replace, but
+// AlertRules is the GET/PUT /v1/controllers/{guid}/alert-rules payload. PUT is a full replace, but
 // source=="default" rules are reconciled against the controller's preset at boot
 // and at registration: dropping a default rule from the PUT list resets it to the
 // factory default on the next reconcile rather than removing it permanently — to
@@ -594,10 +594,12 @@ type PushSourceLookupResponse struct {
 	Subscribed bool `json:"subscribed"`
 	// ExpiresAt is the RFC3339 deadline by which this device must re-prove the
 	// secret or stop receiving (see PushSourceSubscribeResponse.ExpiresAt).
-	// Present whenever a subscription row exists for DeviceID — including an
-	// already-lapsed one, in which case Subscribed is false and this timestamp
-	// is in the past, which lets the app distinguish "never subscribed" from
-	// "renewal missed" instead of guessing.
+	// Present only while a subscription row for DeviceID still exists — a
+	// teardown deletes the row outright, so an absent ExpiresAt means only "no
+	// live subscription for this device" and is deliberately indistinguishable
+	// between "never subscribed" and "subscription torn down". A PAST
+	// ExpiresAt next to Subscribed==false isn't a distinct signal either — it
+	// is just a lapsed row the janitor hasn't swept yet.
 	ExpiresAt string `json:"expires_at,omitempty"`
 }
 

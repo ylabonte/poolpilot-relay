@@ -21,6 +21,19 @@ import (
 	"github.com/ylabonte/poolpilot-relay/wire"
 )
 
+// controller0 returns a copy of the single active controller (index 0), or
+// the zero Controller when none exists. Test-only helper, shared by this
+// file and multicontroller_test.go: state.Controller0 was removed once its
+// production callers were all gone; this duplicates the same few lines
+// locally rather than state re-exporting a read-only accessor with no
+// production use.
+func controller0(s state.State) state.Controller {
+	if len(s.Controllers) > 0 {
+		return s.Controllers[0]
+	}
+	return state.Controller{}
+}
+
 type pairedRecorder struct{ paired atomic.Bool }
 
 func (p *pairedRecorder) UpdatePaired(v bool) { p.paired.Store(v) }
@@ -526,7 +539,7 @@ func TestFullPairConfigureFlow(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("reconfigure: HTTP %d %s", resp.StatusCode, raw)
 	}
-	if got := f.store.Get().Controller0(); got.GUID != "guid1" || got.Label != "Renamed" {
+	if got := controller0(f.store.Get()); got.GUID != "guid1" || got.Label != "Renamed" {
 		t.Errorf("controller after reconfigure: %+v", got)
 	}
 
@@ -1169,7 +1182,7 @@ func TestPutControllersAcceptsViolet(t *testing.T) {
 	if guid == "" {
 		t.Fatal("expected a non-empty GUID")
 	}
-	if got := f.store.Get().Controller0(); got.Preset != "violet" || got.GUID != guid {
+	if got := controller0(f.store.Get()); got.Preset != "violet" || got.GUID != guid {
 		t.Errorf("persisted controller = %+v, want preset violet guid %q", got, guid)
 	}
 }
@@ -1209,107 +1222,6 @@ func TestPutControllersVioletAuthFailed422(t *testing.T) {
 	})
 	if resp.StatusCode != http.StatusUnprocessableEntity || errCode(t, raw) != "controller_auth_failed" {
 		t.Errorf("violet auth failed: HTTP %d %s", resp.StatusCode, raw)
-	}
-}
-
-func TestAlertRulesGetAndPut(t *testing.T) {
-	f := newFixture(t)
-	token := f.pair(t)
-
-	// Seed happens in main; simulate it.
-	seeded := []wire.AlertRule{{
-		ID: "default-stale", Kind: wire.RuleKindStaleData, Enabled: true, Source: "default",
-		StaleAfterSeconds: 5400, CooldownSeconds: 86400, NotifyRecovery: true,
-	}}
-	if err := f.store.Update(func(s *state.State) { s.EnsureController0().AlertRules = seeded }); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-
-	resp, raw := f.do(t, "GET", "/v1/alert-rules", token, nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("get rules: HTTP %d", resp.StatusCode)
-	}
-	var rules wire.AlertRules
-	if err := json.Unmarshal(raw, &rules); err != nil || len(rules.Rules) != 1 {
-		t.Fatalf("rules = %s (%v)", raw, err)
-	}
-	// stale_data rules carry no default tolerance: omitempty keeps the
-	// response-only field off the wire entirely.
-	if bytes.Contains(raw, []byte("default_ok_tolerance")) {
-		t.Errorf("stale_data GET must omit default_ok_tolerance: %s", raw)
-	}
-
-	// Full replace with a valid set. Both rules carry a bogus client-supplied
-	// default_ok_tolerance, to pin that the relay strips it before persisting
-	// and recomputes it on every response instead of trusting the client — the
-	// stale_data rule pins the non-band branch: never enriched, never echoed.
-	newSet := wire.AlertRules{Rules: []wire.AlertRule{{
-		ID: "app-ph", Kind: wire.RuleKindMeasurementBand, Enabled: true, Source: "app",
-		MeasurementType: "ph", NotifySeverities: []string{"warn", "bad"},
-		DebouncePolls: 2, CooldownSeconds: 600, NotifyRecovery: true,
-		DefaultOkTolerance: 9.9,
-	}, {
-		ID: "app-stale", Kind: wire.RuleKindStaleData, Enabled: true, Source: "app",
-		StaleAfterSeconds: 900, CooldownSeconds: 600,
-		DefaultOkTolerance: 9.9,
-	}}}
-	resp, raw = f.do(t, "PUT", "/v1/alert-rules", token, newSet)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("put rules: HTTP %d", resp.StatusCode)
-	}
-	got := f.store.Get().Controller0().AlertRules
-	if len(got) != 2 || got[0].ID != "app-ph" || got[1].ID != "app-stale" {
-		t.Fatalf("rules after PUT (full replace): %+v", got)
-	}
-	// Response-only: never persisted (even when the client sends it) …
-	for _, r := range got {
-		if r.DefaultOkTolerance != 0 {
-			t.Errorf("rule %s: default_ok_tolerance persisted as %v, want 0 (stripped)", r.ID, r.DefaultOkTolerance)
-		}
-	}
-	// … the PUT 200 echoes the recomputed relay default (matching GET): the
-	// band rule gets the pH default, the stale rule omits the field — the
-	// client's 9.9 is reflected nowhere.
-	var echoed wire.AlertRules
-	if err := json.Unmarshal(raw, &echoed); err != nil || len(echoed.Rules) != 2 {
-		t.Fatalf("put echo = %s (%v)", raw, err)
-	}
-	if echoed.Rules[0].DefaultOkTolerance != 0.2 {
-		t.Errorf("put echo default_ok_tolerance = %v, want 0.2 (relay pH default)", echoed.Rules[0].DefaultOkTolerance)
-	}
-	if echoed.Rules[1].DefaultOkTolerance != 0 {
-		t.Errorf("stale_data put echo default_ok_tolerance = %v, want omitted", echoed.Rules[1].DefaultOkTolerance)
-	}
-	if bytes.Contains(raw, []byte("9.9")) {
-		t.Errorf("put echo reflects the client-supplied default_ok_tolerance: %s", raw)
-	}
-	// … and GET enriches measurement_band rules with the relay's default.
-	resp, raw = f.do(t, "GET", "/v1/alert-rules", token, nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("get rules after put: HTTP %d", resp.StatusCode)
-	}
-	var enriched wire.AlertRules
-	if err := json.Unmarshal(raw, &enriched); err != nil || len(enriched.Rules) != 2 {
-		t.Fatalf("rules after put = %s (%v)", raw, err)
-	}
-	if enriched.Rules[0].DefaultOkTolerance != 0.2 {
-		t.Errorf("get default_ok_tolerance = %v, want 0.2 (relay pH default)", enriched.Rules[0].DefaultOkTolerance)
-	}
-	if enriched.Rules[1].DefaultOkTolerance != 0 {
-		t.Errorf("stale_data get default_ok_tolerance = %v, want omitted", enriched.Rules[1].DefaultOkTolerance)
-	}
-
-	// Any invalid rule rejects the whole set.
-	bad := wire.AlertRules{Rules: []wire.AlertRule{
-		newSet.Rules[0],
-		{ID: "nope", Kind: "sms", CooldownSeconds: 1},
-	}}
-	resp, raw = f.do(t, "PUT", "/v1/alert-rules", token, bad)
-	if resp.StatusCode != http.StatusBadRequest || errCode(t, raw) != "invalid_rule" {
-		t.Errorf("invalid rules: HTTP %d %s", resp.StatusCode, raw)
-	}
-	if got := f.store.Get().Controller0().AlertRules; len(got) != 2 || got[0].ID != "app-ph" {
-		t.Errorf("invalid PUT must not mutate rules: %+v", got)
 	}
 }
 
