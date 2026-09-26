@@ -19,7 +19,6 @@ import (
 	"github.com/ylabonte/poolpilot-relay/internal/agent/driver"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/state"
 	"github.com/ylabonte/poolpilot-relay/internal/measure"
-	"github.com/ylabonte/poolpilot-relay/preset"
 	"github.com/ylabonte/poolpilot-relay/wire"
 )
 
@@ -154,6 +153,12 @@ func (p *Poller) tick(ctx context.Context) {
 			slog.Debug("outbox drain deferred", "err", err)
 		}
 	}
+	// Same retry discipline for a controller config change the cloud could not
+	// be told about when it happened (state.Controller.CloudSyncPending): a
+	// no-op unless something is flagged.
+	if err := p.cloud.SyncControllers(ctx); err != nil {
+		slog.Debug("controller cloud sync deferred", "err", err)
+	}
 }
 
 // pollController polls one controller, evaluates its alert rules, persists its
@@ -162,17 +167,11 @@ func (p *Poller) tick(ctx context.Context) {
 // GUID so controllers never cross-contaminate.
 func (p *Poller) pollController(ctx context.Context, ctrl state.Controller) int {
 	now := time.Now()
-	// v1->v2 migration copies Preset verbatim with no backfill (see
-	// internal/agent/state/migrate.go), and Open() doesn't validate it, so a
-	// hand-edited or pre-VIOLET state file can still reach the poller with
-	// Preset == "". Default that to ProCon.IP — the only preset any
-	// pre-VIOLET build could have written — so such a file keeps resolving a
-	// driver instead of failing.
-	presetID := ctrl.Preset
-	if presetID == "" {
-		presetID = preset.ProconIP
-	}
-	drv, err := newDriver(presetID, driver.Config{
+	// A pre-VIOLET or hand-edited state file can still carry Preset == "";
+	// EffectivePreset defaults it to ProCon.IP (see its doc) — the same value
+	// the LAN API reports for this controller, so what the agent advertises
+	// and what it polls can never diverge.
+	drv, err := newDriver(ctrl.EffectivePreset(), driver.Config{
 		BaseURL:  ControllerBaseURL(ctrl),
 		Username: ctrl.Username,
 		Password: ctrl.Password,

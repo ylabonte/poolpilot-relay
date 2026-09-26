@@ -1353,3 +1353,291 @@ func TestRegisterReportsAThrottled429AsTransient(t *testing.T) {
 		t.Fatalf("error code = %q, want cloud_unreachable", code)
 	}
 }
+
+// ---- Controller preset on the wire + cloud config refresh (issues
+// poolpilot-cloud#99 / #100) ----
+
+// dualController serves BOTH drivers' read endpoints on one address —
+// /getReadings as VIOLET (the shared seed fixture) and everything else as
+// ProCon.IP's /GetState.csv — so a test can re-PUT the SAME lan_address under
+// the other preset and have the live probe, which runs on every PUT, succeed
+// either way. No real box answers both; it exists purely to exercise the dedup
+// HIT path's preset switch.
+func dualController(t *testing.T) *httptest.Server {
+	t.Helper()
+	csv, err := os.ReadFile(filepath.Join("..", "..", "proconip", "testdata", "getstate.csv"))
+	if err != nil {
+		t.Fatalf("procon fixture: %v", err)
+	}
+	seed, err := os.ReadFile(filepath.Join("..", "..", "violet", "testdata", "getReadings_seed.json"))
+	if err != nil {
+		t.Fatalf("violet fixture: %v", err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/getReadings") {
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write(seed)
+			return
+		}
+		_, _ = w.Write(csv)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// cloudUpdateFor returns the last body the agent PUT to /controllers/{guid}
+// at the fake cloud, or nil when it never did.
+func (f *fixture) cloudUpdateFor(guid string) map[string]string {
+	f.updatedMu.Lock()
+	defer f.updatedMu.Unlock()
+	return f.updated[guid]
+}
+
+// holdCloudUpdates makes the fake cloud hang every PUT /controllers/{guid}
+// until hold is closed (see fixture.updateHold).
+func (f *fixture) holdCloudUpdates(hold chan struct{}) {
+	f.updateHoldMu.Lock()
+	f.updateHold = hold
+	f.updateHoldMu.Unlock()
+}
+
+// waitFor polls cond until it holds or five seconds pass: the agent's cloud
+// refresh runs off the request path (kickCloudSync), so tests observe its
+// outcome instead of awaiting it.
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
+// GET /v1/controllers reports each controller's preset (issue
+// poolpilot-cloud#100) — the value the agent drives it as, so a legacy state
+// file whose controller carries no preset at all reports the ProCon.IP
+// default the poller applies, never an empty string the app would have to
+// treat as unknown.
+func TestGetControllersCarriesPreset(t *testing.T) {
+	f := newFixture(t)
+	token := f.pair(t)
+	guid := putControllerOK(t, f, token, wire.ControllerConfig{
+		Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: "Pool",
+	})
+	if err := f.store.Update(func(s *state.State) {
+		s.Controllers = append(s.Controllers, state.Controller{
+			LanAddress: "10.0.0.9:80", GUID: "legacy-guid", Label: "Pre-VIOLET file",
+		})
+	}); err != nil {
+		t.Fatalf("seed legacy controller: %v", err)
+	}
+
+	resp, raw := f.do(t, "GET", "/v1/controllers", token, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /v1/controllers: HTTP %d %s", resp.StatusCode, raw)
+	}
+	var list wire.ControllersResponse
+	if err := json.Unmarshal(raw, &list); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	byGUID := map[string]wire.ControllerInfo{}
+	for _, c := range list {
+		byGUID[c.GUID] = c
+	}
+	if got := byGUID[guid].Preset; got != "procon-ip" {
+		t.Errorf("registered controller preset = %q, want procon-ip", got)
+	}
+	if got := byGUID["legacy-guid"].Preset; got != "procon-ip" {
+		t.Errorf("legacy (preset-less) controller preset = %q, want the procon-ip default", got)
+	}
+	if strings.Contains(string(raw), `"preset":""`) {
+		t.Errorf("an empty preset must be omitted, not sent: %s", raw)
+	}
+}
+
+// Dedup HIT with a PRESET switch (ProCon.IP → VIOLET on the same address)
+// keeps the GUID and pushes the new preset + label to the cloud's row via PUT
+// /controllers/{guid} (issue poolpilot-cloud#99) — never a second
+// registration, and no pending flag left behind once the cloud confirmed.
+func TestPutControllersPresetSwitchRefreshesCloudRow(t *testing.T) {
+	f := newFixture(t)
+	token := f.pair(t)
+	dc := dualController(t)
+
+	g1 := putControllerOK(t, f, token, wire.ControllerConfig{
+		Preset: "procon-ip", LanAddress: addr(dc.URL), Label: "Pool",
+	})
+	if f.cloudUpdateFor(g1) != nil {
+		t.Fatalf("registration (MISS) must not PUT /controllers/{guid}: %v", f.cloudUpdateFor(g1))
+	}
+	g2 := putControllerOK(t, f, token, wire.ControllerConfig{
+		Preset: "violet", LanAddress: addr(dc.URL), Label: "Violet Pool",
+	})
+	if g1 != g2 {
+		t.Fatalf("preset switch on the same address must reuse the GUID: %q vs %q", g1, g2)
+	}
+	if f.guidSeq.Load() != 1 {
+		t.Errorf("preset switch must not re-register (registrations=%d)", f.guidSeq.Load())
+	}
+	waitFor(t, "the cloud refresh", func() bool { return f.cloudUpdateFor(g1) != nil })
+	upd := f.cloudUpdateFor(g1)
+	if upd["preset"] != "violet" || upd["label"] != "Violet Pool" || upd["lan_address"] != addr(dc.URL) {
+		t.Fatalf("cloud PUT /controllers/%s body = %v, want preset violet / label Violet Pool", g1, upd)
+	}
+	waitFor(t, "the pending flag to clear", func() bool { return !f.store.Get().Controller0().CloudSyncPending })
+	if c := f.store.Get().Controller0(); c.Preset != "violet" {
+		t.Errorf("persisted controller preset = %q, want violet", c.Preset)
+	}
+}
+
+// A creds-only / use_https-only re-PUT changes nothing the cloud holds, so it
+// must not generate a cloud call at all (the credentials never leave the
+// relay) — and must not flag the controller either.
+func TestPutControllersCredsOnlyRePutSkipsCloudUpdate(t *testing.T) {
+	f := newFixture(t)
+	token := f.pair(t)
+	g1 := putControllerOK(t, f, token, wire.ControllerConfig{
+		Preset: "procon-ip", LanAddress: f.controllerAddr(), Username: "admin", Password: "pool123", Label: "Pool",
+	})
+	putControllerOK(t, f, token, wire.ControllerConfig{
+		Preset: "procon-ip", LanAddress: f.controllerAddr(), Username: "admin2", Password: "pool456", Label: "Pool",
+	})
+	if upd := f.cloudUpdateFor(g1); upd != nil {
+		t.Errorf("creds-only re-PUT must not PUT /controllers/{guid}: %v", upd)
+	}
+	if c := f.store.Get().Controller0(); c.CloudSyncPending || c.Username != "admin2" {
+		t.Errorf("controller = %+v, want creds updated and not pending", c)
+	}
+}
+
+// The cloud being unreachable during a config change must not fail the local
+// reconfigure (the relay's own state is authoritative for what it drives) —
+// but the change is flagged so the poller retries it, instead of the cloud row
+// staying stale forever.
+func TestPutControllersConfigChangeCloudDownFlagsPending(t *testing.T) {
+	f := newFixture(t)
+	token := f.pair(t)
+	g1 := putControllerOK(t, f, token, wire.ControllerConfig{
+		Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: "Pool",
+	})
+	f.cloudSrv.Close() // simulate an unreachable control-plane
+
+	g2 := putControllerOK(t, f, token, wire.ControllerConfig{
+		Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: "Renamed",
+	})
+	if g1 != g2 {
+		t.Fatalf("GUID changed across a dedup HIT: %q vs %q", g1, g2)
+	}
+	c := f.store.Get().Controller0()
+	if c.Label != "Renamed" || !c.CloudSyncPending {
+		t.Errorf("controller = label %q pending %v, want Renamed / pending", c.Label, c.CloudSyncPending)
+	}
+}
+
+// A hard cloud rejection (404: the cloud does not know this guid as ours, or
+// a control plane older than the route) is not retryable: the local change
+// stands and the flag is dropped rather than retried every tick forever.
+func TestPutControllersConfigChangeCloudRejectionDropsFlag(t *testing.T) {
+	f := newFixture(t)
+	token := f.pair(t)
+	putControllerOK(t, f, token, wire.ControllerConfig{
+		Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: "Pool",
+	})
+	f.updateRejects.Store(true)
+
+	putControllerOK(t, f, token, wire.ControllerConfig{
+		Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: "Renamed",
+	})
+	waitFor(t, "the rejected refresh to drop the flag", func() bool { return !f.store.Get().Controller0().CloudSyncPending })
+	if c := f.store.Get().Controller0(); c.Label != "Renamed" {
+		t.Errorf("controller label = %q, want Renamed (the local change stands)", c.Label)
+	}
+}
+
+// 403 subscription-inactive is recoverable (the household may be entitled
+// again later), so unlike a 404 it keeps the flag for the poller's retry.
+func TestPutControllersConfigChangeSubscriptionInactiveKeepsPending(t *testing.T) {
+	f := newFixture(t)
+	token := f.pair(t)
+	putControllerOK(t, f, token, wire.ControllerConfig{
+		Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: "Pool",
+	})
+	f.subscriptionInactive.Store(true)
+
+	putControllerOK(t, f, token, wire.ControllerConfig{
+		Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: "Renamed",
+	})
+	waitFor(t, "the refresh to be attempted", func() bool { return f.updateAttempts.Load() >= 1 })
+	if c := f.store.Get().Controller0(); !c.CloudSyncPending {
+		t.Errorf("controller = %+v, want still pending (403 is recoverable)", c)
+	}
+}
+
+// The refresh must never sit on the request path: cloud.RequestTimeout (15 s)
+// equals the app's own PUT /v1/controllers timeout on both platforms, so a
+// black-holed uplink (router up, WAN down — SYNs dropped, the realistic "LAN
+// works, internet doesn't" case) would stall the response past the app's
+// deadline and the user would see a failed save for a change the relay
+// persisted. Here the fake cloud hangs the PUT for the test's whole life; the
+// app's request must still come back at once, with the change persisted and
+// flagged for the poller's retry.
+func TestPutControllersConfigChangeReturnsPromptlyWhileTheCloudBlackHoles(t *testing.T) {
+	f := newFixture(t)
+	token := f.pair(t)
+	g1 := putControllerOK(t, f, token, wire.ControllerConfig{
+		Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: "Pool",
+	})
+	hold := make(chan struct{})
+	t.Cleanup(func() { close(hold) }) // registered last, so it runs first: release before the server closes
+	f.holdCloudUpdates(hold)
+
+	start := time.Now()
+	g2 := putControllerOK(t, f, token, wire.ControllerConfig{
+		Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: "Renamed",
+	})
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("PUT /v1/controllers took %v with the cloud black-holed — the refresh is on the request path", elapsed)
+	}
+	if g1 != g2 {
+		t.Fatalf("GUID changed across a dedup HIT: %q vs %q", g1, g2)
+	}
+	waitFor(t, "the refresh to be attempted", func() bool { return f.updateAttempts.Load() >= 1 })
+	c := f.store.Get().Controller0()
+	if c.Label != "Renamed" || !c.CloudSyncPending {
+		t.Errorf("controller = label %q pending %v, want Renamed / pending for the poller", c.Label, c.CloudSyncPending)
+	}
+}
+
+// Over-long label / lan_address are refused up front with the cloud's own caps
+// (120 / 300 bytes): a body the control plane would answer 400 to must never
+// be persisted locally, because on a dedup HIT that 400 would be a final
+// refresh rejection and the cloud row would silently stay stale.
+func TestPutControllersRejectsOverLongLabelOrAddress(t *testing.T) {
+	f := newFixture(t)
+	token := f.pair(t)
+
+	resp, raw := f.do(t, "PUT", "/v1/controllers", token, wire.ControllerConfig{
+		Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: strings.Repeat("x", 121),
+	})
+	if resp.StatusCode != http.StatusBadRequest || errCode(t, raw) != "label_too_long" {
+		t.Errorf("121-byte label: HTTP %d %s, want 400 label_too_long", resp.StatusCode, raw)
+	}
+	resp, raw = f.do(t, "PUT", "/v1/controllers", token, wire.ControllerConfig{
+		Preset: "procon-ip", LanAddress: strings.Repeat("a", 301),
+	})
+	if resp.StatusCode != http.StatusBadRequest || errCode(t, raw) != "lan_address_too_long" {
+		t.Errorf("301-byte lan_address: HTTP %d %s, want 400 lan_address_too_long", resp.StatusCode, raw)
+	}
+	for _, c := range f.store.Get().Controllers {
+		if c.LanAddress != "" {
+			t.Errorf("a refused body must not be persisted: %+v", c)
+		}
+	}
+	// Exactly at the caps is fine (the cloud's check is strict-greater too).
+	putControllerOK(t, f, token, wire.ControllerConfig{
+		Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: strings.Repeat("x", 120),
+	})
+}

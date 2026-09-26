@@ -162,6 +162,54 @@ func TestFixturePresetSupportMatchesSourceOfTruth(t *testing.T) {
 	}
 }
 
+// TestFixtureControllerPresetMatchesSourceOfTruth pins the additive preset
+// field on the two controller-listing shapes (issue poolpilot-cloud#100): the
+// agent's GET /v1/controllers (controller_info, controllers_response) and the
+// control plane's POST /controllers/list (controllers_list_response). Every
+// fixture entry carries a preset, and each is one of preset.Supported() — the
+// same vocabulary ControllerConfig.Preset uses on the way in — so the fixture
+// can never advertise a type the agent could not have been configured with.
+// Both controllers_response entries deliberately differ (procon-ip, violet) so
+// a round trip that silently swapped or dropped the value would fail.
+func TestFixtureControllerPresetMatchesSourceOfTruth(t *testing.T) {
+	entries := loadFixtureEntries(t)
+
+	var info ControllerInfo
+	if err := json.Unmarshal(entries["controller_info"], &info); err != nil {
+		t.Fatalf("unmarshal controller_info: %v", err)
+	}
+	if info.Preset != preset.ProconIP {
+		t.Errorf("controller_info.preset = %q, want %q", info.Preset, preset.ProconIP)
+	}
+
+	var list ControllersResponse
+	if err := json.Unmarshal(entries["controllers_response"], &list); err != nil {
+		t.Fatalf("unmarshal controllers_response: %v", err)
+	}
+	wantPresets := []string{preset.ProconIP, preset.Violet}
+	if len(list) != len(wantPresets) {
+		t.Fatalf("controllers_response has %d entries, want %d", len(list), len(wantPresets))
+	}
+	for i, c := range list {
+		if c.Preset != wantPresets[i] {
+			t.Errorf("controllers_response[%d].preset = %q, want %q", i, c.Preset, wantPresets[i])
+		}
+	}
+
+	var cloudList ControllerListResponse
+	if err := json.Unmarshal(entries["controllers_list_response"], &cloudList); err != nil {
+		t.Fatalf("unmarshal controllers_list_response: %v", err)
+	}
+	if len(cloudList.Controllers) == 0 {
+		t.Fatal("controllers_list_response has no entries")
+	}
+	for i, c := range cloudList.Controllers {
+		if !preset.IsSupported(c.Preset) {
+			t.Errorf("controllers_list_response.controllers[%d].preset = %q, want one of %v", i, c.Preset, preset.Supported())
+		}
+	}
+}
+
 // assertFieldsPreserved walks "want" (the fixture's decoded JSON) and checks
 // that every field/element it contains still exists with an equal value in
 // "got" (the struct's re-marshaled JSON). It is intentionally one-directional

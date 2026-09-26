@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -586,5 +587,65 @@ func TestTickRetainsLastKnownGoodControlOnFetchError(t *testing.T) {
 	}
 	if snap.Control[bands.TypePH] != configA[bands.TypePH] {
 		t.Fatalf("transient control-fetch error wiped last-known-good bands: %+v", snap.Control)
+	}
+}
+
+// A controller config change the cloud could not be told about at the time
+// (state.Controller.CloudSyncPending, issue poolpilot-cloud#99) is retried on
+// the poll tick — the same retry seam the alert outbox uses — and the flag
+// clears once the control plane confirms.
+func TestTickRetriesPendingControllerCloudSync(t *testing.T) {
+	fixture, err := os.ReadFile(filepath.Join("..", "..", "proconip", "testdata", "getstate.csv"))
+	if err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(fixture)
+	}))
+	defer controller.Close()
+
+	var mu sync.Mutex
+	var puts []string
+	cloudSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			mu.Lock()
+			puts = append(puts, r.URL.Path+" preset="+body["preset"])
+			mu.Unlock()
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"guid": "g1"})
+	}))
+	defer cloudSrv.Close()
+
+	st, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatalf("state: %v", err)
+	}
+	if err := st.Update(func(s *state.State) {
+		s.Cloud = state.Cloud{BaseURL: cloudSrv.URL, FrpcToken: "tok"}
+		s.Controllers = []state.Controller{{
+			Preset: "violet", LanAddress: strings.TrimPrefix(controller.URL, "http://"), GUID: "g1",
+			CloudSyncPending: true,
+		}}
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	p := New(st, cloud.New(st), time.Minute)
+	p.tick(context.Background())
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(puts) != 1 || puts[0] != "/controllers/g1 preset=violet" {
+		t.Fatalf("cloud PUTs after tick = %v, want exactly one for g1 carrying preset violet", puts)
+	}
+	if c := st.Get().Controller0(); c.CloudSyncPending {
+		t.Errorf("flag still pending after a confirmed sync: %+v", c)
+	}
+
+	p.tick(context.Background())
+	if len(puts) != 1 {
+		t.Errorf("a cleared flag must not be re-sent on the next tick: %v", puts)
 	}
 }

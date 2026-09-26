@@ -231,3 +231,51 @@ func TestWipeBlocksLaterUpdates(t *testing.T) {
 		t.Fatalf("state file exists after wipe+update: %v", err)
 	}
 }
+
+// SeedCloudSync flags every controller that has a cloud identity for one
+// refresh push — once per state file: a later pass (every boot calls it) must
+// not re-flag anything, so a controller registered afterwards is never
+// touched by it, and the seeded marker survives a reopen.
+func TestSeedCloudSyncFlagsControllersWithACloudIdentityOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := st.Update(func(s *State) {
+		s.Controllers = []Controller{
+			{GUID: "g1", LanAddress: "a:80", Preset: "procon-ip"},
+			{LanAddress: "", Preset: "procon-ip"},  // the boot-seeded phantom slot: no identity
+			{LanAddress: "b:80", Preset: "violet"}, // configured but not registered yet: nothing to refresh
+		}
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := st.SeedCloudSync(); err != nil {
+		t.Fatalf("SeedCloudSync: %v", err)
+	}
+	got := st.Get()
+	if !got.CloudSyncSeeded || !got.Controllers[0].CloudSyncPending || got.Controllers[1].CloudSyncPending || got.Controllers[2].CloudSyncPending {
+		t.Fatalf("after first pass: seeded=%v flags=%v/%v/%v, want true and only g1 flagged",
+			got.CloudSyncSeeded, got.Controllers[0].CloudSyncPending, got.Controllers[1].CloudSyncPending, got.Controllers[2].CloudSyncPending)
+	}
+
+	// The refresh landed (flag cleared) and a new controller registered since.
+	if err := st.Update(func(s *State) {
+		s.Controllers[0].CloudSyncPending = false
+		s.Controllers[2].GUID = "g2"
+	}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if err := reopened.SeedCloudSync(); err != nil {
+		t.Fatalf("SeedCloudSync (second pass): %v", err)
+	}
+	got = reopened.Get()
+	if !got.CloudSyncSeeded || got.Controllers[0].CloudSyncPending || got.Controllers[2].CloudSyncPending {
+		t.Fatalf("second pass must be a no-op: seeded=%v flags=%v/%v", got.CloudSyncSeeded, got.Controllers[0].CloudSyncPending, got.Controllers[2].CloudSyncPending)
+	}
+}

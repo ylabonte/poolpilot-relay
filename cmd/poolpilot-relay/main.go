@@ -163,6 +163,12 @@ func run() error {
 	if err := ensureBootTLS(store); err != nil {
 		return err
 	}
+	// One-shot convergence of control-plane controller rows that went stale
+	// before the cloud refresh route existed (SeedCloudSync's doc); the
+	// poller's first tick pushes them.
+	if err := store.SeedCloudSync(); err != nil {
+		return err
+	}
 	// Reconcile every controller's default alert rules against its own preset on
 	// every boot (a third ReconcileSeed call site beside controller registration
 	// and the in-place preset change). This self-heals a legacy install that

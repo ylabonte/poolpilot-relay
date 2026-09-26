@@ -861,6 +861,14 @@ func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 	}
 }
 
+// maxControllerLabelLen / maxControllerLanAddressLen mirror the control
+// plane's caps on POST /controllers and PUT /controllers/{guid} (bytes, like
+// its len()); putControllers rejects above them so both paths agree.
+const (
+	maxControllerLabelLen      = 120
+	maxControllerLanAddressLen = 300
+)
+
 // putControllers is the canonical multi-controller upsert PUT /v1/controllers
 // with on-relay dedup (D5, R3): normalize the submitted address, then
 //
@@ -879,6 +887,20 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 	}
 	if !preset.IsSupported(cfg.Preset) {
 		writeErr(w, http.StatusBadRequest, "unsupported_preset")
+		return
+	}
+	// Mirror the control plane's caps (POST /controllers and PUT
+	// /controllers/{guid} answer 400 above 120/300 bytes) so a body the cloud
+	// will refuse is never persisted locally: on the MISS path registration
+	// would fail visibly anyway, but on a dedup HIT the local write lands
+	// first and the refresh's 400 is a final rejection — the cloud row would
+	// stay stale with nothing but a log line to show for it.
+	if len(cfg.Label) > maxControllerLabelLen {
+		writeErr(w, http.StatusBadRequest, "label_too_long")
+		return
+	}
+	if len(cfg.LanAddress) > maxControllerLanAddressLen {
+		writeErr(w, http.StatusBadRequest, "lan_address_too_long")
 		return
 	}
 	// Issue poolpilot-cloud#36 SSRF hardening: reject a lan_address pointed at loopback/
@@ -913,6 +935,14 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 		// Update creds/label in place; reuse the existing GUID + remote URLs so
 		// the tunnel identity stays stable.
 		guid := existing.GUID
+		// The cloud's controller row holds preset/lan_address/label and is
+		// otherwise write-once (issue poolpilot-cloud#99): decide BEFORE the
+		// local write whether any of the three changed, so the cloud is told
+		// exactly when its copy went stale — a creds-only or use_https-only
+		// re-PUT (both never leave the relay) must not generate a cloud call.
+		cloudStale := existing.EffectivePreset() != cfg.Preset ||
+			existing.LanAddress != cfg.LanAddress ||
+			existing.Label != cfg.Label
 		err := s.Store.Update(func(doc *state.State) {
 			c := doc.ControllerByGUID(guid)
 			if c == nil {
@@ -930,11 +960,22 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 			// left untouched.
 			c.AlertRules = alert.ReconcileSeed(c.AlertRules, c.Preset)
 			alert.DropOrphanState(c.AlertState, c.AlertRules)
+			// Flag + bump the rev in the same write: kickCloudSync below (and
+			// the poller's tick) push from the flag, and SyncControllers
+			// clears it only if the rev it read is still current. Only when
+			// something the cloud holds actually changed.
+			if cloudStale {
+				c.CloudSyncPending = true
+				c.ConfigRev++
+			}
 		})
 		if err != nil {
 			slog.Error("persist controller (dedup update)", "err", err)
 			writeErr(w, http.StatusInternalServerError, "persist_failed")
 			return
+		}
+		if cloudStale {
+			s.kickCloudSync(cloudCtx(r))
 		}
 		if err := s.reconfigureTunnel(); err != nil {
 			slog.Warn("tunnel reconfigure", "err", err)
@@ -994,9 +1035,31 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// kickCloudSync runs Cloud.SyncControllers off the request path. The dedup-HIT
+// handler has already persisted the change and flagged the controller
+// (CloudSyncPending + a ConfigRev bump) under controllerMu and is about to
+// answer the app; nothing is held while this runs. It must never run inline:
+// cloud.RequestTimeout (15 s) equals the app's own PUT /v1/controllers timeout
+// on both platforms, so a black-holed uplink (router up, WAN down — SYNs
+// dropped, the realistic "LAN works, internet doesn't" case) would stall the
+// response and the app would report a failed save for a change the relay
+// persisted. The flag is the durable hand-off: if this goroutine loses (cloud
+// down, process restart) the poller's tick retries from it, and
+// SyncControllers' single-flight + ConfigRev guard make a concurrent PUT or
+// tick safe. ctx is cloudCtx(r) — the app hanging up must not abort a call
+// whose local half already landed (issue poolpilot-cloud#71).
+func (s *Server) kickCloudSync(ctx context.Context) {
+	go func() {
+		if err := s.Cloud.SyncControllers(ctx); err != nil {
+			slog.Debug("cloud controller sync deferred to the next poll tick", "err", err)
+		}
+	}()
+}
+
 // getControllers lists the configured controllers. It NEVER exposes controller
-// credentials — only guid/label/lan_address and the remote URLs. The config-less
-// phantom slot (address-less, holds only boot-seeded rules) is skipped.
+// credentials — only guid/label/lan_address, the remote URLs and the preset the
+// agent drives the controller as. The config-less phantom slot (address-less,
+// holds only boot-seeded rules) is skipped.
 func (s *Server) getControllers(w http.ResponseWriter, _ *http.Request) {
 	st := s.Store.Get()
 	out := wire.ControllersResponse{}
@@ -1010,6 +1073,7 @@ func (s *Server) getControllers(w http.ResponseWriter, _ *http.Request) {
 			LanAddress:   c.LanAddress,
 			RemoteURL:    c.RemoteURL,
 			RemoteAPIURL: c.RemoteAPIURL,
+			Preset:       c.EffectivePreset(),
 		}
 		if info.RemoteAPIURL == "" {
 			info.RemoteAPIURL = deriveRemoteAPIURL(c.GUID, st.Cloud.FRPS.SubdomainHost)

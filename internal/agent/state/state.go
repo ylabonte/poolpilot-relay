@@ -52,6 +52,7 @@ import (
 
 	"github.com/ylabonte/poolpilot-relay/idgen"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/alert"
+	"github.com/ylabonte/poolpilot-relay/preset"
 	"github.com/ylabonte/poolpilot-relay/wire"
 )
 
@@ -112,6 +113,23 @@ type Controller struct {
 	GUID         string `json:"guid,omitempty"`
 	RemoteURL    string `json:"remote_url,omitempty"`
 	RemoteAPIURL string `json:"remote_api_url,omitempty"` // tunneled LAN API (<guid>-api.<host>)
+	// CloudSyncPending marks a controller whose preset/lan_address/label
+	// changed locally (PUT /v1/controllers dedup HIT) while the control plane
+	// could not be told (unreachable, throttled, or subscription inactive).
+	// The cloud's controller row is otherwise write-once (issue
+	// poolpilot-cloud#99), so the poller retries cloud.Client.SyncControllers
+	// every tick until the row is refreshed or the cloud definitively rejects
+	// the update. Never set on the MISS path: registration already carries the
+	// current config.
+	CloudSyncPending bool `json:"cloud_sync_pending,omitempty"`
+	// ConfigRev counts local changes to the cloud-visible config (preset,
+	// lan_address, label) and is bumped in the same Update that sets
+	// CloudSyncPending. cloud.Client.SyncControllers clears the flag only when
+	// the rev it read before sending is still current, so a stale success
+	// from a request that overlapped a newer change leaves the newer flag
+	// standing — value comparison could not tell "unchanged" from "changed
+	// and changed back" inside one round trip.
+	ConfigRev uint64 `json:"config_rev,omitempty"`
 
 	AlertRules []wire.AlertRule            `json:"alert_rules,omitempty"`
 	AlertState map[string]*alert.RuleState `json:"alert_state,omitempty"`
@@ -156,13 +174,16 @@ type UpdateSettings struct {
 
 // State is the whole persisted document.
 type State struct {
-	Version     int                 `json:"v"`
-	AgentID     string              `json:"agent_id"`
-	Devices     []Device            `json:"devices,omitempty"`
-	Cloud       Cloud               `json:"cloud,omitzero"`
-	Controllers []Controller        `json:"controllers,omitempty"`
-	Outbox      []wire.AlertRequest `json:"outbox,omitempty"`
-	TLS         TLS                 `json:"tls,omitzero"`
+	Version     int          `json:"v"`
+	AgentID     string       `json:"agent_id"`
+	Devices     []Device     `json:"devices,omitempty"`
+	Cloud       Cloud        `json:"cloud,omitzero"`
+	Controllers []Controller `json:"controllers,omitempty"`
+	// CloudSyncSeeded records that SeedCloudSync has done its one-shot pass
+	// for this state file; see that method.
+	CloudSyncSeeded bool                `json:"cloud_sync_seeded,omitempty"`
+	Outbox          []wire.AlertRequest `json:"outbox,omitempty"`
+	TLS             TLS                 `json:"tls,omitzero"`
 	// CtrlSessionSecret is the HMAC key the relay signs ctrl-vhost web sessions
 	// with (poolpilot-cloud#27, internal/agent/ctrlfilter). Generated lazily on the first
 	// mint and never rotated on its own — rotating it invalidates every live
@@ -275,6 +296,49 @@ func (s State) FindControllerByAddr(normalizedAddr string) (Controller, bool) {
 		}
 	}
 	return Controller{}, false
+}
+
+// SeedCloudSync flags every controller that already has a cloud identity for
+// one cloud.Client.SyncControllers push, exactly once per state file — a
+// boot-time convergence for control-plane rows that went stale BEFORE the
+// relay could refresh them: a controller relabelled or preset-switched under
+// an older agent (the cloud's row was write-once then), or a refresh pushed
+// against a control plane that did not serve PUT /controllers/{guid} yet and
+// dropped on its 405. Cheap — one idempotent PUT per controller on the next
+// poll tick — and safe against a control plane that is still old: that same
+// 405 clears the flag, so there is no retry storm. Runs on every boot; only
+// the first pass does anything, so a controller registered later is never
+// re-flagged here (a rollback to a binary that drops the unknown seeded
+// field would repeat the pass once after the next upgrade, which is harmless
+// for the same reason).
+func (s *Store) SeedCloudSync() error {
+	return s.Update(func(st *State) {
+		if st.CloudSyncSeeded {
+			return
+		}
+		for i := range st.Controllers {
+			if st.Controllers[i].GUID != "" {
+				st.Controllers[i].CloudSyncPending = true
+			}
+		}
+		st.CloudSyncSeeded = true
+	})
+}
+
+// EffectivePreset is the preset identifier the agent actually drives this
+// controller as. The v1->v2 migration copies Preset verbatim with no backfill
+// (see migrate.go), and Open() doesn't validate it, so a hand-edited or
+// pre-VIOLET state file can still carry Preset == "". That defaults to
+// ProCon.IP — the only preset any pre-VIOLET build could have written — so
+// such a file keeps resolving a driver instead of failing. One definition,
+// shared by the poller (which picks the driver from it) and the LAN API
+// (which reports it as wire.ControllerInfo.Preset), so the type the agent
+// advertises can never differ from the type it polls.
+func (c Controller) EffectivePreset() string {
+	if c.Preset == "" {
+		return preset.ProconIP
+	}
+	return c.Preset
 }
 
 // ControllerByGUID returns a pointer to the controller with the given GUID, or
