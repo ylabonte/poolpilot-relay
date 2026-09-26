@@ -1174,4 +1174,154 @@ func TestSyncControllersIsSingleFlight(t *testing.T) {
 	if !st.Get().Controller0().CloudSyncPending {
 		t.Error("a transient failure must keep the flag")
 	}
+	// The loser left a rerun request, and the holder's pass ended without
+	// progress — the rerun is the one extra pass (one more PUT), not a storm.
+	if calls.Load() != 2 {
+		t.Errorf("calls = %d, want 2 (the holder's pass plus the loser's rerun)", calls.Load())
+	}
+}
+
+// A kick that loses the lock while the running pass is stuck on ANOTHER
+// controller's failing PUT must not be deferred to the next tick: the holder
+// honors the rerun request after unlocking, and the change that prompted the
+// kick goes out in that extra pass even though the holder's own pass ended
+// with no progress (which, without the rerun, would have exited without
+// re-reading state).
+func TestSyncControllersRerunsForAKickThatLostTheLock(t *testing.T) {
+	release := make(chan struct{})
+	var g1Calls, g2Calls atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch strings.TrimPrefix(r.URL.Path, "/controllers/") {
+		case "g1":
+			g1Calls.Add(1)
+			<-release
+			w.WriteHeader(http.StatusServiceUnavailable) // g1 stays transiently broken
+		case "g2":
+			g2Calls.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]string{"guid": "g2"})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	st := newStore(t, srv.URL)
+	if err := st.Update(func(s *state.State) {
+		s.Controllers = []state.Controller{
+			{GUID: "g1", Preset: "procon-ip", LanAddress: "a:80", CloudSyncPending: true},
+			{GUID: "g2", Preset: "procon-ip", LanAddress: "b:80"},
+		}
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	c := New(st)
+	done := make(chan error, 1)
+	go func() { done <- c.SyncControllers(context.Background()) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for g1Calls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if g1Calls.Load() != 1 {
+		t.Fatal("the holder never reached the cloud")
+	}
+	// The dedup-HIT sequence, while the holder is stuck: flag g2, then kick.
+	if err := st.Update(func(s *state.State) {
+		g2 := s.ControllerByGUID("g2")
+		g2.Label = "renamed"
+		g2.CloudSyncPending = true
+		g2.ConfigRev++
+	}); err != nil {
+		t.Fatalf("flag g2: %v", err)
+	}
+	if err := c.SyncControllers(context.Background()); err != nil {
+		t.Fatalf("kick must return nil at once, got %v", err)
+	}
+	if g2Calls.Load() != 0 {
+		t.Fatal("the kick made its own request instead of leaving a rerun request")
+	}
+	close(release)
+	if err := <-done; !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("holder err = %v, want the rerun's ErrUnavailable (g1 is still broken)", err)
+	}
+	if g2Calls.Load() != 1 {
+		t.Fatalf("g2 PUTs = %d, want exactly 1 from the rerun", g2Calls.Load())
+	}
+	after := st.Get()
+	g2 := after.ControllerByGUID("g2")
+	if g2 == nil || g2.CloudSyncPending {
+		t.Errorf("g2 = %+v, want cleared by the rerun", g2)
+	}
+	if !st.Get().Controller0().CloudSyncPending {
+		t.Error("g1's transient failure must keep its flag")
+	}
+}
+
+// A clear that cannot be persisted is not progress: Store.Update rolls the
+// in-memory flag back on a persist failure (here: a factory reset landing
+// mid-pass — the same shape as a full or read-only card), so counting the
+// accepted PUT as progress would re-PUT the same controller every round, as
+// fast as the round trip allows, until the per-IP throttle stopped it. The
+// pass must stop at once and surface the persist error.
+func TestSyncControllersStopsWhenTheClearCannotBePersisted(t *testing.T) {
+	var st *state.Store
+	var calls atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			if err := st.Wipe(); err != nil {
+				t.Errorf("wipe: %v", err)
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"guid": "g1"})
+	}))
+	defer srv.Close()
+
+	st = newStore(t, srv.URL)
+	if err := st.Update(func(s *state.State) {
+		s.Controllers = []state.Controller{{GUID: "g1", Preset: "procon-ip", LanAddress: "a:80", CloudSyncPending: true}}
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	err := New(st).SyncControllers(context.Background())
+	if !errors.Is(err, state.ErrWiped) {
+		t.Fatalf("err = %v, want state.ErrWiped surfaced from the failed clear", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("cloud calls = %d, want exactly 1 — a clear that cannot land must end the pass, not start a PUT storm", calls.Load())
+	}
+}
+
+// Belt-and-braces round cap: a config that is re-flagged on every round (the
+// pathological "keeps changing" case, or any future path that counted
+// progress without clearing) is bounded to maxSyncRounds PUTs per pass, and
+// the flag simply stays for the next tick.
+func TestSyncControllersBoundsRoundsWhenTheConfigKeepsChanging(t *testing.T) {
+	var st *state.Store
+	var calls atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		// Always "changed again mid-flight": bump the rev and re-flag before answering.
+		_ = st.Update(func(s *state.State) {
+			c := s.ControllerByGUID("g1")
+			c.ConfigRev++
+			c.CloudSyncPending = true
+		})
+		_ = json.NewEncoder(w).Encode(map[string]string{"guid": "g1"})
+	}))
+	defer srv.Close()
+
+	st = newStore(t, srv.URL)
+	if err := st.Update(func(s *state.State) {
+		s.Controllers = []state.Controller{{GUID: "g1", Preset: "procon-ip", LanAddress: "a:80", CloudSyncPending: true}}
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := New(st).SyncControllers(context.Background()); err != nil {
+		t.Fatalf("SyncControllers: %v", err)
+	}
+	if calls.Load() != maxSyncRounds {
+		t.Fatalf("cloud calls = %d, want exactly maxSyncRounds (%d)", calls.Load(), maxSyncRounds)
+	}
+	if !st.Get().Controller0().CloudSyncPending {
+		t.Error("the still-changing controller must stay flagged for the next tick")
+	}
 }

@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ylabonte/poolpilot-relay/internal/agent/state"
@@ -62,10 +63,12 @@ const RequestTimeout = 15 * time.Second
 // Client talks to the control-plane. The bearer token and outbox live in the
 // state store so delivery state survives restarts.
 type Client struct {
-	// syncMu makes SyncControllers single-flight — see its doc.
-	syncMu sync.Mutex
-	store  *state.Store
-	http   *http.Client
+	// syncMu makes SyncControllers single-flight and syncRerun is the request a
+	// caller leaves when it finds the lock taken — see SyncControllers' doc.
+	syncMu    sync.Mutex
+	syncRerun atomic.Bool
+	store     *state.Store
+	http      *http.Client
 	// now is the clock Drain judges alert staleness against. Defaults to
 	// time.Now; tests in this package (same package, not _test) override it
 	// directly rather than threading a parameter through every call site.
@@ -188,15 +191,29 @@ func (c *Client) UpdateController(ctx context.Context, guid string, cfg wire.Con
 	}
 }
 
+// maxSyncRounds bounds one SyncControllers pass. Legitimate extra rounds are
+// bounded by mid-flight config changes (each re-flag costs one round), so the
+// cap never bites in practice; it is belt-and-braces against any future path
+// that counted progress without actually clearing a flag — the shape that
+// once turned this loop into a request storm (review round 2 on #52).
+const maxSyncRounds = 4
+
 // SyncControllers pushes every controller whose CloudSyncPending flag is set
 // (a config change the control plane could not be told about when it
 // happened — see state.Controller.CloudSyncPending) and clears the flag once
-// the cloud has answered. It is the only thing that ever clears that flag,
-// and it runs single-flight: a second caller while one is running returns nil
-// at once (TryLock), because the running one re-reads state every round and
-// picks up anything flagged meanwhile. Callers: the poller's tick (the retry
-// path) and lanapi's kickCloudSync, right after a dedup HIT has answered the
-// app — never the request path itself.
+// the cloud has answered. It is the only thing that ever clears that flag.
+// Callers: the poller's tick (the retry path) and lanapi's kickCloudSync,
+// right after a dedup HIT has answered the app — never the request path.
+//
+// Single-flight: a caller that finds a pass running does not wait and makes
+// no request of its own; it records a rerun request and returns nil. The
+// running pass honors that request with one more pass after it releases the
+// lock, so the change that prompted the call is sent now rather than at the
+// next tick — even when the running pass ends without progress (say, stuck
+// on another controller's black-holed PUT) and would otherwise have exited
+// without re-reading state. The check runs after Unlock so a request that
+// lands between the pass's last round and the unlock cannot slip through;
+// if a third caller took the lock in that gap, that caller serves it.
 //
 // Per controller the flag is cleared on success and on ErrRejected (nothing a
 // retry could change), kept on ErrUnavailable / ErrSubscriptionInactive. The
@@ -204,18 +221,31 @@ func (c *Client) UpdateController(ctx context.Context, guid string, cfg wire.Con
 // PUT /v1/controllers landing while the request is in flight bumps the rev
 // and re-flags, and value equality could not tell that from "unchanged" when
 // the value was changed and changed back (A->B->A) inside one round trip. A
-// guarded-out clear leaves the newer flag standing, and the loop sends it in
-// the next round rather than waiting for the next tick: rounds repeat while
-// the cloud accepted at least one push and something is still pending, and
-// stop as soon as a round made no progress (every remaining push failed
-// transiently). Returns the last round's first transient error so a caller
-// can log it.
+// guarded-out clear leaves the newer flag standing, and the pass sends it in
+// its next round: rounds repeat while the cloud accepted at least one push
+// AND its clear was persisted, and something is still pending; they stop as
+// soon as a round made no progress (every remaining push failed transiently),
+// at maxSyncRounds, or the moment a clear cannot be persisted — Store.Update
+// rolls the in-memory flag back on a persist failure (a wiped store, a full
+// or read-only card), so counting that as progress would re-PUT the same
+// controller every round. Returns the pass's first transient error, or the
+// persist error, so a caller can log it.
 func (c *Client) SyncControllers(ctx context.Context) error {
 	if !c.syncMu.TryLock() {
+		c.syncRerun.Store(true)
 		return nil
 	}
-	defer c.syncMu.Unlock()
-	for {
+	err := c.syncPass(ctx)
+	c.syncMu.Unlock()
+	if c.syncRerun.Swap(false) {
+		return c.SyncControllers(ctx)
+	}
+	return err
+}
+
+// syncPass is one SyncControllers pass under syncMu — see that doc.
+func (c *Client) syncPass(ctx context.Context) error {
+	for round := 0; round < maxSyncRounds; round++ {
 		s := c.store.Get()
 		var roundErr error
 		pending, accepted := 0, 0
@@ -236,21 +266,22 @@ func (c *Client) SyncControllers(ctx context.Context) error {
 			if err != nil {
 				slog.Warn("controller config sync rejected by the control plane; giving up", "guid", ctrl.GUID, "err", err)
 			}
-			accepted++
 			if uerr := c.store.Update(func(st *state.State) {
 				cur := st.ControllerByGUID(ctrl.GUID)
 				if cur == nil || cur.ConfigRev != rev {
 					return // changed again mid-flight: the newer flag stands, the next round sends it
 				}
 				cur.CloudSyncPending = false
-			}); uerr != nil && roundErr == nil {
-				roundErr = uerr
+			}); uerr != nil {
+				return uerr // the clear cannot land (wiped / disk): another round would only resend
 			}
+			accepted++
 		}
 		if pending == 0 || accepted == 0 {
 			return roundErr
 		}
 	}
+	return nil
 }
 
 // RotateController rotates a controller's public GUID (issue poolpilot-cloud#27's manual
