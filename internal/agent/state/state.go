@@ -174,13 +174,16 @@ type UpdateSettings struct {
 
 // State is the whole persisted document.
 type State struct {
-	Version     int                 `json:"v"`
-	AgentID     string              `json:"agent_id"`
-	Devices     []Device            `json:"devices,omitempty"`
-	Cloud       Cloud               `json:"cloud,omitzero"`
-	Controllers []Controller        `json:"controllers,omitempty"`
-	Outbox      []wire.AlertRequest `json:"outbox,omitempty"`
-	TLS         TLS                 `json:"tls,omitzero"`
+	Version     int          `json:"v"`
+	AgentID     string       `json:"agent_id"`
+	Devices     []Device     `json:"devices,omitempty"`
+	Cloud       Cloud        `json:"cloud,omitzero"`
+	Controllers []Controller `json:"controllers,omitempty"`
+	// CloudSyncSeeded records that SeedCloudSync has done its one-shot pass
+	// for this state file; see that method.
+	CloudSyncSeeded bool                `json:"cloud_sync_seeded,omitempty"`
+	Outbox          []wire.AlertRequest `json:"outbox,omitempty"`
+	TLS             TLS                 `json:"tls,omitzero"`
 	// CtrlSessionSecret is the HMAC key the relay signs ctrl-vhost web sessions
 	// with (poolpilot-cloud#27, internal/agent/ctrlfilter). Generated lazily on the first
 	// mint and never rotated on its own — rotating it invalidates every live
@@ -293,6 +296,33 @@ func (s State) FindControllerByAddr(normalizedAddr string) (Controller, bool) {
 		}
 	}
 	return Controller{}, false
+}
+
+// SeedCloudSync flags every controller that already has a cloud identity for
+// one cloud.Client.SyncControllers push, exactly once per state file — a
+// boot-time convergence for control-plane rows that went stale BEFORE the
+// relay could refresh them: a controller relabelled or preset-switched under
+// an older agent (the cloud's row was write-once then), or a refresh pushed
+// against a control plane that did not serve PUT /controllers/{guid} yet and
+// dropped on its 405. Cheap — one idempotent PUT per controller on the next
+// poll tick — and safe against a control plane that is still old: that same
+// 405 clears the flag, so there is no retry storm. Runs on every boot; only
+// the first pass does anything, so a controller registered later is never
+// re-flagged here (a rollback to a binary that drops the unknown seeded
+// field would repeat the pass once after the next upgrade, which is harmless
+// for the same reason).
+func (s *Store) SeedCloudSync() error {
+	return s.Update(func(st *State) {
+		if st.CloudSyncSeeded {
+			return
+		}
+		for i := range st.Controllers {
+			if st.Controllers[i].GUID != "" {
+				st.Controllers[i].CloudSyncPending = true
+			}
+		}
+		st.CloudSyncSeeded = true
+	})
 }
 
 // EffectivePreset is the preset identifier the agent actually drives this
