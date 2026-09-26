@@ -367,6 +367,10 @@ func newFixture(t *testing.T) *fixture {
 		ValidateLan: func(string, bool) error { return nil },
 	}
 	f.srv = srv
+	// Registered after t.TempDir, so (cleanups run LIFO) it waits out any
+	// async cloud sync a PUT kicked off before the state dir is removed —
+	// otherwise that goroutine's persist races RemoveAll ("directory not empty").
+	t.Cleanup(srv.waitBackground)
 	f.api = httptest.NewServer(srv.Handler())
 	t.Cleanup(f.api.Close)
 	return f
