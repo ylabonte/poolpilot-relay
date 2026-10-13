@@ -76,6 +76,15 @@ line in the log marks each change:
   its pairing QR code and fingerprint stay the same. Just set it up again from
   the app (below). To get a fresh identity (e.g. before giving the device
   away), use a [factory reset](#factory-reset).
+- **"household reset over the LAN API; dropped household data"**: the same
+  reset, done right away. When you use "Delete all my data" in the app while
+  your phone is on the same network as the relay, the app asks the relay to
+  forget the household immediately (`POST /v1/household-reset`, LAN only)
+  instead of waiting for the relay to notice on its own. The outcome is
+  identical to the line above: the identity is kept, and the relay is ready
+  to be set up again. If the phone can't reach the relay at that moment,
+  nothing is lost — the relay still notices by itself, after a few minutes
+  with a controller set up, or within about a day without one.
 
 ## Re-pair the relay
 

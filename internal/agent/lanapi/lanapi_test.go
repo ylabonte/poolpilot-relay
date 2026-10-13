@@ -110,6 +110,15 @@ type fixture struct {
 	updateAttempts atomic.Int64
 	updateHoldMu   sync.Mutex
 	updateHold     chan struct{}
+	// registerHold, when set, makes POST /controllers (register) and
+	// POST /controllers/{guid}/rotate signal
+	// registerEntered once the request is inside the stub and then block until
+	// registerHold is closed — and then answer normally. It pins a MISS upsert
+	// between RegisterController and its local persist, where a concurrent
+	// household reset must not interleave.
+	registerHoldMu  sync.Mutex
+	registerHold    chan struct{}
+	registerEntered chan struct{}
 
 	// revokedPush records the device_ids the agent asked the cloud to
 	// revoke-push (POST /devices/revoke-push), keyed by device_id.
@@ -239,6 +248,13 @@ func newFixture(t *testing.T) *fixture {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
+			f.registerHoldMu.Lock()
+			hold, entered := f.registerHold, f.registerEntered
+			f.registerHoldMu.Unlock()
+			if hold != nil {
+				close(entered)
+				<-hold
+			}
 			if f.rotateFails.Load() {
 				w.WriteHeader(http.StatusBadGateway)
 				return
@@ -286,6 +302,13 @@ func newFixture(t *testing.T) *fixture {
 			if r.Header.Get("Authorization") != "Bearer relay-frpc-token" {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
+			}
+			f.registerHoldMu.Lock()
+			hold, entered := f.registerHold, f.registerEntered
+			f.registerHoldMu.Unlock()
+			if hold != nil {
+				close(entered)
+				<-hold
 			}
 			if f.subscriptionInactive.Load() {
 				w.WriteHeader(http.StatusForbidden)

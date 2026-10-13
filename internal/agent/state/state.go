@@ -777,7 +777,36 @@ func (st *Store) UpdateIfToken(token string, fn func(*State)) (bool, error) {
 // the store stays live — the agent keeps running with its identity, ready for
 // a new setup. Reports whether the household was dropped.
 func (st *Store) DropHousehold(token string) (bool, error) {
-	applied, err := st.UpdateIfToken(token, func(s *State) { s.ResetHousehold() })
+	if token == "" {
+		return false, nil
+	}
+	return st.DropHouseholdIf(func(s State) bool { return s.Cloud.FrpcToken == token })
+}
+
+// DropHouseholdIf is DropHousehold with the binding supplied by the caller:
+// still is evaluated against the CURRENT document under the store lock, and
+// only when it holds is the household dropped. The LAN household reset
+// (POST /v1/household-reset) binds the drop to the pairing bearer it was
+// authorized with, so a reset that loses a race to another drop plus a new
+// setup can never wipe the new household. still must be a pure predicate: it
+// runs with the store lock held. Reports whether the household was dropped.
+func (st *Store) DropHouseholdIf(still func(State) bool) (bool, error) {
+	st.mu.Lock()
+	match := !st.wiped && still(st.s)
+	st.mu.Unlock()
+	if !match {
+		return false, nil
+	}
+	applied := false
+	err := st.Update(func(s *State) {
+		// Re-checked inside Update's critical section: the pre-check above only
+		// avoids a pointless persist, it decides nothing.
+		if !still(*s) {
+			return
+		}
+		s.ResetHousehold()
+		applied = true
+	})
 	if err != nil || !applied {
 		return applied, err
 	}

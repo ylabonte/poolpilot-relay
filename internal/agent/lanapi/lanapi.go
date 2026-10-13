@@ -27,6 +27,7 @@ import (
 	"github.com/ylabonte/poolpilot-relay/internal/agent/cloud"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/ctrlfilter"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/driver"
+	"github.com/ylabonte/poolpilot-relay/internal/agent/lifecycle"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/poller"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/recovery"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/state"
@@ -206,11 +207,13 @@ func (s *Server) checkLanAddress(addr string, useHTTPS bool) error {
 }
 
 // baseMux holds the routes reachable over BOTH the LAN (HTTPS) and the tunnel
-// (loopback HTTP behind frp) listeners. The two LAN-only ceremonies — pairing
-// and factory-reset — are deliberately NOT here: pairing proves physical LAN
-// presence, and factory-reset is destructive + irreversible (wipes state and
-// exits the process), so it demands the same LAN presence. Handler() mounts the
-// real handlers; TunnelHandler() answers 403 lan_only for both.
+// (loopback HTTP behind frp) listeners. The LAN-only ceremonies — pairing,
+// factory-reset and household-reset — are deliberately NOT here: pairing
+// proves physical LAN presence, factory-reset is destructive + irreversible
+// (wipes state and exits the process), and household-reset unpairs every
+// device and drops every controller, so both resets demand the same LAN
+// presence. Handler() mounts the real handlers; TunnelHandler() answers 403
+// lan_only for all three.
 func (s *Server) baseMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	// /v1/info is intentionally reachable on BOTH legs. It returns only
@@ -251,27 +254,31 @@ func (s *Server) baseMux() *http.ServeMux {
 	return mux
 }
 
-// Handler builds the LAN-facing mux (pairing + factory-reset allowed; exported
-// for httptest-based tests).
+// Handler builds the LAN-facing mux (pairing, factory-reset and
+// household-reset allowed; exported for httptest-based tests).
 func (s *Server) Handler() http.Handler {
 	mux := s.baseMux()
 	mux.HandleFunc("POST /v1/pair", s.pair)
 	mux.Handle("POST /v1/factory-reset", s.authed(s.factoryReset))
+	mux.Handle("POST /v1/household-reset", s.authed(s.householdReset))
 	// On the LAN leg, revoking the last active device is allowed (that is how
 	// "remove this phone" unpairs the agent).
 	mux.Handle("DELETE /v1/devices/{id}", s.authed(s.deleteDevice(false)))
 	return mux
 }
 
-// TunnelHandler is the remote-facing mux: the shared routes, but the two
-// LAN-only ceremonies are refused with 403 lan_only. A stolen pairing bearer
-// must not let an attacker re-pair OR remotely brick the agent from the
-// internet — remote decommissioning is an operator action via the cloud
-// /admin/revoke, not a destructive call over the tunnel.
+// TunnelHandler is the remote-facing mux: the shared routes, but the LAN-only
+// ceremonies are refused with 403 lan_only. A stolen pairing bearer must not
+// let an attacker re-pair, remotely brick the agent, OR remotely strip it of
+// its household from the internet — remote decommissioning is an operator
+// action via the cloud /admin/revoke, and a household erased in the cloud
+// reaches the relay through the lifecycle watcher, not a destructive call
+// over the tunnel.
 func (s *Server) TunnelHandler() http.Handler {
 	mux := s.baseMux()
 	mux.HandleFunc("POST /v1/pair", lanOnly)
 	mux.HandleFunc("POST /v1/factory-reset", lanOnly)
+	mux.HandleFunc("POST /v1/household-reset", lanOnly)
 	// Device revocation is allowed remotely (a lost phone is revoked from another
 	// device that is away, D9) EXCEPT revoking the last device — that unpairs the
 	// agent, so a stolen bearer must not do it over the tunnel. deleteDevice(true)
@@ -910,6 +917,12 @@ const (
 //	MISS (new address): probe → Cloud.RegisterController (cloud 409 →
 //	     409 quota_exceeded, not 502; a cloud 429 is the throttle, so transient) → fill the phantom slot or append (seeding
 //	     default alert rules) → reconfigure the tunnel → 200.
+//
+// Both persists are bound to the household the upsert started under (the frpc
+// token read under controllerMu): if the lifecycle watcher dropped the
+// household meanwhile (it runs without controllerMu), the answer is 401
+// unauthorized and NOTHING is persisted — no cloud sync is kicked on a HIT,
+// and on a MISS the just-registered cloud controller is revoked best-effort.
 func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 	var cfg wire.ControllerConfig
 	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil || cfg.LanAddress == "" {
@@ -946,6 +959,11 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 
 	normalized := state.NormalizeLanAddress(cfg.LanAddress, cfg.UseHTTPS)
 	st := s.Store.Get()
+	// Every controller persist below is bound to the household this upsert
+	// was decided for (persistForHousehold): the lifecycle watcher drops a
+	// deleted household WITHOUT controllerMu, and must not have a controller
+	// from that household re-persisted onto the reset relay after it.
+	householdToken := st.Cloud.FrpcToken
 	existing, hit := st.FindControllerByAddr(normalized)
 	// A matched controller with no cloud identity yet has no GUID to reuse — the
 	// HIT path's ControllerByGUID("") would then hit the config-less phantom slot.
@@ -974,7 +992,7 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 		cloudStale := existing.EffectivePreset() != cfg.Preset ||
 			existing.LanAddress != cfg.LanAddress ||
 			existing.Label != cfg.Label
-		err := s.Store.Update(func(doc *state.State) {
+		applied, err := s.Store.UpdateIfToken(householdToken, func(doc *state.State) {
 			c := doc.ControllerByGUID(guid)
 			if c == nil {
 				return // deleted concurrently (we hold controllerMu, so unlikely)
@@ -1005,6 +1023,12 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, "persist_failed")
 			return
 		}
+		if !applied {
+			// The household was dropped (or replaced) while this upsert ran;
+			// the caller's bearer died with it. Nothing new in the cloud to undo.
+			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
 		if cloudStale {
 			s.kickCloudSync(cloudCtx(r))
 		}
@@ -1032,7 +1056,7 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 		remoteAPIURL = deriveRemoteAPIURL(guid, st.Cloud.FRPS.SubdomainHost)
 	}
 
-	err = s.Store.Update(func(doc *state.State) {
+	applied, err := s.Store.UpdateIfToken(householdToken, func(doc *state.State) {
 		// Fill the boot-seeded phantom slot when present (adopting its alert
 		// rules) else append; seed defaults for a fresh append.
 		c := doc.UpsertControllerSlot()
@@ -1056,6 +1080,11 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Error("persist controller (new)", "err", err)
 		writeErr(w, http.StatusInternalServerError, "persist_failed")
+		return
+	}
+	if !applied {
+		s.discardOrphanController(cloudCtx(r), guid)
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	if err := s.reconfigureTunnel(); err != nil {
@@ -1171,24 +1200,6 @@ func (s *Server) deleteControllerHandler(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// rotateControllerHandler serves POST /v1/controllers/{guid}/rotate (issue
-// poolpilot-cloud#27's manual "regenerate a leaked public link" trigger). Order matters and
-// is deliberate: the cloud call runs FIRST — it is what actually revokes the
-// old guid and mints the new one — and only on ITS success does this touch
-// state.json or the tunnel, so a cloud failure (uplink down, cloud rejects
-// the guid) leaves this agent completely untouched: the old guid and its
-// tunnel keep working exactly as before the request. Once the cloud call
-// succeeds the swap is local bookkeeping — every other field (lan_address,
-// use_https, preset, label, creds, alert rules/state) is preserved in place,
-// only the GUID/RemoteURL/RemoteAPIURL move to the new identity — followed by
-// a tunnel reconfigure so the frpc proxy set swaps ctrl-<old>/api-<old> for
-// ctrl-<new>/api-<new>. A reconfigure error (like putControllers/
-// deleteControllerHandler) is logged but does not fail the request: the
-// rotation is already accepted and persisted, and the next state-changing
-// request (or a restart) reconciles the tunnel.
-//
-// guid is the CURRENT (about-to-be-superseded) identity; an agent that
-// doesn't have it is 404, mirroring deleteControllerHandler.
 // ensureCtrlSessionKey returns the relay's web-session HMAC key, generating and
 // persisting one on first use. Idempotent under concurrency: the generate is
 // done inside Store.Update, which serializes writers, and re-checks for an
@@ -1264,6 +1275,29 @@ func (s *Server) webSessionHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// rotateControllerHandler serves POST /v1/controllers/{guid}/rotate (issue
+// poolpilot-cloud#27's manual "regenerate a leaked public link" trigger). Order matters and
+// is deliberate: the cloud call runs FIRST — it is what actually revokes the
+// old guid and mints the new one — and only on ITS success does this touch
+// state.json or the tunnel, so a cloud failure (uplink down, cloud rejects
+// the guid) leaves this agent completely untouched: the old guid and its
+// tunnel keep working exactly as before the request. Once the cloud call
+// succeeds the swap is local bookkeeping — every other field (lan_address,
+// use_https, preset, label, creds, alert rules/state) is preserved in place,
+// only the GUID/RemoteURL/RemoteAPIURL move to the new identity — followed by
+// a tunnel reconfigure so the frpc proxy set swaps ctrl-<old>/api-<old> for
+// ctrl-<new>/api-<new>. A reconfigure error (like putControllers/
+// deleteControllerHandler) is logged but does not fail the request: the
+// rotation is already accepted and persisted, and the next state-changing
+// request (or a restart) reconciles the tunnel.
+//
+// guid is the CURRENT (about-to-be-superseded) identity; an agent that
+// doesn't have it is 404, mirroring deleteControllerHandler.
+//
+// The persist is bound to the household the rotate started under: if the
+// lifecycle watcher dropped the household during the cloud call, the answer is
+// 401 unauthorized, nothing is persisted, and the new cloud guid is revoked
+// best-effort.
 func (s *Server) rotateControllerHandler(w http.ResponseWriter, r *http.Request) {
 	oldGUID := r.PathValue("guid")
 	if oldGUID == "" {
@@ -1278,10 +1312,14 @@ func (s *Server) rotateControllerHandler(w http.ResponseWriter, r *http.Request)
 	s.controllerMu.Lock()
 	defer s.controllerMu.Unlock()
 
-	if _, ok := s.Store.Get().FindController(oldGUID); !ok {
+	pre := s.Store.Get()
+	if _, ok := pre.FindController(oldGUID); !ok {
 		writeErr(w, http.StatusNotFound, "unknown_controller")
 		return
 	}
+	// Bound like putControllers' persists: a household the watcher drops
+	// during the cloud call must not get the rotated controller back.
+	householdToken := pre.Cloud.FrpcToken
 
 	// Cloud FIRST (see the doc comment above): on failure nothing local
 	// changes, so the old guid and its tunnel keep working.
@@ -1322,7 +1360,7 @@ func (s *Server) rotateControllerHandler(w http.ResponseWriter, r *http.Request)
 		remoteAPIURL = deriveRemoteAPIURL(res.GUID, s.Store.Get().Cloud.FRPS.SubdomainHost)
 	}
 
-	err = s.Store.Update(func(doc *state.State) {
+	applied, err := s.Store.UpdateIfToken(householdToken, func(doc *state.State) {
 		c := doc.ControllerByGUID(oldGUID)
 		if c == nil {
 			return // deleted concurrently — unreachable in practice, we hold controllerMu
@@ -1340,6 +1378,11 @@ func (s *Server) rotateControllerHandler(w http.ResponseWriter, r *http.Request)
 		// controller once the disk clears.
 		slog.Error("persist rotated controller", "err", err)
 		writeErr(w, http.StatusInternalServerError, "persist_failed")
+		return
+	}
+	if !applied {
+		s.discardOrphanController(cloudCtx(r), res.GUID)
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
@@ -1461,6 +1504,22 @@ func writeProbeErr(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusUnprocessableEntity, "controller_bad_payload")
 	default:
 		writeErr(w, http.StatusUnprocessableEntity, "controller_unreachable")
+	}
+}
+
+// discardOrphanController handles a controller the cloud minted (register or
+// rotate) for a household that was dropped from this relay before the local
+// persist — the lifecycle watcher's "deleted" answer, which deliberately runs
+// without controllerMu. The controller is NOT persisted (the persist is bound
+// to the household's token); its cloud row is revoked best-effort. In the
+// usual case — the household erased in the cloud — the relay holds no
+// credentials any more, the revoke is skipped, and the row died with the
+// household anyway; after a new setup it is sent with the NEW household's
+// bearer, which the cloud answers 404 for a foreign guid (treated as done).
+func (s *Server) discardOrphanController(ctx context.Context, guid string) {
+	slog.Warn("relay lifecycle: household dropped while a controller was being registered; not persisting it", "guid", guid)
+	if err := s.Cloud.RevokeController(ctx, guid); err != nil {
+		slog.Info("orphaned controller revoke skipped/failed (best-effort)", "guid", guid, "err", err)
 	}
 }
 
@@ -1853,6 +1912,62 @@ func (s *Server) factoryReset(w http.ResponseWriter, r *http.Request) {
 			s.ExitFn()
 		}()
 	}
+}
+
+// householdReset (POST /v1/household-reset, LAN-only, pairing bearer) drops the
+// household from this relay right away, with exactly the outcome of a cloud
+// "deleted" signal (lifecycle.ResetHousehold — the same function the watcher
+// runs): cloud credentials, paired devices, controllers and outbox are
+// dropped, the tunnel is torn down, mDNS announces paired=false, and the relay
+// is ready for a new setup. Unlike factoryReset it KEEPS the identity (agent
+// id + TLS key, so the fingerprint and any printed QR stay valid) and does not
+// exit the process.
+//
+// The app calls it best-effort right after "delete all my data" erased the
+// household in the cloud (poolpilot-app#1077), so the relay does not wait for
+// the watcher to notice (minutes with a tunnel, up to a day without). For the
+// same reason there is no cloud call here: the household — and with it this
+// relay's cloud row — is already gone, and anything this relay could still
+// tell the cloud would be about credentials it is about to forget.
+//
+// Binding: the drop applies only while the device whose bearer authorized this
+// request is STILL an active device of the current document, checked under the
+// store lock. If the watcher (or a last-device revoke) dropped the household
+// first and a new setup landed before this request got the lock, that device
+// is gone — the new household is left untouched and the caller gets the same
+// 401 any bearer of a forgotten household gets. Held under controllerMu so a
+// controller upsert or delete in flight (probe → cloud → persist) cannot
+// re-persist a controller after the drop.
+//
+// Latency: because of that lock, a reset that arrives while a controller
+// upsert, rotate or delete is in flight waits for it — up to the controller
+// probe plus a cloud call (cloud.RequestTimeout, 15 s) — before answering.
+// Clients must treat a timeout here as "no signal" and the whole call as
+// best-effort: the lifecycle watcher still resets the relay on its own once it
+// learns the household was deleted.
+func (s *Server) householdReset(w http.ResponseWriter, r *http.Request) {
+	deviceID := deviceIDFromContext(r)
+	s.controllerMu.Lock()
+	defer s.controllerMu.Unlock()
+	dropped, err := lifecycle.ResetHousehold(s.Store, func(st state.State) bool {
+		for _, d := range st.ActiveDevices() {
+			if d.ID == deviceID {
+				return true
+			}
+		}
+		return false
+	}, s.reconfigureTunnel, s.OnPaired)
+	if err != nil {
+		slog.Error("household reset", "err", err)
+		writeErr(w, http.StatusInternalServerError, "persist_failed")
+		return
+	}
+	if !dropped {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	slog.Warn("relay lifecycle: household reset over the LAN API; dropped household data, relay is ready for a new setup (identity kept)")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ---- helpers ----

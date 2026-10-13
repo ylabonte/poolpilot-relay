@@ -80,6 +80,16 @@ danach. Jede Änderung steht als eine `relay lifecycle:`-Zeile im Log:
   Richte es einfach erneut aus der App ein (siehe unten). Eine neue Identität
   (z. B. bevor du das Gerät weitergibst) bekommst du nur per
   [Werksreset](#werksreset).
+- **„household reset over the LAN API; dropped household data“**: Derselbe
+  Reset, nur sofort. Nutzt du „Alle meine Daten löschen“ in der App, während
+  dein Telefon im selben Netzwerk wie das Relay ist, bittet die App das Relay,
+  den Haushalt sofort zu vergessen (`POST /v1/household-reset`, nur im LAN),
+  statt zu warten, bis das Relay es selbst bemerkt. Das Ergebnis ist dasselbe
+  wie in der Zeile darüber: Die Identität bleibt erhalten, und das Relay ist
+  bereit für eine neue Einrichtung. Erreicht das Telefon das Relay in dem
+  Moment nicht, geht nichts verloren — das Relay bemerkt es weiterhin selbst,
+  mit eingerichtetem Controller nach wenigen Minuten, ohne Controller
+  innerhalb von etwa einem Tag.
 
 ## Relay neu koppeln
 

@@ -414,7 +414,7 @@ func (w *Watcher) resume(token, was string) {
 }
 
 func (w *Watcher) drop(token, reason string) {
-	dropped, err := w.o.Store.DropHousehold(token)
+	dropped, err := ResetHousehold(w.o.Store, func(s state.State) bool { return s.Cloud.FrpcToken == token }, w.o.Reconfigure, w.o.OnPaired)
 	if err != nil {
 		slog.Error("relay lifecycle: drop household data", "err", err)
 		return
@@ -425,13 +425,42 @@ func (w *Watcher) drop(token, reason string) {
 	}
 	slog.Warn("relay lifecycle: household deleted in the cloud; dropped household data, relay is ready for a new setup (identity kept)", "reason", reason)
 	w.resetPacing(true)
-	w.reconfigure()
-	if w.o.OnPaired != nil {
-		// Announce the store's CURRENT truth, not a hard-coded false: a new
-		// setup (pairFirst) may already have landed since the drop, and mDNS
-		// must not then claim the relay is unpaired.
-		w.o.OnPaired.UpdatePaired(w.o.Store.Get().Paired())
+}
+
+// ResetHousehold is the ONE sequence every household reset runs — the
+// watcher's "deleted" answer and the LAN API's POST /v1/household-reset
+// (poolpilot-app#1077) alike, so the two can never drift apart:
+//
+//  1. drop the household data (state.Store.DropHouseholdIf →
+//     state.State.ResetHousehold: credentials, devices, controllers, outbox,
+//     ctrl session secret; agent id + TLS key kept, fingerprint unchanged),
+//     but only while still holds for the CURRENT document — the caller's
+//     binding to the household it decided about (the frpc token the answer
+//     was for; the pairing bearer the LAN request was authorized with), so a
+//     new setup that landed in between is never wiped;
+//  2. re-apply the tunnel from the (now empty) state — no frp service runs
+//     without a registered controller, so the tunnel is torn down. A failure
+//     is logged, not returned: the household is already gone;
+//  3. announce the store's CURRENT paired state over mDNS — not a hard-coded
+//     false, since a new setup may already have landed since the drop.
+//
+// The poller needs no hook: it reads the controllers from the store on every
+// tick, so it stops polling as soon as they are gone. Reports whether the
+// household was dropped; on false (binding no longer holds) nothing ran.
+func ResetHousehold(store *state.Store, still func(state.State) bool, reconfigure func() error, onPaired PairedNotifier) (bool, error) {
+	dropped, err := store.DropHouseholdIf(still)
+	if err != nil || !dropped {
+		return dropped, err
 	}
+	if reconfigure != nil {
+		if err := reconfigure(); err != nil {
+			slog.Error("relay lifecycle: reconfigure tunnel", "err", err)
+		}
+	}
+	if onPaired != nil {
+		onPaired.UpdatePaired(store.Get().Paired())
+	}
+	return true, nil
 }
 
 // credentialsChanged handles an answer that arrived for credentials the relay
