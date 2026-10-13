@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -157,5 +158,38 @@ func TestCheckUpdateUnknownToken(t *testing.T) {
 		if tc.want != ErrUnknownToken && errors.Is(err, ErrUnknownToken) {
 			t.Errorf("HTTP %d must not read as an unknown token", tc.status)
 		}
+	}
+}
+
+// Reason is persisted, logged and shown in /v1/status: only documented values
+// survive; anything else becomes "" (the state itself is still honoured).
+func TestRelayStatusKeepsOnlyDocumentedReasons(t *testing.T) {
+	for body, want := range map[string]string{
+		`{"state":"suspended","reason":"lapsed"}`:                            "lapsed",
+		`{"state":"suspended","reason":"<script>\u0000x"}`:                   "",
+		`{"state":"deleted","reason":"household_deleted"}`:                   "household_deleted",
+		`{"state":"suspended","reason":"` + strings.Repeat("x", 4096) + `"}`: "",
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(body))
+		}))
+		c := New(newStore(t, srv.URL))
+		resp, err := c.RelayStatus(context.Background(), srv.URL, "relay-token")
+		srv.Close()
+		if err != nil || resp.Reason != want {
+			t.Errorf("body %.60s: reason=%q err=%v, want %q", body, resp.Reason, err, want)
+		}
+	}
+}
+
+// An oversized body is cut off at maxResponseBytes and reads as no signal.
+func TestRelayStatusOversizedBodyIsNoSignal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"state":"active","reason":"` + strings.Repeat("x", maxResponseBytes) + `"}`))
+	}))
+	defer srv.Close()
+	c := New(newStore(t, srv.URL))
+	if _, err := c.RelayStatus(context.Background(), srv.URL, "relay-token"); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("err = %v, want ErrUnavailable", err)
 	}
 }

@@ -61,6 +61,9 @@ var (
 	ErrUnknownToken = errors.New("cloud does not recognise the relay token")
 )
 
+// maxResponseBytes caps how much of a control-plane response body is decoded.
+const maxResponseBytes = 1 << 20
+
 // RequestTimeout bounds every control-plane call; the relay must never hang a
 // LAN-API request on a wedged uplink.
 const RequestTimeout = 15 * time.Second
@@ -570,6 +573,10 @@ func (c *Client) RelayStatus(ctx context.Context, baseURL, frpcToken string) (wi
 	case status == http.StatusOK:
 		switch out.State {
 		case wire.RelayStateActive, wire.RelayStateSuspended, wire.RelayStateDeleted:
+			// Reason is informational, but it is persisted (Cloud.LifecycleReason),
+			// logged and echoed in /v1/status: keep only a documented value, so a
+			// misbehaving control plane cannot plant arbitrary text there.
+			out.Reason = knownRelayReason(out.Reason)
 			return out, nil
 		default:
 			return wire.RelayStatusResponse{}, fmt.Errorf("%w: relay/status: unrecognised state %q", ErrUnavailable, out.State)
@@ -578,6 +585,17 @@ func (c *Client) RelayStatus(ctx context.Context, baseURL, frpcToken string) (wi
 		return wire.RelayStatusResponse{}, fmt.Errorf("%w: relay/status HTTP 401", ErrUnknownToken)
 	default:
 		return wire.RelayStatusResponse{}, fmt.Errorf("%w: relay/status HTTP %d", ErrUnavailable, status)
+	}
+}
+
+// knownRelayReason returns reason when it is one of the documented
+// wire.RelayReason* values, else "".
+func knownRelayReason(reason string) string {
+	switch reason {
+	case wire.RelayReasonLapsed, wire.RelayReasonFree, wire.RelayReasonRevoked, wire.RelayReasonHouseholdDeleted:
+		return reason
+	default:
+		return ""
 	}
 }
 
@@ -796,7 +814,9 @@ func (c *Client) doJSON(ctx context.Context, method, url, bearer string, in, out
 	}
 	defer resp.Body.Close()
 	if out != nil && resp.StatusCode < 300 {
-		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		// Bounded: every control-plane response is small, and an unbounded
+		// decode would let a misbehaving server exhaust a Pi's memory.
+		if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(out); err != nil {
 			return resp.StatusCode, fmt.Errorf("%w: decode response: %v", ErrUnavailable, err)
 		}
 	}
