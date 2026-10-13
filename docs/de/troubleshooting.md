@@ -65,8 +65,13 @@ danach. Jede Änderung steht als eine `relay lifecycle:`-Zeile im Log:
   und läuft von selbst weiter, wenn das Abo wieder aktiv ist. `GET /v1/status`
   zeigt den Grund in `tunnel.last_error` (z. B. `suspended: lapsed`).
 - **`state=unknown`**: Die Cloud hat dieses Relay über einige Stunden hinweg
-  mehrfach nicht erkannt. Das Relay pausiert den Fernzugriff genauso und behält
-  seine Einstellungen. Löst sich das nicht, koppel das Relay neu (siehe unten).
+  mehrfach nicht erkannt. Das Relay pausiert den Fernzugriff genauso, behält
+  seine Einstellungen und prüft weiter. Löst sich das nicht, gibt es den
+  Haushalt dahinter in der Cloud sehr wahrscheinlich nicht mehr (z. B. weil er
+  gelöscht wurde, bevor die Cloud Relays darüber informieren konnte, oder weil
+  das Relay monatelang offline war). Neu koppeln funktioniert nicht, solange
+  die alten Telefone noch gekoppelt sind. Mach deshalb einen
+  [Werksreset](#werksreset) und richte das Relay danach erneut aus der App ein.
 - **„household deleted in the cloud; dropped household data“**: Der
   Haushalt wurde gelöscht (z. B. über „Alle meine Daten löschen“ in der App).
   Das Relay vergisst alles, was dazugehörte (gekoppelte Telefone, Controller,

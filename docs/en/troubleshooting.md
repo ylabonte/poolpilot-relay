@@ -62,8 +62,13 @@ line in the log marks each change:
   resumes by itself once the subscription is active again. `GET /v1/status`
   shows the reason in `tunnel.last_error` (e.g. `suspended: lapsed`).
 - **`state=unknown`**: the cloud didn't recognise this relay several times
-  over a few hours. The relay pauses remote access the same way and keeps its
-  settings. If this doesn't clear up, re-pair the relay (below).
+  over a few hours. The relay pauses remote access the same way, keeps its
+  settings and keeps checking. If it doesn't clear up, the household behind
+  it most likely no longer exists in the cloud (e.g. it was deleted before
+  the cloud could tell relays, or the relay was offline for months). Pairing
+  again won't work while the old phones are still paired to it, so do a
+  [factory reset](#factory-reset) and then set the relay up again from the
+  app.
 - **"household deleted in the cloud; dropped household data"**: the
   household was deleted (e.g. via "Delete all my data" in the app). The relay
   forgets everything that belonged to it (paired phones, controllers, cloud
