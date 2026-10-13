@@ -257,3 +257,89 @@ func TestHouseholdResetWaitsForInFlightControllerUpsert(t *testing.T) {
 		t.Fatal("mDNS still paired")
 	}
 }
+
+// holdMint pins the next cloud register/rotate call inside the stub and returns
+// the release func; it returns once the call is in flight.
+func (f *fixture) holdMint(t *testing.T) (entered <-chan struct{}, release func()) {
+	t.Helper()
+	hold, in := make(chan struct{}), make(chan struct{})
+	f.registerHoldMu.Lock()
+	f.registerHold, f.registerEntered = hold, in
+	f.registerHoldMu.Unlock()
+	var once sync.Once
+	release = func() {
+		once.Do(func() {
+			f.registerHoldMu.Lock()
+			f.registerHold, f.registerEntered = nil, nil
+			f.registerHoldMu.Unlock()
+			close(hold)
+		})
+	}
+	t.Cleanup(release)
+	return in, release
+}
+
+// watcherDrop is the lifecycle watcher's "deleted" path exactly as main wires
+// it — and, like the watcher, it takes no controllerMu.
+func (f *fixture) watcherDrop(t *testing.T, frpc string) {
+	t.Helper()
+	dropped, err := lifecycle.ResetHousehold(f.store, func(s state.State) bool { return s.Cloud.FrpcToken == frpc },
+		f.srv.ApplyTunnelState, f.notifier)
+	if err != nil || !dropped {
+		t.Fatalf("watcher drop = %v, %v", dropped, err)
+	}
+}
+
+// The watcher drops a deleted household without controllerMu, so a NEW
+// controller registered in the cloud just before the drop must not be
+// persisted onto the reset relay afterwards: the upsert's persist is bound to
+// the household token, and the caller gets 401.
+func TestWatcherDropDuringControllerRegisterPersistsNothing(t *testing.T) {
+	f, token := configuredFixture(t)
+	frpc := f.store.Get().Cloud.FrpcToken
+	entered, release := f.holdMint(t)
+	second := httptest.NewServer(f.controller.Config.Handler)
+	t.Cleanup(second.Close)
+	putDone := make(chan int, 1)
+	go func() {
+		resp, _ := f.do(t, "PUT", "/v1/controllers", token, wire.ControllerConfig{
+			Preset: "procon-ip", LanAddress: strings.TrimPrefix(second.URL, "http://"), Label: "Pool 2",
+		})
+		putDone <- resp.StatusCode
+	}()
+	<-entered
+	f.watcherDrop(t, frpc)
+	release()
+	if c := <-putDone; c != http.StatusUnauthorized {
+		t.Fatalf("upsert whose household was dropped mid-register answered %d, want 401", c)
+	}
+	if st := f.store.Get(); len(st.Controllers) != 0 || st.Paired() || st.Enrolled() {
+		t.Fatalf("a controller of the dropped household was re-persisted: %+v", st.Controllers)
+	}
+	if ts := f.tunnel.Status(); ts.State != "disabled" {
+		t.Fatalf("tunnel = %+v, want disabled", ts)
+	}
+}
+
+// Same binding for rotate: the rotated controller of a household dropped
+// during the cloud call is not written back.
+func TestWatcherDropDuringControllerRotatePersistsNothing(t *testing.T) {
+	f, token := configuredFixture(t)
+	frpc := f.store.Get().Cloud.FrpcToken
+	guid := f.store.Get().Controllers[0].GUID
+	entered, release := f.holdMint(t)
+	rotDone := make(chan int, 1)
+	go func() {
+		resp, _ := f.do(t, "POST", "/v1/controllers/"+guid+"/rotate", token, nil)
+		rotDone <- resp.StatusCode
+	}()
+	<-entered
+	f.watcherDrop(t, frpc)
+	release()
+	if c := <-rotDone; c != http.StatusUnauthorized {
+		t.Fatalf("rotate whose household was dropped mid-call answered %d, want 401", c)
+	}
+	if st := f.store.Get(); len(st.Controllers) != 0 {
+		t.Fatalf("rotated controller of the dropped household was persisted: %+v", st.Controllers)
+	}
+}

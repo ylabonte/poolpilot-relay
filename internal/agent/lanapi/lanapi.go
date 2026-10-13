@@ -953,6 +953,11 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 
 	normalized := state.NormalizeLanAddress(cfg.LanAddress, cfg.UseHTTPS)
 	st := s.Store.Get()
+	// Every controller persist below is bound to the household this upsert
+	// was decided for (persistForHousehold): the lifecycle watcher drops a
+	// deleted household WITHOUT controllerMu, and must not have a controller
+	// from that household re-persisted onto the reset relay after it.
+	householdToken := st.Cloud.FrpcToken
 	existing, hit := st.FindControllerByAddr(normalized)
 	// A matched controller with no cloud identity yet has no GUID to reuse — the
 	// HIT path's ControllerByGUID("") would then hit the config-less phantom slot.
@@ -981,7 +986,7 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 		cloudStale := existing.EffectivePreset() != cfg.Preset ||
 			existing.LanAddress != cfg.LanAddress ||
 			existing.Label != cfg.Label
-		err := s.Store.Update(func(doc *state.State) {
+		applied, err := s.Store.UpdateIfToken(householdToken, func(doc *state.State) {
 			c := doc.ControllerByGUID(guid)
 			if c == nil {
 				return // deleted concurrently (we hold controllerMu, so unlikely)
@@ -1012,6 +1017,12 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, "persist_failed")
 			return
 		}
+		if !applied {
+			// The household was dropped (or replaced) while this upsert ran;
+			// the caller's bearer died with it. Nothing new in the cloud to undo.
+			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
 		if cloudStale {
 			s.kickCloudSync(cloudCtx(r))
 		}
@@ -1039,7 +1050,7 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 		remoteAPIURL = deriveRemoteAPIURL(guid, st.Cloud.FRPS.SubdomainHost)
 	}
 
-	err = s.Store.Update(func(doc *state.State) {
+	applied, err := s.Store.UpdateIfToken(householdToken, func(doc *state.State) {
 		// Fill the boot-seeded phantom slot when present (adopting its alert
 		// rules) else append; seed defaults for a fresh append.
 		c := doc.UpsertControllerSlot()
@@ -1063,6 +1074,11 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Error("persist controller (new)", "err", err)
 		writeErr(w, http.StatusInternalServerError, "persist_failed")
+		return
+	}
+	if !applied {
+		s.discardOrphanController(cloudCtx(r), guid)
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	if err := s.reconfigureTunnel(); err != nil {
@@ -1285,10 +1301,14 @@ func (s *Server) rotateControllerHandler(w http.ResponseWriter, r *http.Request)
 	s.controllerMu.Lock()
 	defer s.controllerMu.Unlock()
 
-	if _, ok := s.Store.Get().FindController(oldGUID); !ok {
+	pre := s.Store.Get()
+	if _, ok := pre.FindController(oldGUID); !ok {
 		writeErr(w, http.StatusNotFound, "unknown_controller")
 		return
 	}
+	// Bound like putControllers' persists: a household the watcher drops
+	// during the cloud call must not get the rotated controller back.
+	householdToken := pre.Cloud.FrpcToken
 
 	// Cloud FIRST (see the doc comment above): on failure nothing local
 	// changes, so the old guid and its tunnel keep working.
@@ -1329,7 +1349,7 @@ func (s *Server) rotateControllerHandler(w http.ResponseWriter, r *http.Request)
 		remoteAPIURL = deriveRemoteAPIURL(res.GUID, s.Store.Get().Cloud.FRPS.SubdomainHost)
 	}
 
-	err = s.Store.Update(func(doc *state.State) {
+	applied, err := s.Store.UpdateIfToken(householdToken, func(doc *state.State) {
 		c := doc.ControllerByGUID(oldGUID)
 		if c == nil {
 			return // deleted concurrently — unreachable in practice, we hold controllerMu
@@ -1347,6 +1367,11 @@ func (s *Server) rotateControllerHandler(w http.ResponseWriter, r *http.Request)
 		// controller once the disk clears.
 		slog.Error("persist rotated controller", "err", err)
 		writeErr(w, http.StatusInternalServerError, "persist_failed")
+		return
+	}
+	if !applied {
+		s.discardOrphanController(cloudCtx(r), res.GUID)
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
@@ -1468,6 +1493,22 @@ func writeProbeErr(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusUnprocessableEntity, "controller_bad_payload")
 	default:
 		writeErr(w, http.StatusUnprocessableEntity, "controller_unreachable")
+	}
+}
+
+// discardOrphanController handles a controller the cloud minted (register or
+// rotate) for a household that was dropped from this relay before the local
+// persist — the lifecycle watcher's "deleted" answer, which deliberately runs
+// without controllerMu. The controller is NOT persisted (the persist is bound
+// to the household's token); its cloud row is revoked best-effort. In the
+// usual case — the household erased in the cloud — the relay holds no
+// credentials any more, the revoke is skipped, and the row died with the
+// household anyway; after a new setup it is sent with the NEW household's
+// bearer, which the cloud answers 404 for a foreign guid (treated as done).
+func (s *Server) discardOrphanController(ctx context.Context, guid string) {
+	slog.Warn("relay lifecycle: household dropped while a controller was being registered; not persisting it", "guid", guid)
+	if err := s.Cloud.RevokeController(ctx, guid); err != nil {
+		slog.Info("orphaned controller revoke skipped/failed (best-effort)", "guid", guid, "err", err)
 	}
 }
 
