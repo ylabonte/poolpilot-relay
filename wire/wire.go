@@ -1203,3 +1203,52 @@ type UpdateStatusResponse struct {
 type UpdateSettingsRequest struct {
 	Auto *bool `json:"auto"`
 }
+
+// ---- Relay lifecycle (cloud POST /relay/status, relay-bearer) ----
+
+// RelayStatusResponse is the 200 body of the control plane's POST /relay/status
+// (poolpilot-cloud#242; contract: poolpilot-cloud docs/relay-lifecycle-contract.md).
+// The agent asks it, bodyless, with its frpc token as the bearer, when its
+// tunnel cannot log in, and while it has parked the tunnel. frp has no
+// server→client message, so this is the only way the agent learns WHY frps
+// keeps refusing it.
+//
+// State is one of the RelayState* constants. A value this agent does not
+// recognise reads as "no signal" (the agent changes nothing), so a newer
+// control plane may add states without breaking older agents. Reason is
+// machine-readable detail (RelayReason*), informational only: no agent
+// decision may depend on it beyond logging and the parked-tunnel status text.
+//
+// Only a 200 carrying this body is a signal. A 401 means the control plane
+// knows neither the token nor a tombstone for it — never destructive on its
+// own; every other status (404/405 from a control plane older than the route,
+// 429 throttle, 5xx, transport errors) is "no signal".
+type RelayStatusResponse struct {
+	State  string `json:"state"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// RelayState* are RelayStatusResponse.State values.
+const (
+	// RelayStateActive: the relay is known and its household entitled — the
+	// tunnel may run.
+	RelayStateActive = "active"
+	// RelayStateSuspended: the relay is known but its household is not entitled
+	// (lapsed, free, or admin-revoked — the latter is reversible via the
+	// operator's reactivate). The agent parks its tunnel and KEEPS its
+	// credentials, resuming when the answer turns active again.
+	RelayStateSuspended = "suspended"
+	// RelayStateDeleted: the relay's household was erased (the cloud holds a
+	// tombstone for this token). The agent drops all household data and
+	// returns to the setup-ready state, keeping its own identity (agent id +
+	// TLS key, so the pairing fingerprint stays valid).
+	RelayStateDeleted = "deleted"
+)
+
+// RelayReason* are RelayStatusResponse.Reason values.
+const (
+	RelayReasonLapsed           = "lapsed"
+	RelayReasonFree             = "free"
+	RelayReasonRevoked          = "revoked"
+	RelayReasonHouseholdDeleted = "household_deleted"
+)
