@@ -21,6 +21,11 @@
 //	anything else (404 from an older control plane, 429, 5xx, transport)
 //	          → no signal: change nothing, re-ask with backoff.
 //
+// A relay with NO tunnel (no registered controller) is asked about too, in
+// probe mode (no strikes): about once a day on the watcher's own schedule
+// (idleProbeEvery), and whenever the updater's /update-check is answered 401
+// (Probe). The two share one rate limit.
+//
 // Contract: poolpilot-cloud docs/relay-lifecycle-contract.md.
 package lifecycle
 
@@ -67,8 +72,16 @@ var (
 	// counted one, park the tunnel as LifecycleUnknown.
 	unknownStrikes = 3
 	unknownSpacing = time.Hour
-	// kickMinInterval rate-limits Kick-triggered questions.
+	// kickMinInterval rate-limits Kick-triggered questions, and probes.
 	kickMinInterval = time.Minute
+	// idleProbeEvery paces the watcher's OWN probe of a relay that is
+	// enrolled, not parked and runs no tunnel (no registered controller): one
+	// probe-mode question about once a day (±10 %), the first within
+	// idleProbeFirstWithin of start. Independent of the updater, because the
+	// updater's /update-check 401 trigger never fires where self-update is
+	// disabled — which includes every Home Assistant add-on install.
+	idleProbeEvery       = 24 * time.Hour
+	idleProbeFirstWithin = time.Hour
 )
 
 // StatusClient is the slice of cloud.Client the Watcher needs.
@@ -102,10 +115,13 @@ type Watcher struct {
 	lastProbe time.Time
 	// probePending asks the next Step for one probe-mode question (Probe).
 	probePending bool
-	downSince    time.Time // first tick the tunnel was seen down; zero while up
-	nextAsk      time.Time // earliest next question; zero = as soon as allowed
-	backoff      time.Duration
-	strikes      []time.Time // counted 401 answers, oldest first
+	// nextIdleProbe is when the next idle probe (no tunnel) is due; zero
+	// until the first idle Step schedules it. Pushed out by every probe.
+	nextIdleProbe time.Time
+	downSince     time.Time // first tick the tunnel was seen down; zero while up
+	nextAsk       time.Time // earliest next question; zero = as soon as allowed
+	backoff       time.Duration
+	strikes       []time.Time // counted 401 answers, oldest first
 }
 
 // New builds a Watcher.
@@ -154,7 +170,6 @@ func (w *Watcher) Probe() {
 		w.mu.Unlock()
 		return
 	}
-	w.lastProbe = now
 	w.probePending = true
 	w.mu.Unlock()
 	select {
@@ -205,8 +220,17 @@ func (w *Watcher) Step(ctx context.Context, kicked bool) {
 		}
 		return
 	}
-	// Not parked: only a configured tunnel that stays down is a reason to ask.
-	if !hasTunnel(st) || w.o.TunnelState() == "connected" {
+	// Not parked and no tunnel: nothing to watch, except the occasional idle
+	// probe (see idleProbeEvery) so an erased household still reaches it.
+	if !hasTunnel(st) {
+		w.resetPacing(true)
+		if w.idleProbeDue(now) {
+			w.askProbe(ctx, st, now)
+		}
+		return
+	}
+	// Otherwise only a configured tunnel that stays down is a reason to ask.
+	if w.o.TunnelState() == "connected" {
 		w.resetPacing(true)
 		return
 	}
@@ -286,9 +310,31 @@ func (w *Watcher) ask(ctx context.Context, st state.State, now time.Time) {
 	}
 }
 
-// askProbe is the probe-mode question (Probe): one ask, no strikes, no
-// pacing changes. Same token binding as ask.
+// idleProbeDue reports whether the idle probe is due now. The first call only
+// schedules it (within idleProbeFirstWithin, randomized so a fleet restart is
+// not one burst).
+func (w *Watcher) idleProbeDue(now time.Time) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.nextIdleProbe.IsZero() {
+		w.nextIdleProbe = now.Add(time.Duration(rand.Float64() * float64(idleProbeFirstWithin)))
+		return false
+	}
+	if now.Before(w.nextIdleProbe) || (!w.lastProbe.IsZero() && now.Sub(w.lastProbe) < kickMinInterval) {
+		return false
+	}
+	return true
+}
+
+// askProbe is the probe-mode question (Probe, or the idle probe): one ask, no
+// strikes, no pacing changes. Same token binding as ask. Every probe — from
+// either trigger — records lastProbe (the shared rate limit) and pushes the
+// next idle probe a jittered idleProbeEvery out.
 func (w *Watcher) askProbe(ctx context.Context, st state.State, now time.Time) {
+	w.mu.Lock()
+	w.lastProbe = now
+	w.nextIdleProbe = now.Add(idleProbeEvery + time.Duration((rand.Float64()*0.2-0.1)*float64(idleProbeEvery)))
+	w.mu.Unlock()
 	token := st.Cloud.FrpcToken
 	resp, err := w.o.Cloud.RelayStatus(ctx, st.Cloud.BaseURL, token)
 	switch {

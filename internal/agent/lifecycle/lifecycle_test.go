@@ -117,18 +117,16 @@ func TestNoQuestionWhileTunnelConnectedOrWithinGrace(t *testing.T) {
 	}
 }
 
-func TestNoQuestionWithoutATunnelOrCredentials(t *testing.T) {
+// Without credentials there is nothing to ask about — not even an idle probe.
+func TestNoQuestionWithoutCredentials(t *testing.T) {
 	r := newRig(t)
+	_ = r.store.Update(func(s *state.State) { s.Cloud = state.Cloud{} })
+	for range 100 {
+		r.step(time.Hour)
+	}
 	_ = r.store.Update(func(s *state.State) { s.Controllers = nil })
 	for range 100 {
-		r.step(tickEvery)
-	}
-	_ = r.store.Update(func(s *state.State) {
-		s.Controllers = []state.Controller{{GUID: "g1", LanAddress: "192.168.2.3:80"}}
-		s.Cloud = state.Cloud{}
-	})
-	for range 100 {
-		r.step(tickEvery)
+		r.step(time.Hour)
 	}
 	if r.cloud.calls != 0 {
 		t.Fatalf("%d questions, want 0", r.cloud.calls)
@@ -545,12 +543,6 @@ func (r *rig) probe() {
 // still learns "deleted" through a probe, and drops to setup-ready.
 func TestProbeWithoutTunnelDropsOnDeleted(t *testing.T) {
 	r := noTunnelRig(t)
-	for range 50 {
-		r.step(time.Hour)
-	}
-	if r.cloud.calls != 0 {
-		t.Fatalf("no tunnel and no probe: %d questions, want 0", r.cloud.calls)
-	}
 	r.cloud.answer(wire.RelayStateDeleted, wire.RelayReasonHouseholdDeleted)
 	r.probe()
 	if r.cloud.calls != 1 {
@@ -652,5 +644,83 @@ func TestDropAnnouncesCurrentPairedState(t *testing.T) {
 	r.stepUntilAsked(t, downGrace+time.Minute)
 	if len(r.paired.calls) != 1 || !r.paired.calls[0] {
 		t.Fatalf("announced %v, want [true] (the relay was set up again before the announcement)", r.paired.calls)
+	}
+}
+
+// Review round 2 on #59: the watcher probes an idle relay (enrolled, not
+// parked, no tunnel) on its own — first within idleProbeFirstWithin, then about
+// daily (±10 %) — so relays whose updater never checks (self-update disabled,
+// e.g. every Home Assistant add-on) still learn "deleted".
+func TestIdleProbeCadence(t *testing.T) {
+	r := noTunnelRig(t)
+	r.cloud.answer(wire.RelayStateActive, "")
+	first := r.stepUntilAsked(t, idleProbeFirstWithin+time.Minute)
+	if first > idleProbeFirstWithin+tickEvery {
+		t.Fatalf("first idle probe after %v, want within %v", first, idleProbeFirstWithin)
+	}
+	for range 10 {
+		gap := r.stepUntilAsked(t, 2*idleProbeEvery)
+		if gap < idleProbeEvery*9/10 || gap > idleProbeEvery*11/10+tickEvery {
+			t.Fatalf("idle probe gap %v, want %v ±10%%", gap, idleProbeEvery)
+		}
+	}
+	if got := r.store.Get(); got.TunnelParked() || r.reconfigures != 0 {
+		t.Fatalf("active idle probes must change nothing: %+v", got.Cloud)
+	}
+}
+
+func TestIdleProbeDropsOnDeleted(t *testing.T) {
+	r := noTunnelRig(t)
+	r.cloud.answer(wire.RelayStateDeleted, wire.RelayReasonHouseholdDeleted)
+	r.stepUntilAsked(t, idleProbeFirstWithin+time.Minute)
+	if got := r.store.Get(); got.Enrolled() || got.Paired() {
+		t.Fatalf("idle probe answered deleted must drop to setup-ready: %+v", got)
+	}
+}
+
+// Same safety rules as Probe: a month of 401 answers never parks or drops.
+func TestIdleProbeUnknownTokenNeverParks(t *testing.T) {
+	r := noTunnelRig(t)
+	r.cloud.fail(fmt.Errorf("%w: HTTP 401", cloud.ErrUnknownToken))
+	for range 30 {
+		r.stepUntilAsked(t, 2*idleProbeEvery)
+	}
+	if got := r.store.Get(); got.TunnelParked() || got.Cloud.FrpcToken != "tok" {
+		t.Fatalf("idle probe 401s must never park or drop: %+v", got.Cloud)
+	}
+}
+
+// The updater-401 Probe and the idle probe share one rate limit, and either
+// pushes the next idle probe a day out.
+func TestIdleProbeSharesPacingWithProbe(t *testing.T) {
+	r := noTunnelRig(t)
+	r.cloud.answer(wire.RelayStateActive, "")
+	r.step(tickEvery) // schedules the first idle probe
+	r.probe()         // the updater's trigger asks now
+	if r.cloud.calls != 1 {
+		t.Fatalf("probe asked %d times, want 1", r.cloud.calls)
+	}
+	gap := r.stepUntilAsked(t, 2*idleProbeEvery)
+	if gap < idleProbeEvery*9/10 {
+		t.Fatalf("idle probe came %v after a Probe, want ~%v (pushed out)", gap, idleProbeEvery)
+	}
+	// And a Probe right after an idle probe is rate-limited.
+	calls := r.cloud.calls
+	r.now = r.now.Add(kickMinInterval / 2)
+	r.probe()
+	if r.cloud.calls != calls {
+		t.Fatal("a Probe within kickMinInterval of an idle probe asked again")
+	}
+}
+
+// A relay whose tunnel is up never idle-probes.
+func TestNoIdleProbeWithATunnel(t *testing.T) {
+	r := newRig(t)
+	r.tunnel = "connected"
+	for range 30 {
+		r.step(idleProbeEvery)
+	}
+	if r.cloud.calls != 0 {
+		t.Fatalf("connected relay idle-probed %d times", r.cloud.calls)
 	}
 }
