@@ -102,7 +102,33 @@ type Cloud struct {
 	BaseURL   string `json:"base_url,omitempty"`
 	FrpcToken string `json:"frpc_token,omitempty"`
 	FRPS      FRPS   `json:"frps,omitzero"`
+	// Lifecycle is "" in normal operation, or why the agent has PARKED its
+	// tunnel (LifecycleSuspended / LifecycleUnknown) after asking the control
+	// plane's POST /relay/status (poolpilot-cloud#242, internal/agent/lifecycle).
+	// Parked means: no frp service (ReconfigureTunnel hands the tunnel zero
+	// proxies), no /alerts or controller-sync calls — but the credentials are
+	// KEPT, so an answer of "active" resumes everything. Persisted so a reboot
+	// neither restarts the 20 s frp login loop nor forgets why it parked. A
+	// fresh enrolment (pairFirst replaces the whole Cloud struct) clears it.
+	Lifecycle string `json:"lifecycle,omitempty"`
+	// LifecycleReason is the control plane's informational reason for a
+	// suspension ("lapsed" | "free" | "revoked"), or "" — shown in /v1/status's
+	// tunnel.last_error while parked, never used for a decision.
+	LifecycleReason string `json:"lifecycle_reason,omitempty"`
+	// LifecycleSince is when the agent parked the tunnel.
+	LifecycleSince time.Time `json:"lifecycle_since,omitzero"`
 }
+
+// Cloud.Lifecycle values. Both park the tunnel; neither discards credentials.
+const (
+	// LifecycleSuspended: the control plane answered "suspended" — the relay
+	// is known but its household is not entitled (lapsed, free, admin-revoked).
+	LifecycleSuspended = "suspended"
+	// LifecycleUnknown: the control plane repeatedly did not recognise the
+	// token (401) and holds no tombstone for it. Could be a cloud-side data
+	// problem as easily as a gone household, so it only parks.
+	LifecycleUnknown = "unknown"
+)
 
 // Controller is a configured pool controller. In schema v2 the alert rules, the
 // engine's per-rule memory, and the last-successful-poll timestamp live on the
@@ -240,6 +266,40 @@ func (s State) ActiveDevices() []Device {
 
 // Enrolled reports whether the relay holds a cloud bearer token.
 func (s State) Enrolled() bool { return s.Cloud.FrpcToken != "" }
+
+// TunnelParked reports whether the agent has parked its tunnel and its other
+// cloud calls because the control plane said the household is not entitled,
+// or repeatedly did not know the token (see Cloud.Lifecycle).
+func (s State) TunnelParked() bool {
+	return s.Enrolled() && (s.Cloud.Lifecycle == LifecycleSuspended || s.Cloud.Lifecycle == LifecycleUnknown)
+}
+
+// ResetHousehold is THE one place that decides what a relay forgets when the
+// control plane reports its household deleted (POST /relay/status → "deleted",
+// poolpilot-cloud#242). It drops everything that belonged to the household —
+// the cloud credentials and lifecycle (Cloud), every paired device, every
+// controller (their GUIDs died with the household; Controller also carries the
+// controller credentials, alert rules and alert state), the queued alert
+// outbox, and the ctrl-vhost session secret (invalidates any web session) —
+// and returns the relay to the setup-ready state: paired:false,
+// enrolled:false, ready for the normal enrolment-code pairing.
+//
+// It deliberately KEEPS the relay's identity: AgentID and the TLS key/cert, so
+// the SPKI fingerprint is unchanged. A returning device's TLS pin stays valid
+// (no "stale pin" lockout), and the fingerprint/QR printed by show-pairing or
+// on a sticker keeps working for the re-setup. A fresh identity is what the
+// explicit on-device factory reset is for (Store.Wipe, e.g. before resale).
+// Also kept: the self-update settings/memory (device-level, not household
+// data), RecoveryWindowUsed (a monotonic replay guard; the recovery code is
+// derived from the identity and is unusable while not enrolled anyway), and
+// CloudSyncSeeded (a one-shot migration marker).
+func (s *State) ResetHousehold() {
+	s.Cloud = Cloud{}
+	s.Devices = nil
+	s.Controllers = nil
+	s.Outbox = nil
+	s.CtrlSessionSecret = ""
+}
 
 // AutoUpdate reports whether automatic update application is enabled. It is the
 // default (the zero value of Update.AutoDisabled); the app disables it via
@@ -641,27 +701,90 @@ func (st *Store) Wipe() error {
 	// handler report failure and skip the restart while every later Update
 	// fails ErrWiped — a zombie relay. A leftover backup is a hygiene miss to
 	// log, not a reason to wedge the agent.
+	st.removeStaleCopiesLocked("factory reset")
+	return nil
+}
+
+// removeStaleCopiesLocked best-effort removes every other on-disk copy of the
+// document: the "<path>.v1.bak" migration backup (backupV1) and any
+// ".state-*.json" temp a crashed persist left behind (persistLocked). Each is
+// a full copy of an older document — credentials, devices, controller
+// passwords. Must be called with st.mu held: Update/persistLocked hold it for
+// the whole persist, so no in-flight temp can be swept from under a writer.
+// what names the caller in the log lines.
+func (st *Store) removeStaleCopiesLocked(what string) {
 	bak := st.path + ".v1.bak"
 	if err := os.Remove(bak); err != nil && !errors.Is(err, os.ErrNotExist) {
-		slog.Warn("factory reset: could not remove migration backup", "path", bak, "err", err)
+		slog.Warn(what+": could not remove migration backup", "path", bak, "err", err)
 	}
 	dir := filepath.Dir(st.path)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
-			slog.Warn("factory reset: could not scan state dir for persist temps", "dir", dir, "err", err)
+			slog.Warn(what+": could not scan state dir for persist temps", "dir", dir, "err", err)
 		}
-		return nil
+		return
 	}
 	for _, e := range entries {
 		name := e.Name()
 		if strings.HasPrefix(name, ".state-") && strings.HasSuffix(name, ".json") {
 			if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
-				slog.Warn("factory reset: could not remove persist temp", "path", filepath.Join(dir, name), "err", err)
+				slog.Warn(what+": could not remove persist temp", "path", filepath.Join(dir, name), "err", err)
 			}
 		}
 	}
-	return nil
+}
+
+// UpdateIfToken is Update, applied only while the document still holds the
+// frpc token token — checked under the same lock the write takes. It is how a
+// decision based on a cloud answer obtained for ONE set of credentials is kept
+// from landing on another: a re-setup (pairFirst replaces Cloud) or a factory
+// reset between the question and the answer makes this a no-op. Reports
+// whether fn was applied; nothing is persisted when it was not.
+func (st *Store) UpdateIfToken(token string, fn func(*State)) (bool, error) {
+	if token == "" {
+		return false, nil
+	}
+	st.mu.Lock()
+	match := !st.wiped && st.s.Cloud.FrpcToken == token
+	st.mu.Unlock()
+	if !match {
+		return false, nil
+	}
+	applied := false
+	err := st.Update(func(s *State) {
+		// Re-checked inside Update's critical section: the unlocked pre-check
+		// above only avoids a pointless persist, it decides nothing.
+		if s.Cloud.FrpcToken != token {
+			return
+		}
+		fn(s)
+		applied = true
+	})
+	if err != nil {
+		return false, err
+	}
+	return applied, nil
+}
+
+// DropHousehold applies State.ResetHousehold and persists it — but only while
+// the document still holds the frpc token the "deleted" answer was obtained
+// for (see UpdateIfToken): a new household set up in the meantime is never
+// dropped. Then, under the store lock, it removes every other on-disk copy of
+// the document best-effort (removeStaleCopiesLocked: the v1 migration backup
+// and crashed-persist temps), since each carries the same household's
+// credentials and devices, which must not outlive the household. Unlike Wipe
+// the store stays live — the agent keeps running with its identity, ready for
+// a new setup. Reports whether the household was dropped.
+func (st *Store) DropHousehold(token string) (bool, error) {
+	applied, err := st.UpdateIfToken(token, func(s *State) { s.ResetHousehold() })
+	if err != nil || !applied {
+		return applied, err
+	}
+	st.mu.Lock()
+	st.removeStaleCopiesLocked("household reset")
+	st.mu.Unlock()
+	return true, nil
 }
 
 // PathName returns the backing file path (for logs).

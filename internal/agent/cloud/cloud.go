@@ -54,7 +54,15 @@ var (
 	// mint a replacement (or to re-run show-recovery) for nothing. Transient —
 	// live vouchers expire in minutes — so retrying the SAME code is the advice.
 	ErrVoucherCapReached = errors.New("cloud live-voucher cap reached")
+	// ErrUnknownToken: POST /relay/status answered 401 — the control plane
+	// knows neither this relay's token nor a tombstone for it. Distinct from
+	// ErrUnavailable because the lifecycle watcher counts these (and only
+	// these) toward parking the tunnel; it never discards credentials on it.
+	ErrUnknownToken = errors.New("cloud does not recognise the relay token")
 )
+
+// maxResponseBytes caps how much of a control-plane response body is decoded.
+const maxResponseBytes = 1 << 20
 
 // RequestTimeout bounds every control-plane call; the relay must never hang a
 // LAN-API request on a wedged uplink.
@@ -247,6 +255,10 @@ func (c *Client) SyncControllers(ctx context.Context) error {
 func (c *Client) syncPass(ctx context.Context) error {
 	for round := 0; round < maxSyncRounds; round++ {
 		s := c.store.Get()
+		if s.TunnelParked() {
+			// Parked (see Drain): the flags stay set and are sent on resume.
+			return nil
+		}
 		var roundErr error
 		pending, accepted := 0, 0
 		for _, ctrl := range s.Controllers {
@@ -513,6 +525,11 @@ type UpdateCheckResult struct {
 // version this relay should be on. Subscription-independent by design: the
 // endpoint accepts free and lapsed relays (see internal/api's
 // relayFromBearerAnyTier), so this must never be gated on tunnel state.
+//
+// A 401 is ErrUnknownToken (the control plane does not know this relay's
+// token); every other non-200 is ErrUnavailable. The updater uses the former
+// to have the lifecycle watcher ask POST /relay/status once — the only cloud
+// call a relay with no tunnel still makes (poolpilot-cloud#242).
 func (c *Client) CheckUpdate(ctx context.Context, currentVersion string) (UpdateCheckResult, error) {
 	s := c.store.Get()
 	var out UpdateCheckResult
@@ -521,10 +538,65 @@ func (c *Client) CheckUpdate(ctx context.Context, currentVersion string) (Update
 	if err != nil {
 		return UpdateCheckResult{}, err
 	}
+	if status == http.StatusUnauthorized {
+		return UpdateCheckResult{}, fmt.Errorf("%w: update-check: status 401", ErrUnknownToken)
+	}
 	if status != http.StatusOK {
 		return UpdateCheckResult{}, fmt.Errorf("%w: update-check: status %d", ErrUnavailable, status)
 	}
 	return out, nil
+}
+
+// RelayStatus asks the control plane why this relay's tunnel cannot log in
+// (POST /relay/status, relay-bearer, bodyless; poolpilot-cloud#242). It is the
+// lifecycle watcher's only signal — frp has no server→client message.
+//
+// Returns the response only for a 200 whose State this agent recognises
+// (wire.RelayState*). A 401 is ErrUnknownToken. Everything else — 404/405 from
+// a control plane older than the route, the per-IP throttle's 429, 5xx,
+// transport failures, an undecodable body, or a State added after this agent
+// was built — is ErrUnavailable, i.e. "no signal": the caller changes nothing.
+//
+// baseURL and frpcToken are explicit (like Release), not read from the store:
+// the caller must know exactly which credentials the answer is about, so it can
+// refuse to apply it once they have changed (state.Store.UpdateIfToken).
+func (c *Client) RelayStatus(ctx context.Context, baseURL, frpcToken string) (wire.RelayStatusResponse, error) {
+	if frpcToken == "" {
+		return wire.RelayStatusResponse{}, fmt.Errorf("%w: not enrolled", ErrRejected)
+	}
+	var out wire.RelayStatusResponse
+	status, err := c.doJSON(ctx, http.MethodPost, baseURL+"/relay/status", frpcToken, nil, &out)
+	if err != nil {
+		return wire.RelayStatusResponse{}, err
+	}
+	switch {
+	case status == http.StatusOK:
+		switch out.State {
+		case wire.RelayStateActive, wire.RelayStateSuspended, wire.RelayStateDeleted:
+			// Reason is informational, but it is persisted (Cloud.LifecycleReason),
+			// logged and echoed in /v1/status: keep only a documented value, so a
+			// misbehaving control plane cannot plant arbitrary text there.
+			out.Reason = knownRelayReason(out.Reason)
+			return out, nil
+		default:
+			return wire.RelayStatusResponse{}, fmt.Errorf("%w: relay/status: unrecognised state %q", ErrUnavailable, out.State)
+		}
+	case status == http.StatusUnauthorized:
+		return wire.RelayStatusResponse{}, fmt.Errorf("%w: relay/status HTTP 401", ErrUnknownToken)
+	default:
+		return wire.RelayStatusResponse{}, fmt.Errorf("%w: relay/status HTTP %d", ErrUnavailable, status)
+	}
+}
+
+// knownRelayReason returns reason when it is one of the documented
+// wire.RelayReason* values, else "".
+func knownRelayReason(reason string) string {
+	switch reason {
+	case wire.RelayReasonLapsed, wire.RelayReasonFree, wire.RelayReasonRevoked, wire.RelayReasonHouseholdDeleted:
+		return reason
+	default:
+		return ""
+	}
 }
 
 // SendAlert queues the alert into the persistent outbox FIRST, then attempts
@@ -663,10 +735,15 @@ func lastQueuedEntryForRule(ruleID string, rest []wire.AlertRequest) bool {
 // queued alert one by one; remaining 4xx → validation-rejected, drop + log;
 // transport error or 5xx → keep everything from this entry on and return
 // ErrUnavailable.
+//
+// While the tunnel is parked (state.State.TunnelParked — the control plane
+// said the household is not entitled, or does not know the token) Drain sends
+// nothing and keeps the queue: every delivery would be refused, once per poll
+// tick. The staleness rule above still trims it once delivery resumes.
 func (c *Client) Drain(ctx context.Context) error {
 	for {
 		s := c.store.Get()
-		if len(s.Outbox) == 0 {
+		if len(s.Outbox) == 0 || s.TunnelParked() {
 			return nil
 		}
 		head := s.Outbox[0]
@@ -737,7 +814,9 @@ func (c *Client) doJSON(ctx context.Context, method, url, bearer string, in, out
 	}
 	defer resp.Body.Close()
 	if out != nil && resp.StatusCode < 300 {
-		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		// Bounded: every control-plane response is small, and an unbounded
+		// decode would let a misbehaving server exhaust a Pi's memory.
+		if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(out); err != nil {
 			return resp.StatusCode, fmt.Errorf("%w: decode response: %v", ErrUnavailable, err)
 		}
 	}

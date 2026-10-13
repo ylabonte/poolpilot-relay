@@ -67,6 +67,7 @@ import (
 	"github.com/ylabonte/poolpilot-relay/internal/agent/cloud"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/ctrlfilter"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/lanapi"
+	"github.com/ylabonte/poolpilot-relay/internal/agent/lifecycle"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/poller"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/state"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/tlscert"
@@ -200,6 +201,10 @@ func run() error {
 	if archErr != nil {
 		slog.Warn("self-update disabled: unsupported architecture", "err", archErr)
 	}
+	// life is the lifecycle watcher (built below, once the LAN API exists).
+	// The updater's OnUnknownToken reaches it through this variable; it is
+	// assigned before any subsystem starts, so no check can observe nil.
+	var life *lifecycle.Watcher
 	upd := updater.New(updater.Options{
 		Store:   store,
 		Version: version,
@@ -210,6 +215,11 @@ func run() error {
 		DLBase:  os.Getenv("REPO_DL_BASE"),
 		Disabled: version == "dev" || os.Getenv("UPDATE_DISABLED") == "1" ||
 			archErr != nil || update.PublicKey == "",
+		OnUnknownToken: func() {
+			if life != nil {
+				life.Probe()
+			}
+		},
 	})
 	// Resolve the LAN API bind once, then feed both the listener and the mDNS
 	// record from it so the advertised port can never diverge from the bind. A
@@ -275,6 +285,18 @@ func run() error {
 	// configured serves that path from the first request.
 	api.InstallCtrlFilterAuth()
 
+	// Lifecycle watcher (poolpilot-cloud#242): when the tunnel stays down it asks
+	// the control plane why, and parks the tunnel (suspended / unknown token,
+	// credentials kept) or drops the household data (deleted, identity kept).
+	life = lifecycle.New(lifecycle.Options{
+		Store:       store,
+		Cloud:       cloudClient,
+		TunnelState: func() string { return tun.Status().State },
+		Reconfigure: api.ApplyTunnelState,
+		OnPaired:    announcer,
+	})
+	api.Lifecycle = life
+
 	// Boot-time recovery: a relay that was already configured resumes the tunnel
 	// (all registered controllers) without waiting for another PUT.
 	if bootHasRegisteredController(st) {
@@ -297,6 +319,7 @@ func run() error {
 	supervise(ctx, &wg, "poller", poll.Run)
 	supervise(ctx, &wg, "announce", announcer.Run)
 	supervise(ctx, &wg, "updater", upd.Run)
+	supervise(ctx, &wg, "lifecycle", life.Run)
 	wg.Wait()
 	if resetRequested.Load() {
 		return errFactoryReset

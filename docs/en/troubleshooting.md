@@ -49,6 +49,34 @@ Home Assistant app's Configuration tab.
    the app may report it as *unreachable* even though it's fine. Fix it by
    **removing the relay in the app and pairing it again** (see below).
 
+## Remote access paused, or the relay forgot its household
+
+If the relay's remote tunnel can't connect for a couple of minutes, the relay
+asks the PoolPilot cloud why, and acts on the answer. One `relay lifecycle:`
+line in the log marks each change:
+
+- **"parking the tunnel; credentials kept" (`state=suspended`)**: the
+  household's subscription isn't active (for example it lapsed). The relay
+  stops trying to connect remotely but keeps everything else. It checks again
+  periodically, and right away whenever you open the app at home, and it
+  resumes by itself once the subscription is active again. `GET /v1/status`
+  shows the reason in `tunnel.last_error` (e.g. `suspended: lapsed`).
+- **`state=unknown`**: the cloud didn't recognise this relay several times
+  over a few hours. The relay pauses remote access the same way, keeps its
+  settings and keeps checking. If it doesn't clear up, the household behind
+  it most likely no longer exists in the cloud (e.g. it was deleted before
+  the cloud could tell relays, or the relay was offline for months). Pairing
+  again won't work while the old phones are still paired to it, so do a
+  [factory reset](#factory-reset) and then set the relay up again from the
+  app.
+- **"household deleted in the cloud; dropped household data"**: the
+  household was deleted (e.g. via "Delete all my data" in the app). The relay
+  forgets everything that belonged to it (paired phones, controllers, cloud
+  credentials) and is ready to be set up again. It keeps its own identity, so
+  its pairing QR code and fingerprint stay the same. Just set it up again from
+  the app (below). To get a fresh identity (e.g. before giving the device
+  away), use a [factory reset](#factory-reset).
+
 ## Re-pair the relay
 
 Show the pairing code on the device and pair from the app:

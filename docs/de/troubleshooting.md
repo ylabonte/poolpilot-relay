@@ -52,6 +52,35 @@ mDNS-Logs** auf dem Konfigurations-Tab der Home-Assistant-App.
    obwohl alles in Ordnung ist. Behebung: **das Relay in der App entfernen und
    erneut koppeln** (siehe unten).
 
+## Fernzugriff pausiert, oder das Relay hat seinen Haushalt vergessen
+
+Kann sich der Fernzugriffs-Tunnel des Relays ein paar Minuten lang nicht
+verbinden, fragt das Relay die PoolPilot-Cloud nach dem Grund und handelt
+danach. Jede Änderung steht als eine `relay lifecycle:`-Zeile im Log:
+
+- **„parking the tunnel; credentials kept“ (`state=suspended`)**: Das Abo
+  des Haushalts ist nicht aktiv (zum Beispiel abgelaufen). Das Relay versucht
+  nicht mehr, sich für den Fernzugriff zu verbinden, behält aber alles andere.
+  Es prüft regelmäßig erneut, und sofort, sobald du zu Hause die App öffnest,
+  und läuft von selbst weiter, wenn das Abo wieder aktiv ist. `GET /v1/status`
+  zeigt den Grund in `tunnel.last_error` (z. B. `suspended: lapsed`).
+- **`state=unknown`**: Die Cloud hat dieses Relay über einige Stunden hinweg
+  mehrfach nicht erkannt. Das Relay pausiert den Fernzugriff genauso, behält
+  seine Einstellungen und prüft weiter. Löst sich das nicht, gibt es den
+  Haushalt dahinter in der Cloud sehr wahrscheinlich nicht mehr (z. B. weil er
+  gelöscht wurde, bevor die Cloud Relays darüber informieren konnte, oder weil
+  das Relay monatelang offline war). Neu koppeln funktioniert nicht, solange
+  die alten Telefone noch gekoppelt sind. Mach deshalb einen
+  [Werksreset](#werksreset) und richte das Relay danach erneut aus der App ein.
+- **„household deleted in the cloud; dropped household data“**: Der
+  Haushalt wurde gelöscht (z. B. über „Alle meine Daten löschen“ in der App).
+  Das Relay vergisst alles, was dazugehörte (gekoppelte Telefone, Controller,
+  Cloud-Zugangsdaten), und ist bereit für eine neue Einrichtung. Seine eigene
+  Identität behält es, Kopplungs-QR-Code und Fingerabdruck bleiben also gleich.
+  Richte es einfach erneut aus der App ein (siehe unten). Eine neue Identität
+  (z. B. bevor du das Gerät weitergibst) bekommst du nur per
+  [Werksreset](#werksreset).
+
 ## Relay neu koppeln
 
 Zeige den Kopplungscode am Gerät an und koppel aus der App:

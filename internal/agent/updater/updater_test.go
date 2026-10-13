@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -397,5 +398,32 @@ func TestUntilNextWindowIsAFutureSlotWithin24h(t *testing.T) {
 	fire := e.u.now().Add(d)
 	if slot := e.u.slotStart(agentID, fire); !fire.Equal(slot) {
 		t.Fatalf("next window %v is not this device's slot start (%v)", fire, slot)
+	}
+}
+
+// poolpilot-cloud#242: a 401 from /update-check (the control plane does not
+// know this relay's token) fires OnUnknownToken — the lifecycle watcher's
+// Probe, the only route by which a relay with no tunnel learns its household
+// was deleted. Any other failure must not.
+func TestCheckUnknownTokenFiresTheHook(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"401 unknown token", fmt.Errorf("%w: update-check: status 401", cloud.ErrUnknownToken), 1},
+		{"unavailable", fmt.Errorf("%w: update-check: status 503", cloud.ErrUnavailable), 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t, relOpts{checkErr: tc.err})
+			fired := 0
+			e.u.onUnknownToken = func() { fired++ }
+			if got := e.u.CheckNow(context.Background()); got.CheckError == "" {
+				t.Fatalf("a failed check must report check_error: %+v", got)
+			}
+			if fired != tc.want {
+				t.Fatalf("OnUnknownToken fired %d times, want %d", fired, tc.want)
+			}
+		})
 	}
 }

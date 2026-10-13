@@ -128,9 +128,17 @@ type frpTunnel struct {
 // reconciled in place without dropping the control connection (no blip on the
 // other controllers' tunnels). Emptying the set stops the service, and the
 // first controller after that starts a new one (needsRestart).
+//
+// An idle config (zero controllers) is accepted without validating the
+// transport fields: it builds no service, and it is exactly what a relay with
+// no cloud credentials at all — after its household was deleted
+// (internal/agent/lifecycle) — must still be able to hand over to stop a
+// running tunnel.
 func (t *frpTunnel) Configure(cfg Config) error {
-	if _, _, err := translate(cfg); err != nil {
-		return err
+	if !idle(&cfg) {
+		if _, _, err := translate(cfg); err != nil {
+			return err
+		}
 	}
 	t.mu.Lock()
 	t.cfg = &cfg

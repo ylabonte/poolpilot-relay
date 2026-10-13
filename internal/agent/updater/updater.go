@@ -82,6 +82,12 @@ type Options struct {
 	HTTPC    *http.Client
 	Now      func() time.Time
 	Disabled bool // version=="dev" || UPDATE_DISABLED=1 || unsupported arch || no PubKey
+	// OnUnknownToken, when set, is called after a check the control plane
+	// answered 401 (cloud.ErrUnknownToken). main wires it to the lifecycle
+	// watcher's Probe: a relay with no tunnel makes no other cloud call, so
+	// this is how it still learns its household was deleted
+	// (poolpilot-cloud#242). Must not block.
+	OnUnknownToken func()
 }
 
 // Updater implements the agent side of self-update. Safe for concurrent use:
@@ -98,6 +104,8 @@ type Updater struct {
 	httpc    *http.Client
 	now      func() time.Time
 	disabled bool
+
+	onUnknownToken func()
 
 	recheckAfter atomic.Int64 // ns; loop cadence from the last check, clamped
 
@@ -119,6 +127,7 @@ func New(o Options) *Updater {
 		store: o.Store, version: o.Version, dir: o.Dir, arch: o.Arch,
 		pubKey: o.PubKey, checker: o.Checker, dlBase: o.DLBase,
 		httpc: o.HTTPC, now: o.Now, disabled: o.Disabled,
+		onUnknownToken: o.OnUnknownToken,
 	}
 	u.recheckAfter.Store(int64(defaultRecheck))
 	return u
@@ -223,6 +232,9 @@ func (u *Updater) check(ctx context.Context) error {
 	res, err := u.checker.CheckUpdate(ctx, u.version)
 	if err != nil {
 		slog.Debug("update check failed", "err", err)
+		if errors.Is(err, cloud.ErrUnknownToken) && u.onUnknownToken != nil {
+			u.onUnknownToken()
+		}
 		return err
 	}
 	u.recheckAfter.Store(int64(clampRecheck(res.RecheckAfter)))
