@@ -454,7 +454,7 @@ func ResetHousehold(store *state.Store, still func(state.State) bool, reconfigur
 	}
 	if reconfigure != nil {
 		if err := reconfigure(); err != nil {
-			slog.Error("household reset: reconfigure tunnel", "err", err)
+			slog.Error("relay lifecycle: reconfigure tunnel", "err", err)
 		}
 	}
 	if onPaired != nil {

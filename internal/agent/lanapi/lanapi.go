@@ -1948,7 +1948,7 @@ func (s *Server) householdReset(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	slog.Warn("household reset over the LAN API; dropped household data, relay is ready for a new setup (identity kept)")
+	slog.Warn("relay lifecycle: household reset over the LAN API; dropped household data, relay is ready for a new setup (identity kept)")
 	w.WriteHeader(http.StatusNoContent)
 }
 
