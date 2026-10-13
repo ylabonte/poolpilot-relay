@@ -701,27 +701,38 @@ func (st *Store) Wipe() error {
 	// handler report failure and skip the restart while every later Update
 	// fails ErrWiped — a zombie relay. A leftover backup is a hygiene miss to
 	// log, not a reason to wedge the agent.
+	st.removeStaleCopiesLocked("factory reset")
+	return nil
+}
+
+// removeStaleCopiesLocked best-effort removes every other on-disk copy of the
+// document: the "<path>.v1.bak" migration backup (backupV1) and any
+// ".state-*.json" temp a crashed persist left behind (persistLocked). Each is
+// a full copy of an older document — credentials, devices, controller
+// passwords. Must be called with st.mu held: Update/persistLocked hold it for
+// the whole persist, so no in-flight temp can be swept from under a writer.
+// what names the caller in the log lines.
+func (st *Store) removeStaleCopiesLocked(what string) {
 	bak := st.path + ".v1.bak"
 	if err := os.Remove(bak); err != nil && !errors.Is(err, os.ErrNotExist) {
-		slog.Warn("factory reset: could not remove migration backup", "path", bak, "err", err)
+		slog.Warn(what+": could not remove migration backup", "path", bak, "err", err)
 	}
 	dir := filepath.Dir(st.path)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
-			slog.Warn("factory reset: could not scan state dir for persist temps", "dir", dir, "err", err)
+			slog.Warn(what+": could not scan state dir for persist temps", "dir", dir, "err", err)
 		}
-		return nil
+		return
 	}
 	for _, e := range entries {
 		name := e.Name()
 		if strings.HasPrefix(name, ".state-") && strings.HasSuffix(name, ".json") {
 			if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
-				slog.Warn("factory reset: could not remove persist temp", "path", filepath.Join(dir, name), "err", err)
+				slog.Warn(what+": could not remove persist temp", "path", filepath.Join(dir, name), "err", err)
 			}
 		}
 	}
-	return nil
 }
 
 // UpdateIfToken is Update, applied only while the document still holds the
@@ -759,8 +770,9 @@ func (st *Store) UpdateIfToken(token string, fn func(*State)) (bool, error) {
 // DropHousehold applies State.ResetHousehold and persists it — but only while
 // the document still holds the frpc token the "deleted" answer was obtained
 // for (see UpdateIfToken): a new household set up in the meantime is never
-// dropped. Then it removes the "<path>.v1.bak" migration backup best-effort:
-// that backup is a copy of an older document carrying the same household's
+// dropped. Then, under the store lock, it removes every other on-disk copy of
+// the document best-effort (removeStaleCopiesLocked: the v1 migration backup
+// and crashed-persist temps), since each carries the same household's
 // credentials and devices, which must not outlive the household. Unlike Wipe
 // the store stays live — the agent keeps running with its identity, ready for
 // a new setup. Reports whether the household was dropped.
@@ -769,10 +781,9 @@ func (st *Store) DropHousehold(token string) (bool, error) {
 	if err != nil || !applied {
 		return applied, err
 	}
-	bak := st.path + ".v1.bak"
-	if err := os.Remove(bak); err != nil && !errors.Is(err, os.ErrNotExist) {
-		slog.Warn("household reset: could not remove migration backup", "path", bak, "err", err)
-	}
+	st.mu.Lock()
+	st.removeStaleCopiesLocked("household reset")
+	st.mu.Unlock()
 	return true, nil
 }
 

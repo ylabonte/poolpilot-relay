@@ -37,6 +37,11 @@ func TestDropHouseholdKeepsIdentityDropsHouseholdData(t *testing.T) {
 	if err := os.WriteFile(bak, []byte(`{"frpc_token":"tok"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// A crashed persist's temp is a full copy of an older document too.
+	temp := filepath.Join(filepath.Dir(path), ".state-crashed.json")
+	if err := os.WriteFile(temp, []byte(`{"frpc_token":"tok"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	if dropped, err := st.DropHousehold("tok"); err != nil || !dropped {
 		t.Fatalf("DropHousehold = %v, %v", dropped, err)
@@ -59,6 +64,9 @@ func TestDropHouseholdKeepsIdentityDropsHouseholdData(t *testing.T) {
 	}
 	if _, err := os.Stat(bak); !os.IsNotExist(err) {
 		t.Errorf("migration backup with the household's credentials must be removed, stat err = %v", err)
+	}
+	if _, err := os.Stat(temp); !os.IsNotExist(err) {
+		t.Errorf("crashed-persist temp with the household's credentials must be removed, stat err = %v", err)
 	}
 	// The store stays live (unlike Wipe): a new setup can persist.
 	if err := st.Update(func(s *State) { s.Cloud.FrpcToken = "new" }); err != nil {
