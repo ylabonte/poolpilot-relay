@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -341,5 +342,56 @@ func TestWatcherDropDuringControllerRotatePersistsNothing(t *testing.T) {
 	}
 	if st := f.store.Get(); len(st.Controllers) != 0 {
 		t.Fatalf("rotated controller of the dropped household was persisted: %+v", st.Controllers)
+	}
+}
+
+// The dedup-HIT path's persist is bound to the household too. Its only slow
+// step is the live probe: hold it, let the watcher drop the household, release
+// — the upsert must answer 401 and kick no cloud sync (not a stale 200).
+func TestWatcherDropDuringControllerProbeAnswers401(t *testing.T) {
+	f := newFixture(t)
+	var holding atomic.Bool
+	hold, entered := make(chan struct{}), make(chan struct{})
+	ctrl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if holding.CompareAndSwap(true, false) {
+			close(entered)
+			<-hold
+		}
+		f.controller.Config.Handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(ctrl.Close)
+	var once sync.Once
+	release := func() { once.Do(func() { close(hold) }) }
+	t.Cleanup(release)
+
+	token := f.pair(t)
+	addr := strings.TrimPrefix(ctrl.URL, "http://")
+	if resp, raw := f.do(t, "PUT", "/v1/controllers", token, wire.ControllerConfig{
+		Preset: "procon-ip", LanAddress: addr, Label: "Pool",
+	}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("configure: HTTP %d %s", resp.StatusCode, raw)
+	}
+	frpc := f.store.Get().Cloud.FrpcToken
+
+	holding.Store(true)
+	putDone := make(chan int, 1)
+	go func() { // same address, new label → HIT with a cloud-visible change
+		resp, _ := f.do(t, "PUT", "/v1/controllers", token, wire.ControllerConfig{
+			Preset: "procon-ip", LanAddress: addr, Label: "Pool renamed",
+		})
+		putDone <- resp.StatusCode
+	}()
+	<-entered
+	f.watcherDrop(t, frpc)
+	release()
+	if c := <-putDone; c != http.StatusUnauthorized {
+		t.Fatalf("HIT upsert whose household was dropped mid-probe answered %d, want 401", c)
+	}
+	f.srv.waitBackground()
+	if n := f.updateAttempts.Load(); n != 0 {
+		t.Fatalf("a dropped household's HIT upsert kicked %d cloud syncs, want 0", n)
+	}
+	if st := f.store.Get(); len(st.Controllers) != 0 {
+		t.Fatalf("controllers after the drop: %+v", st.Controllers)
 	}
 }

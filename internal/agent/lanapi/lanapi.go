@@ -917,6 +917,12 @@ const (
 //	MISS (new address): probe → Cloud.RegisterController (cloud 409 →
 //	     409 quota_exceeded, not 502; a cloud 429 is the throttle, so transient) → fill the phantom slot or append (seeding
 //	     default alert rules) → reconfigure the tunnel → 200.
+//
+// Both persists are bound to the household the upsert started under (the frpc
+// token read under controllerMu): if the lifecycle watcher dropped the
+// household meanwhile (it runs without controllerMu), the answer is 401
+// unauthorized and NOTHING is persisted — no cloud sync is kicked on a HIT,
+// and on a MISS the just-registered cloud controller is revoked best-effort.
 func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 	var cfg wire.ControllerConfig
 	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil || cfg.LanAddress == "" {
@@ -1212,6 +1218,11 @@ func (s *Server) deleteControllerHandler(w http.ResponseWriter, r *http.Request)
 //
 // guid is the CURRENT (about-to-be-superseded) identity; an agent that
 // doesn't have it is 404, mirroring deleteControllerHandler.
+//
+// The persist is bound to the household the rotate started under: if the
+// lifecycle watcher dropped the household during the cloud call, the answer is
+// 401 unauthorized, nothing is persisted, and the new cloud guid is revoked
+// best-effort.
 // ensureCtrlSessionKey returns the relay's web-session HMAC key, generating and
 // persisting one on first use. Idempotent under concurrency: the generate is
 // done inside Store.Update, which serializes writers, and re-checks for an
