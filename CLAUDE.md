@@ -54,7 +54,8 @@ coordinating a new tagged release (see *Cross-repo* below).
 
 - `cmd/poolpilot-relay/` — the binary entrypoint (`main.go`), plus the `show-pairing` / `show-recovery` helpers.
 - `internal/agent/` — the agent subsystems: `poller` (reads the controller), `driver` + `lanapi`
-  (controller/LAN surface), `cloud` (backend link), `tunnel` (frp), `announce` (mDNS/discovery),
+  (controller/LAN surface), `cloud` (backend link), `tunnel` (frp), `lifecycle` (asks the cloud
+  why the tunnel is refused: park / resume / reset the household), `announce` (mDNS/discovery),
   `pairing`-adjacent `tlscert` + `recovery`, `state`, `alert`, `ctrlfilter`.
 - `internal/proconip/`, `internal/violet/` — per-controller integration.
 - `internal/measure/`, `internal/paritysrc/` — measurement + parity-source helpers behind `wire`/`bands`.

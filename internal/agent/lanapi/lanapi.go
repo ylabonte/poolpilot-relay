@@ -126,6 +126,11 @@ type Server struct {
 	// exotic builds. Wired in main.go for real deployments.
 	Updater UpdaterAPI
 
+	// Lifecycle is told about every authenticated LAN-API request so a parked
+	// relay re-asks the control plane right away (internal/agent/lifecycle's
+	// Kick; rate-limited and a no-op when not parked). Nil-safe.
+	Lifecycle interface{ Kick() }
+
 	// controllerMu serializes controller upserts (PUT /v1/controllers) and
 	// deletes. Two concurrent upserts of the SAME new address would otherwise
 	// both miss dedup and double-register with the cloud; holding this across
@@ -396,9 +401,10 @@ func (s *Server) pairFirst(w http.ResponseWriter, r *http.Request, req wire.Pair
 	token, dev := mintDevice(req.DeviceName)
 	err = s.Store.Update(func(doc *state.State) {
 		doc.Devices = append(doc.Devices, dev)
-		doc.Cloud.BaseURL = s.CloudBaseURL
-		doc.Cloud.FrpcToken = res.FrpcToken
-		doc.Cloud.FRPS = res.FRPS
+		// The whole Cloud struct is replaced, not patched: a fresh token also
+		// clears any parked lifecycle left from the previous household
+		// (poolpilot-cloud#242).
+		doc.Cloud = state.Cloud{BaseURL: s.CloudBaseURL, FrpcToken: res.FrpcToken, FRPS: res.FRPS}
 	})
 	if err != nil {
 		slog.Error("persist pairing", "err", err)
@@ -630,6 +636,11 @@ func (s *Server) authed(next http.HandlerFunc) http.Handler {
 		if !ok {
 			writeErr(w, http.StatusUnauthorized, "unauthorized")
 			return
+		}
+		// A paired user is here: if the tunnel is parked, re-ask the control
+		// plane now rather than at the next backoff step (renewal resumes fast).
+		if s.Lifecycle != nil && st.TunnelParked() {
+			s.Lifecycle.Kick()
 		}
 		// The matched device id is stashed so /v1/devices can flag the caller's
 		// own entry.
@@ -1495,6 +1506,11 @@ func (s *Server) reconfigureTunnel() error {
 	return ReconfigureTunnel(s.Tunnel, s.Store.Get(), s.TunnelAddr, s.CtrlFilter)
 }
 
+// ApplyTunnelState re-applies the tunnel from the current persisted state —
+// for internal/agent/lifecycle after it parked, resumed or dropped the
+// household (poolpilot-cloud#242).
+func (s *Server) ApplyTunnelState() error { return s.reconfigureTunnel() }
+
 // frpsCAFilename is the name of the materialized CA PEM file (see
 // materializeFrpsCA), written next to the agent's state file.
 const frpsCAFilename = "frps-ca.pem"
@@ -1557,7 +1573,10 @@ func materializeFrpsCA(caPEM string) (string, error) {
 // ReconfigureTunnel maps persisted state onto a tunnel config — one ProxySpec
 // per registered controller. apiLocalAddr is the loopback listener the LAN-API
 // proxies forward to; empty disables them. Address-less phantom slots and
-// controllers not yet registered with the cloud (no GUID) are skipped.
+// controllers not yet registered with the cloud (no GUID) are skipped. A relay
+// whose tunnel is parked (state.State.TunnelParked, poolpilot-cloud#242) or
+// that holds no cloud credentials gets ZERO proxies, which runs no frp service
+// at all (see tunnel.Config.Controllers).
 //
 // It is also the single site (shared by the post-pair Configure call above and
 // main.go's boot-resume path) that materializes the issue poolpilot-cloud#31 frps TLS CA via
@@ -1583,8 +1602,9 @@ func ReconfigureTunnel(t tunnel.Tunnel, st state.State, apiLocalAddr string, fil
 	if filterEnabled {
 		targets = make(map[string]ctrlfilter.Target, len(st.Controllers))
 	}
+	noTunnel := st.TunnelParked() || !st.Enrolled()
 	for _, ctrl := range st.Controllers {
-		if ctrl.LanAddress == "" || ctrl.GUID == "" {
+		if noTunnel || ctrl.LanAddress == "" || ctrl.GUID == "" {
 			continue
 		}
 		// NormalizeLanAddress is the single source of truth for LAN address
@@ -1694,13 +1714,38 @@ func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 		singular = controllers[0]
 	}
 
+	tunnelStatus := wire.TunnelStatus{State: ts.State, LastError: ts.LastErr, APIState: ts.APIState}
+	if msg := parkedReason(st); msg != "" {
+		// Parked (poolpilot-cloud#242): the tunnel reads "disabled"; say why in
+		// the existing last_error field — no shape change.
+		tunnelStatus.LastError = msg
+	}
 	writeJSON(w, http.StatusOK, wire.StatusResponse{
 		Paired:      st.Paired(),
-		Tunnel:      wire.TunnelStatus{State: ts.State, LastError: ts.LastErr, APIState: ts.APIState},
+		Tunnel:      tunnelStatus,
 		Controller:  singular,
 		Controllers: controllers,
 		Alerts:      wire.AlertsStatus{Active: active},
 	})
+}
+
+// parkedReason is the /v1/status tunnel.last_error text for a parked tunnel
+// ("suspended: lapsed", "suspended", "unknown: the cloud does not recognise
+// this relay"), or "" when not parked. Informational, for support — apps must
+// not parse it.
+func parkedReason(st state.State) string {
+	if !st.TunnelParked() {
+		return ""
+	}
+	switch st.Cloud.Lifecycle {
+	case state.LifecycleUnknown:
+		return "unknown: the cloud does not recognise this relay"
+	default:
+		if st.Cloud.LifecycleReason != "" {
+			return st.Cloud.Lifecycle + ": " + st.Cloud.LifecycleReason
+		}
+		return st.Cloud.Lifecycle
+	}
 }
 
 // controllerStatus builds the /v1/status view of one controller from its
@@ -1723,6 +1768,9 @@ func (s *Server) controllerStatus(st state.State, c state.Controller, ps tunnel.
 		Reachable:    snap.Reachable,
 		RemoteAPIURL: c.RemoteAPIURL,
 		Tunnel:       wire.TunnelStatus{State: tunnelState, LastError: ps.LastErr, APIState: ps.APIState},
+	}
+	if msg := parkedReason(st); msg != "" {
+		cs.Tunnel.LastError = msg
 	}
 	// Backfill for state persisted before R5 (GUID present, URL missing).
 	if cs.RemoteAPIURL == "" {
