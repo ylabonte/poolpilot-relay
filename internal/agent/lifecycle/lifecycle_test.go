@@ -519,3 +519,96 @@ type statusFunc func() (wire.RelayStatusResponse, error)
 func (f statusFunc) RelayStatus(context.Context, string, string) (wire.RelayStatusResponse, error) {
 	return f()
 }
+
+// noTunnelRig is a paired, enrolled relay with NO registered controller — it
+// runs no tunnel (#58), so only Probe (the updater's /update-check 401) can
+// make the watcher ask.
+func noTunnelRig(t *testing.T) *rig {
+	t.Helper()
+	r := newRig(t)
+	if err := r.store.Update(func(s *state.State) { s.Controllers = nil }); err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+func (r *rig) probe() {
+	r.w.Probe()
+	select {
+	case <-r.w.kick:
+		r.w.Step(context.Background(), true)
+	default:
+	}
+}
+
+// Review round 1 on #59 (the zero-controller gap): a relay without a tunnel
+// still learns "deleted" through a probe, and drops to setup-ready.
+func TestProbeWithoutTunnelDropsOnDeleted(t *testing.T) {
+	r := noTunnelRig(t)
+	for range 50 {
+		r.step(time.Hour)
+	}
+	if r.cloud.calls != 0 {
+		t.Fatalf("no tunnel and no probe: %d questions, want 0", r.cloud.calls)
+	}
+	r.cloud.answer(wire.RelayStateDeleted, wire.RelayReasonHouseholdDeleted)
+	r.probe()
+	if r.cloud.calls != 1 {
+		t.Fatalf("probe asked %d times, want 1", r.cloud.calls)
+	}
+	if got := r.store.Get(); got.Enrolled() || got.Paired() {
+		t.Fatalf("deleted via probe must drop to setup-ready: %+v", got)
+	}
+}
+
+// A probe's 401 never counts toward parking, however many arrive.
+func TestProbeUnknownTokenNeverParks(t *testing.T) {
+	r := noTunnelRig(t)
+	r.cloud.fail(fmt.Errorf("%w: HTTP 401", cloud.ErrUnknownToken))
+	for range 10 {
+		r.now = r.now.Add(2 * unknownSpacing)
+		r.probe()
+	}
+	if r.cloud.calls != 10 {
+		t.Fatalf("probes asked %d times, want 10", r.cloud.calls)
+	}
+	if got := r.store.Get(); got.TunnelParked() || got.Cloud.FrpcToken != "tok" {
+		t.Fatalf("probe 401s must never park or drop: %+v", got.Cloud)
+	}
+}
+
+// suspended through a probe parks (token-bound); active changes nothing.
+func TestProbeSuspendedParksActiveIsNoOp(t *testing.T) {
+	r := noTunnelRig(t)
+	r.cloud.answer(wire.RelayStateActive, "")
+	r.probe()
+	if got := r.store.Get(); got.TunnelParked() || r.reconfigures != 0 {
+		t.Fatalf("active probe must change nothing: %+v reconfigures=%d", got.Cloud, r.reconfigures)
+	}
+	r.now = r.now.Add(kickMinInterval)
+	r.cloud.answer(wire.RelayStateSuspended, wire.RelayReasonLapsed)
+	r.probe()
+	if got := r.store.Get(); got.Cloud.Lifecycle != state.LifecycleSuspended || got.Cloud.FrpcToken != "tok" {
+		t.Fatalf("suspended probe must park with credentials kept: %+v", got.Cloud)
+	}
+}
+
+// Probes are rate-limited, and a probe-mode deleted answer for credentials the
+// relay no longer holds is discarded like any other.
+func TestProbeRateLimitedAndTokenBound(t *testing.T) {
+	r := noTunnelRig(t)
+	r.cloud.answer(wire.RelayStateActive, "")
+	r.probe()
+	r.now = r.now.Add(kickMinInterval / 2)
+	r.probe()
+	if r.cloud.calls != 1 {
+		t.Fatalf("a second probe within kickMinInterval asked again (%d)", r.cloud.calls)
+	}
+	r.now = r.now.Add(kickMinInterval)
+	r.cloud.answer(wire.RelayStateDeleted, wire.RelayReasonHouseholdDeleted)
+	r.reSetupDuringQuestion(t)
+	r.probe()
+	if got := r.store.Get(); got.Cloud.FrpcToken != "new-tok" || !got.Paired() {
+		t.Fatalf("a probe answer about old credentials touched the new setup: %+v", got)
+	}
+}

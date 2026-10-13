@@ -201,6 +201,10 @@ func run() error {
 	if archErr != nil {
 		slog.Warn("self-update disabled: unsupported architecture", "err", archErr)
 	}
+	// life is the lifecycle watcher (built below, once the LAN API exists).
+	// The updater's OnUnknownToken reaches it through this variable; it is
+	// assigned before any subsystem starts, so no check can observe nil.
+	var life *lifecycle.Watcher
 	upd := updater.New(updater.Options{
 		Store:   store,
 		Version: version,
@@ -211,6 +215,11 @@ func run() error {
 		DLBase:  os.Getenv("REPO_DL_BASE"),
 		Disabled: version == "dev" || os.Getenv("UPDATE_DISABLED") == "1" ||
 			archErr != nil || update.PublicKey == "",
+		OnUnknownToken: func() {
+			if life != nil {
+				life.Probe()
+			}
+		},
 	})
 	// Resolve the LAN API bind once, then feed both the listener and the mDNS
 	// record from it so the advertised port can never diverge from the bind. A
@@ -279,7 +288,7 @@ func run() error {
 	// Lifecycle watcher (poolpilot-cloud#242): when the tunnel stays down it asks
 	// the control plane why, and parks the tunnel (suspended / unknown token,
 	// credentials kept) or drops the household data (deleted, identity kept).
-	life := lifecycle.New(lifecycle.Options{
+	life = lifecycle.New(lifecycle.Options{
 		Store:       store,
 		Cloud:       cloudClient,
 		TunnelState: func() string { return tun.Status().State },

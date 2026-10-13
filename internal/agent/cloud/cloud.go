@@ -522,6 +522,11 @@ type UpdateCheckResult struct {
 // version this relay should be on. Subscription-independent by design: the
 // endpoint accepts free and lapsed relays (see internal/api's
 // relayFromBearerAnyTier), so this must never be gated on tunnel state.
+//
+// A 401 is ErrUnknownToken (the control plane does not know this relay's
+// token); every other non-200 is ErrUnavailable. The updater uses the former
+// to have the lifecycle watcher ask POST /relay/status once — the only cloud
+// call a relay with no tunnel still makes (poolpilot-cloud#242).
 func (c *Client) CheckUpdate(ctx context.Context, currentVersion string) (UpdateCheckResult, error) {
 	s := c.store.Get()
 	var out UpdateCheckResult
@@ -529,6 +534,9 @@ func (c *Client) CheckUpdate(ctx context.Context, currentVersion string) (Update
 	status, err := c.doJSON(ctx, http.MethodPost, s.Cloud.BaseURL+"/update-check", s.Cloud.FrpcToken, body, &out)
 	if err != nil {
 		return UpdateCheckResult{}, err
+	}
+	if status == http.StatusUnauthorized {
+		return UpdateCheckResult{}, fmt.Errorf("%w: update-check: status 401", ErrUnknownToken)
 	}
 	if status != http.StatusOK {
 		return UpdateCheckResult{}, fmt.Errorf("%w: update-check: status %d", ErrUnavailable, status)

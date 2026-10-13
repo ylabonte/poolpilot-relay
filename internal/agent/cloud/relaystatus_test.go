@@ -137,3 +137,25 @@ func TestParkedRelaySkipsDrainAndSync(t *testing.T) {
 		t.Fatalf("resumed relay made %d cloud calls, want 2 (alert + controller sync)", n)
 	}
 }
+
+// poolpilot-cloud#242: /update-check's 401 is ErrUnknownToken (it drives the
+// lifecycle watcher's probe); other failures stay ErrUnavailable.
+func TestCheckUpdateUnknownToken(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		want   error
+	}{{401, ErrUnknownToken}, {403, ErrUnavailable}, {503, ErrUnavailable}} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(tc.status)
+		}))
+		c := New(newStore(t, srv.URL))
+		_, err := c.CheckUpdate(context.Background(), "v1.0.0")
+		srv.Close()
+		if !errors.Is(err, tc.want) {
+			t.Errorf("HTTP %d: err = %v, want %v", tc.status, err, tc.want)
+		}
+		if tc.want != ErrUnknownToken && errors.Is(err, ErrUnknownToken) {
+			t.Errorf("HTTP %d must not read as an unknown token", tc.status)
+		}
+	}
+}

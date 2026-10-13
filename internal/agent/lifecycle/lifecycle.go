@@ -93,10 +93,13 @@ type Watcher struct {
 
 	mu        sync.Mutex
 	lastKick  time.Time
-	downSince time.Time // first tick the tunnel was seen down; zero while up
-	nextAsk   time.Time // earliest next question; zero = as soon as allowed
-	backoff   time.Duration
-	strikes   []time.Time // counted 401 answers, oldest first
+	lastProbe time.Time
+	// probePending asks the next Step for one probe-mode question (Probe).
+	probePending bool
+	downSince    time.Time // first tick the tunnel was seen down; zero while up
+	nextAsk      time.Time // earliest next question; zero = as soon as allowed
+	backoff      time.Duration
+	strikes      []time.Time // counted 401 answers, oldest first
 }
 
 // New builds a Watcher.
@@ -129,6 +132,31 @@ func (w *Watcher) Kick() {
 	}
 }
 
+// Probe asks for ONE question even when the relay has no tunnel to watch —
+// called when the updater's /update-check is answered 401 (main wires it).
+// That is the only cloud call a relay with no registered controller makes,
+// so without it such a relay would never learn its household was deleted and
+// would stay paired and enrolled forever. Rate-limited to one per
+// kickMinInterval. A probe-mode answer is acted on only when it is "deleted"
+// or "suspended"/"active" for the unchanged token; a probe's 401 is never
+// counted toward parking (there is no tunnel to park, and the strike rule is
+// about a tunnel that keeps being refused).
+func (w *Watcher) Probe() {
+	w.mu.Lock()
+	now := w.o.Now()
+	if !w.lastProbe.IsZero() && now.Sub(w.lastProbe) < kickMinInterval {
+		w.mu.Unlock()
+		return
+	}
+	w.lastProbe = now
+	w.probePending = true
+	w.mu.Unlock()
+	select {
+	case w.kick <- struct{}{}:
+	default:
+	}
+}
+
 // Run drives the Watcher until ctx is done.
 func (w *Watcher) Run(ctx context.Context) error {
 	t := time.NewTicker(tickEvery)
@@ -150,8 +178,16 @@ func (w *Watcher) Run(ctx context.Context) error {
 func (w *Watcher) Step(ctx context.Context, kicked bool) {
 	st := w.o.Store.Get()
 	now := w.o.Now()
+	w.mu.Lock()
+	probe := w.probePending
+	w.probePending = false
+	w.mu.Unlock()
 	if !st.Enrolled() {
 		w.resetPacing(true)
+		return
+	}
+	if probe && !st.TunnelParked() {
+		w.askProbe(ctx, st, now)
 		return
 	}
 	if st.TunnelParked() {
@@ -233,6 +269,25 @@ func (w *Watcher) ask(ctx context.Context, st state.State, now time.Time) {
 		w.schedule(now, parkedBackoffMin, parkedBackoffMax)
 	case resp.State == wire.RelayStateDeleted:
 		w.drop(token, resp.Reason)
+	}
+}
+
+// askProbe is the probe-mode question (Probe): one ask, no strikes, no
+// pacing changes. Same token binding as ask.
+func (w *Watcher) askProbe(ctx context.Context, st state.State, now time.Time) {
+	token := st.Cloud.FrpcToken
+	resp, err := w.o.Cloud.RelayStatus(ctx, st.Cloud.BaseURL, token)
+	switch {
+	case err != nil:
+		// 401 or no signal: nothing to act on, and a probe never counts a strike.
+		slog.Info("relay lifecycle: probe got no actionable answer", "err", err)
+	case resp.State == wire.RelayStateDeleted:
+		w.drop(token, resp.Reason)
+	case resp.State == wire.RelayStateSuspended:
+		w.park(token, state.LifecycleSuspended, resp.Reason, now)
+		w.resetBackoff()
+		w.schedule(now, parkedBackoffMin, parkedBackoffMax)
+	default: // active, not parked: nothing to change
 	}
 }
 
