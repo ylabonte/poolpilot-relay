@@ -94,8 +94,10 @@ type ProxyStatus struct {
 type Tunnel interface {
 	// Configure swaps the tunnel onto a new config. Safe to call before and
 	// after Run. A proxy-only change (controllers added/removed/re-addressed) is
-	// applied to the running service in place; only a transport change (server
-	// endpoint or auth material) tears it down and rebuilds.
+	// applied to the running service in place; a transport change (server
+	// endpoint, auth material or TLS pin) tears it down and rebuilds, and an
+	// empty controller set tears it down without a rebuild — no service runs
+	// until a controller is configured again (see Config.Controllers).
 	Configure(cfg Config) error
 	// Run supervises the service until ctx is done. It blocks; a not-yet-
 	// configured tunnel just waits for the first Configure.
@@ -122,8 +124,10 @@ type frpTunnel struct {
 // Configure validates + stores the config and nudges the Run loop to apply it.
 // frp fixes the server endpoint and auth material on the service at build time
 // (they are not hot-swappable), so a transport change still means stop-old/
-// start-new; a proxy-only change is reconciled in place without dropping the
-// control connection (no blip on the other controllers' tunnels).
+// start-new; a proxy-only change between non-empty controller sets is
+// reconciled in place without dropping the control connection (no blip on the
+// other controllers' tunnels). Emptying the set stops the service, and the
+// first controller after that starts a new one (needsRestart).
 func (t *frpTunnel) Configure(cfg Config) error {
 	if _, _, err := translate(cfg); err != nil {
 		return err
