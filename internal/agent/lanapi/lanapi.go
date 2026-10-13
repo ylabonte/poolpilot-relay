@@ -1200,29 +1200,6 @@ func (s *Server) deleteControllerHandler(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// rotateControllerHandler serves POST /v1/controllers/{guid}/rotate (issue
-// poolpilot-cloud#27's manual "regenerate a leaked public link" trigger). Order matters and
-// is deliberate: the cloud call runs FIRST — it is what actually revokes the
-// old guid and mints the new one — and only on ITS success does this touch
-// state.json or the tunnel, so a cloud failure (uplink down, cloud rejects
-// the guid) leaves this agent completely untouched: the old guid and its
-// tunnel keep working exactly as before the request. Once the cloud call
-// succeeds the swap is local bookkeeping — every other field (lan_address,
-// use_https, preset, label, creds, alert rules/state) is preserved in place,
-// only the GUID/RemoteURL/RemoteAPIURL move to the new identity — followed by
-// a tunnel reconfigure so the frpc proxy set swaps ctrl-<old>/api-<old> for
-// ctrl-<new>/api-<new>. A reconfigure error (like putControllers/
-// deleteControllerHandler) is logged but does not fail the request: the
-// rotation is already accepted and persisted, and the next state-changing
-// request (or a restart) reconciles the tunnel.
-//
-// guid is the CURRENT (about-to-be-superseded) identity; an agent that
-// doesn't have it is 404, mirroring deleteControllerHandler.
-//
-// The persist is bound to the household the rotate started under: if the
-// lifecycle watcher dropped the household during the cloud call, the answer is
-// 401 unauthorized, nothing is persisted, and the new cloud guid is revoked
-// best-effort.
 // ensureCtrlSessionKey returns the relay's web-session HMAC key, generating and
 // persisting one on first use. Idempotent under concurrency: the generate is
 // done inside Store.Update, which serializes writers, and re-checks for an
@@ -1298,6 +1275,29 @@ func (s *Server) webSessionHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// rotateControllerHandler serves POST /v1/controllers/{guid}/rotate (issue
+// poolpilot-cloud#27's manual "regenerate a leaked public link" trigger). Order matters and
+// is deliberate: the cloud call runs FIRST — it is what actually revokes the
+// old guid and mints the new one — and only on ITS success does this touch
+// state.json or the tunnel, so a cloud failure (uplink down, cloud rejects
+// the guid) leaves this agent completely untouched: the old guid and its
+// tunnel keep working exactly as before the request. Once the cloud call
+// succeeds the swap is local bookkeeping — every other field (lan_address,
+// use_https, preset, label, creds, alert rules/state) is preserved in place,
+// only the GUID/RemoteURL/RemoteAPIURL move to the new identity — followed by
+// a tunnel reconfigure so the frpc proxy set swaps ctrl-<old>/api-<old> for
+// ctrl-<new>/api-<new>. A reconfigure error (like putControllers/
+// deleteControllerHandler) is logged but does not fail the request: the
+// rotation is already accepted and persisted, and the next state-changing
+// request (or a restart) reconciles the tunnel.
+//
+// guid is the CURRENT (about-to-be-superseded) identity; an agent that
+// doesn't have it is 404, mirroring deleteControllerHandler.
+//
+// The persist is bound to the household the rotate started under: if the
+// lifecycle watcher dropped the household during the cloud call, the answer is
+// 401 unauthorized, nothing is persisted, and the new cloud guid is revoked
+// best-effort.
 func (s *Server) rotateControllerHandler(w http.ResponseWriter, r *http.Request) {
 	oldGUID := r.PathValue("guid")
 	if oldGUID == "" {
