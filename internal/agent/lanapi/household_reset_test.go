@@ -6,8 +6,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ylabonte/poolpilot-relay/internal/agent/lifecycle"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/state"
@@ -196,5 +198,62 @@ func TestHouseholdResetConcurrentWithWatcherAndLANTraffic(t *testing.T) {
 		if f.notifier.paired.Load() {
 			t.Fatalf("round %d: mDNS still paired", round)
 		}
+	}
+}
+
+// A household reset that arrives while a NEW controller is being registered
+// (between the cloud register and the local persist) waits for that upsert
+// under controllerMu and then drops it too: the upsert answers 200, the reset
+// 204, and no controller survives on the reset relay. Without the lock the
+// reset lands first, and the upsert either re-persists a controller from the
+// erased household onto the reset relay or fails mid-way.
+func TestHouseholdResetWaitsForInFlightControllerUpsert(t *testing.T) {
+	f, token := configuredFixture(t)
+	hold, entered := make(chan struct{}), make(chan struct{})
+	f.registerHoldMu.Lock()
+	f.registerHold, f.registerEntered = hold, entered
+	f.registerHoldMu.Unlock()
+
+	// A second controller on a different address is a dedup MISS → register.
+	second := httptest.NewServer(f.controller.Config.Handler)
+	t.Cleanup(second.Close)
+	putDone := make(chan int, 1)
+	go func() {
+		resp, _ := f.do(t, "PUT", "/v1/controllers", token, wire.ControllerConfig{
+			Preset: "procon-ip", LanAddress: strings.TrimPrefix(second.URL, "http://"), Label: "Pool 2",
+		})
+		putDone <- resp.StatusCode
+	}()
+	<-entered // the upsert is inside the cloud register call, holding controllerMu
+
+	resetDone := make(chan int, 1)
+	go func() {
+		resp, _ := f.do(t, "POST", "/v1/household-reset", token, nil)
+		resetDone <- resp.StatusCode
+	}()
+	select {
+	case c := <-resetDone:
+		close(hold)
+		t.Fatalf("reset answered %d while a controller upsert was in flight; it must wait for controllerMu", c)
+	case <-time.After(150 * time.Millisecond):
+	}
+	close(hold)
+
+	if c := <-putDone; c != http.StatusOK {
+		t.Fatalf("in-flight upsert answered %d, want 200 (it ran to completion before the reset)", c)
+	}
+	if c := <-resetDone; c != http.StatusNoContent {
+		t.Fatalf("reset answered %d, want 204", c)
+	}
+	f.srv.waitBackground()
+	st := f.store.Get()
+	if len(st.Controllers) != 0 || st.Paired() || st.Enrolled() {
+		t.Fatalf("household survived a reset that waited for an upsert: %+v", st)
+	}
+	if ts := f.tunnel.Status(); ts.State != "disabled" {
+		t.Fatalf("tunnel = %+v, want disabled", ts)
+	}
+	if f.notifier.paired.Load() {
+		t.Fatal("mDNS still paired")
 	}
 }
