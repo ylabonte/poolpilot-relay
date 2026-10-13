@@ -612,3 +612,25 @@ func TestProbeRateLimitedAndTokenBound(t *testing.T) {
 		t.Fatalf("a probe answer about old credentials touched the new setup: %+v", got)
 	}
 }
+
+// Review round 1 on #59: a relay parked as UNKNOWN re-asks at most about hourly
+// (it may be a cloud-side data problem that gets fixed), while a suspended one
+// keeps the 6 h cap.
+func TestUnknownParkReasksAtMostHourly(t *testing.T) {
+	r := newRig(t)
+	r.cloud.fail(fmt.Errorf("%w: HTTP 401", cloud.ErrUnknownToken))
+	r.stepUntilAsked(t, downGrace+time.Minute)
+	for i := 1; i < unknownStrikes; i++ {
+		r.stepUntilAsked(t, 2*unknownSpacing)
+	}
+	if r.store.Get().Cloud.Lifecycle != state.LifecycleUnknown {
+		t.Fatal("precondition: parked as unknown")
+	}
+	var last time.Duration
+	for range 10 {
+		last = r.stepUntilAsked(t, 2*parkedBackoffMax)
+	}
+	if last > unknownParkedBackoffMax*11/10+tickEvery {
+		t.Fatalf("unknown-parked re-ask interval %v exceeds %v (+jitter)", last, unknownParkedBackoffMax)
+	}
+}

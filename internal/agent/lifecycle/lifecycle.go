@@ -57,6 +57,12 @@ var (
 	// Kick (any paired LAN-API call) short-cuts it.
 	parkedBackoffMin = 15 * time.Minute
 	parkedBackoffMax = 6 * time.Hour
+	// unknownParkedBackoffMax caps re-asking while parked as UNKNOWN. Unlike
+	// "suspended" (a positive answer that changes slowly), unknown can just as
+	// well be a cloud-side data problem — e.g. a control plane briefly on the
+	// wrong or a restored database — and every relay it parked should come
+	// back within about an hour of the fix, not six.
+	unknownParkedBackoffMax = time.Hour
 	// unknownStrikes 401 answers, each at least unknownSpacing after the last
 	// counted one, park the tunnel as LifecycleUnknown.
 	unknownStrikes = 3
@@ -215,6 +221,14 @@ func (w *Watcher) Step(ctx context.Context, kicked bool) {
 	}
 }
 
+// parkedCap is the re-ask cap for a relay parked as lifecycle.
+func parkedCap(lifecycle string) time.Duration {
+	if lifecycle == state.LifecycleUnknown {
+		return unknownParkedBackoffMax
+	}
+	return parkedBackoffMax
+}
+
 // hasTunnel mirrors main's bootHasRegisteredController: a tunnel runs only for
 // controllers that have both an address and a cloud GUID.
 func hasTunnel(st state.State) bool {
@@ -242,7 +256,7 @@ func (w *Watcher) ask(ctx context.Context, st state.State, now time.Time) {
 	case err != nil:
 		slog.Info("relay lifecycle: no signal from the control plane", "err", err)
 		if parked {
-			w.schedule(now, parkedBackoffMin, parkedBackoffMax)
+			w.schedule(now, parkedBackoffMin, parkedCap(st.Cloud.Lifecycle))
 		} else {
 			w.schedule(now, activeBackoffMin, noSignalBackoffMax)
 		}
@@ -301,13 +315,13 @@ func (w *Watcher) onUnknown(st state.State, now time.Time) {
 	if st.TunnelParked() {
 		// Already parked (suspended or unknown): keep waiting; never escalate a
 		// 401 into anything destructive.
-		w.schedule(now, parkedBackoffMin, parkedBackoffMax)
+		w.schedule(now, parkedBackoffMin, parkedCap(st.Cloud.Lifecycle))
 		return
 	}
 	if n >= unknownStrikes {
 		w.park(st.Cloud.FrpcToken, state.LifecycleUnknown, "", now)
 		w.resetBackoff()
-		w.schedule(now, parkedBackoffMin, parkedBackoffMax)
+		w.schedule(now, parkedBackoffMin, unknownParkedBackoffMax)
 		return
 	}
 	slog.Info("relay lifecycle: control plane does not recognise the relay token", "strikes", n, "of", unknownStrikes)
