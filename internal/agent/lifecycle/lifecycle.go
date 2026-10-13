@@ -381,7 +381,10 @@ func (w *Watcher) drop(token, reason string) {
 	w.resetPacing(true)
 	w.reconfigure()
 	if w.o.OnPaired != nil {
-		w.o.OnPaired.UpdatePaired(false)
+		// Announce the store's CURRENT truth, not a hard-coded false: a new
+		// setup (pairFirst) may already have landed since the drop, and mDNS
+		// must not then claim the relay is unpaired.
+		w.o.OnPaired.UpdatePaired(w.o.Store.Get().Paired())
 	}
 }
 

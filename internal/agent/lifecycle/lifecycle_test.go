@@ -634,3 +634,23 @@ func TestUnknownParkReasksAtMostHourly(t *testing.T) {
 		t.Fatalf("unknown-parked re-ask interval %v exceeds %v (+jitter)", last, unknownParkedBackoffMax)
 	}
 }
+
+// Review round 1 on #59: after a drop, mDNS announces the store's current
+// paired state. A new setup landing between the drop and the announcement
+// (simulated in the reconfigure step that runs in between) must be announced
+// as paired, not overwritten with a hard-coded false.
+func TestDropAnnouncesCurrentPairedState(t *testing.T) {
+	r := newRig(t)
+	r.w.o.Reconfigure = func() error {
+		r.reconfigures++
+		return r.store.Update(func(s *state.State) {
+			s.Cloud = state.Cloud{FrpcToken: "new-tok"}
+			s.Devices = []state.Device{{ID: "d-new"}}
+		})
+	}
+	r.cloud.answer(wire.RelayStateDeleted, wire.RelayReasonHouseholdDeleted)
+	r.stepUntilAsked(t, downGrace+time.Minute)
+	if len(r.paired.calls) != 1 || !r.paired.calls[0] {
+		t.Fatalf("announced %v, want [true] (the relay was set up again before the announcement)", r.paired.calls)
+	}
+}
