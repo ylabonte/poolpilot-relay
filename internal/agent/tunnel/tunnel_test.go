@@ -261,10 +261,18 @@ func TestStatusLifecycleWithoutNetwork(t *testing.T) {
 	if err := tn.Configure(testConfig()); err != nil {
 		t.Fatalf("Configure: %v", err)
 	}
-	// Configured but not running: no service yet → error state (supervisor
-	// hasn't started it), never a false "connected".
-	if got := tn.Status(); got.State == "connected" {
-		t.Errorf("status without Run = %+v must not report connected", got)
+	// Configured but not running: no service yet → "connecting" (the
+	// supervisor hasn't built it) — never a false "connected", and not an
+	// "error" with no error behind it either.
+	if got := tn.Status(); got.State != "connecting" || got.LastErr != "" {
+		t.Errorf("status without Run = %+v, want connecting", got)
+	}
+	// A recorded failure with no service is still an error.
+	tn.(*frpTunnel).mu.Lock()
+	tn.(*frpTunnel).lastErr = "tunnel: build frp service: boom"
+	tn.(*frpTunnel).mu.Unlock()
+	if got := tn.Status(); got.State != "error" || got.LastErr == "" {
+		t.Errorf("status after a recorded failure = %+v, want error with LastErr", got)
 	}
 
 	if err := tn.Configure(Config{}); err == nil {

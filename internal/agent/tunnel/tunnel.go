@@ -316,6 +316,13 @@ func (t *frpTunnel) Status() Status {
 		return Status{State: "disabled"}
 	}
 	if t.svc == nil {
+		// Configured with controllers but no service yet: either Run has not
+		// woken to build it (the first controller was just added, or boot ran
+		// Configure before the supervisor started Run) — "connecting", not a
+		// problem state — or the build/run recorded an error.
+		if t.lastErr == "" {
+			return Status{State: "connecting"}
+		}
 		return Status{State: "error", LastErr: t.lastErr}
 	}
 
