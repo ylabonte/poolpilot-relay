@@ -168,3 +168,47 @@ func TestDropHouseholdRacesReSetup(t *testing.T) {
 		}
 	}
 }
+
+// DropHouseholdIf (the LAN household reset's bearer binding) drops only while
+// the caller's predicate holds for the CURRENT document, and like DropHousehold
+// never touches a wiped store.
+func TestDropHouseholdIfAppliesOnlyWhilePredicateHolds(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Update(func(s *State) {
+		s.Cloud = Cloud{FrpcToken: "tok"}
+		s.Devices = []Device{{ID: "d-new"}}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	hasDevice := func(id string) func(State) bool {
+		return func(s State) bool {
+			for _, d := range s.ActiveDevices() {
+				if d.ID == id {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	if dropped, err := st.DropHouseholdIf(hasDevice("d-old")); err != nil || dropped {
+		t.Fatalf("DropHouseholdIf(stale device) = %v, %v; want a no-op", dropped, err)
+	}
+	if got := st.Get(); !got.Paired() || !got.Enrolled() {
+		t.Fatalf("a stale predicate touched the household: %+v", got)
+	}
+	if dropped, err := st.DropHouseholdIf(hasDevice("d-new")); err != nil || !dropped {
+		t.Fatalf("DropHouseholdIf(current device) = %v, %v; want dropped", dropped, err)
+	}
+	if got := st.Get(); got.Paired() || got.Enrolled() {
+		t.Fatalf("household survived: %+v", got)
+	}
+	if err := st.Wipe(); err != nil {
+		t.Fatal(err)
+	}
+	if dropped, err := st.DropHouseholdIf(func(State) bool { return true }); err != nil || dropped {
+		t.Fatalf("DropHouseholdIf on a wiped store = %v, %v; want a no-op", dropped, err)
+	}
+}

@@ -27,6 +27,7 @@ import (
 	"github.com/ylabonte/poolpilot-relay/internal/agent/cloud"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/ctrlfilter"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/driver"
+	"github.com/ylabonte/poolpilot-relay/internal/agent/lifecycle"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/poller"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/recovery"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/state"
@@ -206,11 +207,13 @@ func (s *Server) checkLanAddress(addr string, useHTTPS bool) error {
 }
 
 // baseMux holds the routes reachable over BOTH the LAN (HTTPS) and the tunnel
-// (loopback HTTP behind frp) listeners. The two LAN-only ceremonies — pairing
-// and factory-reset — are deliberately NOT here: pairing proves physical LAN
-// presence, and factory-reset is destructive + irreversible (wipes state and
-// exits the process), so it demands the same LAN presence. Handler() mounts the
-// real handlers; TunnelHandler() answers 403 lan_only for both.
+// (loopback HTTP behind frp) listeners. The LAN-only ceremonies — pairing,
+// factory-reset and household-reset — are deliberately NOT here: pairing
+// proves physical LAN presence, factory-reset is destructive + irreversible
+// (wipes state and exits the process), and household-reset unpairs every
+// device and drops every controller, so both resets demand the same LAN
+// presence. Handler() mounts the real handlers; TunnelHandler() answers 403
+// lan_only for all three.
 func (s *Server) baseMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	// /v1/info is intentionally reachable on BOTH legs. It returns only
@@ -251,27 +254,31 @@ func (s *Server) baseMux() *http.ServeMux {
 	return mux
 }
 
-// Handler builds the LAN-facing mux (pairing + factory-reset allowed; exported
-// for httptest-based tests).
+// Handler builds the LAN-facing mux (pairing, factory-reset and
+// household-reset allowed; exported for httptest-based tests).
 func (s *Server) Handler() http.Handler {
 	mux := s.baseMux()
 	mux.HandleFunc("POST /v1/pair", s.pair)
 	mux.Handle("POST /v1/factory-reset", s.authed(s.factoryReset))
+	mux.Handle("POST /v1/household-reset", s.authed(s.householdReset))
 	// On the LAN leg, revoking the last active device is allowed (that is how
 	// "remove this phone" unpairs the agent).
 	mux.Handle("DELETE /v1/devices/{id}", s.authed(s.deleteDevice(false)))
 	return mux
 }
 
-// TunnelHandler is the remote-facing mux: the shared routes, but the two
-// LAN-only ceremonies are refused with 403 lan_only. A stolen pairing bearer
-// must not let an attacker re-pair OR remotely brick the agent from the
-// internet — remote decommissioning is an operator action via the cloud
-// /admin/revoke, not a destructive call over the tunnel.
+// TunnelHandler is the remote-facing mux: the shared routes, but the LAN-only
+// ceremonies are refused with 403 lan_only. A stolen pairing bearer must not
+// let an attacker re-pair, remotely brick the agent, OR remotely strip it of
+// its household from the internet — remote decommissioning is an operator
+// action via the cloud /admin/revoke, and a household erased in the cloud
+// reaches the relay through the lifecycle watcher, not a destructive call
+// over the tunnel.
 func (s *Server) TunnelHandler() http.Handler {
 	mux := s.baseMux()
 	mux.HandleFunc("POST /v1/pair", lanOnly)
 	mux.HandleFunc("POST /v1/factory-reset", lanOnly)
+	mux.HandleFunc("POST /v1/household-reset", lanOnly)
 	// Device revocation is allowed remotely (a lost phone is revoked from another
 	// device that is away, D9) EXCEPT revoking the last device — that unpairs the
 	// agent, so a stolen bearer must not do it over the tunnel. deleteDevice(true)
@@ -1853,6 +1860,55 @@ func (s *Server) factoryReset(w http.ResponseWriter, r *http.Request) {
 			s.ExitFn()
 		}()
 	}
+}
+
+// householdReset (POST /v1/household-reset, LAN-only, pairing bearer) drops the
+// household from this relay right away, with exactly the outcome of a cloud
+// "deleted" signal (lifecycle.ResetHousehold — the same function the watcher
+// runs): cloud credentials, paired devices, controllers and outbox are
+// dropped, the tunnel is torn down, mDNS announces paired=false, and the relay
+// is ready for a new setup. Unlike factoryReset it KEEPS the identity (agent
+// id + TLS key, so the fingerprint and any printed QR stay valid) and does not
+// exit the process.
+//
+// The app calls it best-effort right after "delete all my data" erased the
+// household in the cloud (poolpilot-app#1077), so the relay does not wait for
+// the watcher to notice (minutes with a tunnel, up to a day without). For the
+// same reason there is no cloud call here: the household — and with it this
+// relay's cloud row — is already gone, and anything this relay could still
+// tell the cloud would be about credentials it is about to forget.
+//
+// Binding: the drop applies only while the device whose bearer authorized this
+// request is STILL an active device of the current document, checked under the
+// store lock. If the watcher (or a last-device revoke) dropped the household
+// first and a new setup landed before this request got the lock, that device
+// is gone — the new household is left untouched and the caller gets the same
+// 401 any bearer of a forgotten household gets. Held under controllerMu so a
+// controller upsert or delete in flight (probe → cloud → persist) cannot
+// re-persist a controller after the drop.
+func (s *Server) householdReset(w http.ResponseWriter, r *http.Request) {
+	deviceID := deviceIDFromContext(r)
+	s.controllerMu.Lock()
+	defer s.controllerMu.Unlock()
+	dropped, err := lifecycle.ResetHousehold(s.Store, func(st state.State) bool {
+		for _, d := range st.ActiveDevices() {
+			if d.ID == deviceID {
+				return true
+			}
+		}
+		return false
+	}, s.reconfigureTunnel, s.OnPaired)
+	if err != nil {
+		slog.Error("household reset", "err", err)
+		writeErr(w, http.StatusInternalServerError, "persist_failed")
+		return
+	}
+	if !dropped {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	slog.Warn("household reset over the LAN API; dropped household data, relay is ready for a new setup (identity kept)")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ---- helpers ----
