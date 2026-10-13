@@ -191,8 +191,7 @@ func (t *frpTunnel) Run(ctx context.Context) error {
 		for {
 			select {
 			case <-ctx.Done():
-				cancel()
-				svc.Close()
+				cancel() // stops the service — never svc.Close(), see the teardown below
 				<-done
 				return ctx.Err()
 			case <-t.reconfigured:
@@ -221,8 +220,16 @@ func (t *frpTunnel) Run(ctx context.Context) error {
 		}
 
 		// Reached only when a reconfigure needs a full rebuild.
+		//
+		// Stopping the service is cancel() alone — never svc.Close(). frp's
+		// Service.Run derives its own context from runCtx, so cancelling runCtx
+		// ends the login-retry loop and runs svr.stop(). Close() instead calls
+		// svr.cancel, which frp assigns only once its Run goroutine has started:
+		// a teardown that wins that race (a reconfigure already pending when
+		// supervise is entered, e.g. two quick Configure calls) dereferenced a
+		// nil func and crashed the subsystem. TestRunSurvivesRapidReconfigureToggles
+		// pins this.
 		cancel()
-		svc.Close()
 		<-done
 	}
 }

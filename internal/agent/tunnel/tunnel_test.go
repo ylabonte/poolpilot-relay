@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -545,4 +546,74 @@ func TestRunTearsDownWhenLastControllerRemovedAndRebuilds(t *testing.T) {
 		t.Fatalf("Configure(re-add): %v", err)
 	}
 	waitFor(t, "rebuild after a controller is added again", func() bool { return serviceRunning(tn) })
+}
+
+// Regression (review of relay#58): toggling between a controller set and an
+// empty one in quick succession reaches the teardown path while frp's own Run
+// goroutine may not have started yet. Tearing down with svc.Close() then
+// dereferenced frp's not-yet-assigned cancel func and panicked; teardown must
+// rely on cancelling the run context alone. Run must survive every toggle and
+// still return context.Canceled when its ctx ends.
+func TestRunSurvivesRapidReconfigureToggles(t *testing.T) {
+	tn := New().(*frpTunnel)
+	with := offlineConfig()
+	empty := offlineConfig()
+	empty.Controllers = nil
+	if err := tn.Configure(with); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- fmt.Errorf("Run panicked: %v", r)
+			}
+		}()
+		done <- tn.Run(ctx)
+	}()
+
+	// Each round adds a controller, waits only until Run has built the service
+	// (svc is stored just before frp's Run goroutine is spawned), then empties
+	// the set at once — so the teardown races that goroutine's start. Waiting
+	// for each edge also keeps Configure from collapsing the whole loop into
+	// one final config before Run ever wakes.
+	for i := 0; i < 1000; i++ {
+		if err := tn.Configure(with); err != nil {
+			t.Fatalf("Configure(with) #%d: %v", i, err)
+		}
+		waitForOrRunExit(t, done, "service built", func() bool { return serviceRunning(tn) })
+		if err := tn.Configure(empty); err != nil {
+			t.Fatalf("Configure(empty) #%d: %v", i, err)
+		}
+		waitForOrRunExit(t, done, "service torn down", func() bool { return !serviceRunning(tn) })
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Run returned %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after ctx cancel")
+	}
+}
+
+// waitForOrRunExit is waitFor that also fails fast when Run has returned (or
+// panicked) in the meantime, instead of timing out on a dead supervisor.
+func waitForOrRunExit(t *testing.T, done <-chan error, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		select {
+		case err := <-done:
+			t.Fatalf("Run returned while waiting for %s: %v", what, err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(50 * time.Microsecond)
+	}
 }
