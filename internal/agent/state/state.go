@@ -102,7 +102,33 @@ type Cloud struct {
 	BaseURL   string `json:"base_url,omitempty"`
 	FrpcToken string `json:"frpc_token,omitempty"`
 	FRPS      FRPS   `json:"frps,omitzero"`
+	// Lifecycle is "" in normal operation, or why the agent has PARKED its
+	// tunnel (LifecycleSuspended / LifecycleUnknown) after asking the control
+	// plane's POST /relay/status (poolpilot-cloud#242, internal/agent/lifecycle).
+	// Parked means: no frp service (ReconfigureTunnel hands the tunnel zero
+	// proxies), no /alerts or controller-sync calls — but the credentials are
+	// KEPT, so an answer of "active" resumes everything. Persisted so a reboot
+	// neither restarts the 20 s frp login loop nor forgets why it parked. A
+	// fresh enrolment (pairFirst replaces the whole Cloud struct) clears it.
+	Lifecycle string `json:"lifecycle,omitempty"`
+	// LifecycleReason is the control plane's informational reason for a
+	// suspension ("lapsed" | "free" | "revoked"), or "" — shown in /v1/status's
+	// tunnel.last_error while parked, never used for a decision.
+	LifecycleReason string `json:"lifecycle_reason,omitempty"`
+	// LifecycleSince is when the agent parked the tunnel.
+	LifecycleSince time.Time `json:"lifecycle_since,omitzero"`
 }
+
+// Cloud.Lifecycle values. Both park the tunnel; neither discards credentials.
+const (
+	// LifecycleSuspended: the control plane answered "suspended" — the relay
+	// is known but its household is not entitled (lapsed, free, admin-revoked).
+	LifecycleSuspended = "suspended"
+	// LifecycleUnknown: the control plane repeatedly did not recognise the
+	// token (401) and holds no tombstone for it. Could be a cloud-side data
+	// problem as easily as a gone household, so it only parks.
+	LifecycleUnknown = "unknown"
+)
 
 // Controller is a configured pool controller. In schema v2 the alert rules, the
 // engine's per-rule memory, and the last-successful-poll timestamp live on the
@@ -240,6 +266,40 @@ func (s State) ActiveDevices() []Device {
 
 // Enrolled reports whether the relay holds a cloud bearer token.
 func (s State) Enrolled() bool { return s.Cloud.FrpcToken != "" }
+
+// TunnelParked reports whether the agent has parked its tunnel and its other
+// cloud calls because the control plane said the household is not entitled,
+// or repeatedly did not know the token (see Cloud.Lifecycle).
+func (s State) TunnelParked() bool {
+	return s.Enrolled() && (s.Cloud.Lifecycle == LifecycleSuspended || s.Cloud.Lifecycle == LifecycleUnknown)
+}
+
+// ResetHousehold is THE one place that decides what a relay forgets when the
+// control plane reports its household deleted (POST /relay/status → "deleted",
+// poolpilot-cloud#242). It drops everything that belonged to the household —
+// the cloud credentials and lifecycle (Cloud), every paired device, every
+// controller (their GUIDs died with the household; Controller also carries the
+// controller credentials, alert rules and alert state), the queued alert
+// outbox, and the ctrl-vhost session secret (invalidates any web session) —
+// and returns the relay to the setup-ready state: paired:false,
+// enrolled:false, ready for the normal enrolment-code pairing.
+//
+// It deliberately KEEPS the relay's identity: AgentID and the TLS key/cert, so
+// the SPKI fingerprint is unchanged. A returning device's TLS pin stays valid
+// (no "stale pin" lockout), and the fingerprint/QR printed by show-pairing or
+// on a sticker keeps working for the re-setup. A fresh identity is what the
+// explicit on-device factory reset is for (Store.Wipe, e.g. before resale).
+// Also kept: the self-update settings/memory (device-level, not household
+// data), RecoveryWindowUsed (a monotonic replay guard; the recovery code is
+// derived from the identity and is unusable while not enrolled anyway), and
+// CloudSyncSeeded (a one-shot migration marker).
+func (s *State) ResetHousehold() {
+	s.Cloud = Cloud{}
+	s.Devices = nil
+	s.Controllers = nil
+	s.Outbox = nil
+	s.CtrlSessionSecret = ""
+}
 
 // AutoUpdate reports whether automatic update application is enabled. It is the
 // default (the zero value of Update.AutoDisabled); the app disables it via
@@ -660,6 +720,22 @@ func (st *Store) Wipe() error {
 				slog.Warn("factory reset: could not remove persist temp", "path", filepath.Join(dir, name), "err", err)
 			}
 		}
+	}
+	return nil
+}
+
+// DropHousehold applies State.ResetHousehold and persists it, then removes the
+// "<path>.v1.bak" migration backup best-effort: that backup is a copy of an
+// older document carrying the same household's credentials and devices, which
+// must not outlive the household. Unlike Wipe the store stays live — the agent
+// keeps running with its identity, ready for a new setup.
+func (st *Store) DropHousehold() error {
+	if err := st.Update(func(s *State) { s.ResetHousehold() }); err != nil {
+		return err
+	}
+	bak := st.path + ".v1.bak"
+	if err := os.Remove(bak); err != nil && !errors.Is(err, os.ErrNotExist) {
+		slog.Warn("household reset: could not remove migration backup", "path", bak, "err", err)
 	}
 	return nil
 }

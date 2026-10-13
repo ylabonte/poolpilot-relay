@@ -54,6 +54,11 @@ var (
 	// mint a replacement (or to re-run show-recovery) for nothing. Transient —
 	// live vouchers expire in minutes — so retrying the SAME code is the advice.
 	ErrVoucherCapReached = errors.New("cloud live-voucher cap reached")
+	// ErrUnknownToken: POST /relay/status answered 401 — the control plane
+	// knows neither this relay's token nor a tombstone for it. Distinct from
+	// ErrUnavailable because the lifecycle watcher counts these (and only
+	// these) toward parking the tunnel; it never discards credentials on it.
+	ErrUnknownToken = errors.New("cloud does not recognise the relay token")
 )
 
 // RequestTimeout bounds every control-plane call; the relay must never hang a
@@ -247,6 +252,10 @@ func (c *Client) SyncControllers(ctx context.Context) error {
 func (c *Client) syncPass(ctx context.Context) error {
 	for round := 0; round < maxSyncRounds; round++ {
 		s := c.store.Get()
+		if s.TunnelParked() {
+			// Parked (see Drain): the flags stay set and are sent on resume.
+			return nil
+		}
 		var roundErr error
 		pending, accepted := 0, 0
 		for _, ctrl := range s.Controllers {
@@ -527,6 +536,40 @@ func (c *Client) CheckUpdate(ctx context.Context, currentVersion string) (Update
 	return out, nil
 }
 
+// RelayStatus asks the control plane why this relay's tunnel cannot log in
+// (POST /relay/status, relay-bearer, bodyless; poolpilot-cloud#242). It is the
+// lifecycle watcher's only signal — frp has no server→client message.
+//
+// Returns the response only for a 200 whose State this agent recognises
+// (wire.RelayState*). A 401 is ErrUnknownToken. Everything else — 404/405 from
+// a control plane older than the route, the per-IP throttle's 429, 5xx,
+// transport failures, an undecodable body, or a State added after this agent
+// was built — is ErrUnavailable, i.e. "no signal": the caller changes nothing.
+func (c *Client) RelayStatus(ctx context.Context) (wire.RelayStatusResponse, error) {
+	s := c.store.Get()
+	if !s.Enrolled() {
+		return wire.RelayStatusResponse{}, fmt.Errorf("%w: not enrolled", ErrRejected)
+	}
+	var out wire.RelayStatusResponse
+	status, err := c.doJSON(ctx, http.MethodPost, s.Cloud.BaseURL+"/relay/status", s.Cloud.FrpcToken, nil, &out)
+	if err != nil {
+		return wire.RelayStatusResponse{}, err
+	}
+	switch {
+	case status == http.StatusOK:
+		switch out.State {
+		case wire.RelayStateActive, wire.RelayStateSuspended, wire.RelayStateDeleted:
+			return out, nil
+		default:
+			return wire.RelayStatusResponse{}, fmt.Errorf("%w: relay/status: unrecognised state %q", ErrUnavailable, out.State)
+		}
+	case status == http.StatusUnauthorized:
+		return wire.RelayStatusResponse{}, fmt.Errorf("%w: relay/status HTTP 401", ErrUnknownToken)
+	default:
+		return wire.RelayStatusResponse{}, fmt.Errorf("%w: relay/status HTTP %d", ErrUnavailable, status)
+	}
+}
+
 // SendAlert queues the alert into the persistent outbox FIRST, then attempts
 // to drain the whole queue in order. A transport failure keeps the queue for
 // the next poll tick; queueing failure is the only hard error.
@@ -663,10 +706,15 @@ func lastQueuedEntryForRule(ruleID string, rest []wire.AlertRequest) bool {
 // queued alert one by one; remaining 4xx → validation-rejected, drop + log;
 // transport error or 5xx → keep everything from this entry on and return
 // ErrUnavailable.
+//
+// While the tunnel is parked (state.State.TunnelParked — the control plane
+// said the household is not entitled, or does not know the token) Drain sends
+// nothing and keeps the queue: every delivery would be refused, once per poll
+// tick. The staleness rule above still trims it once delivery resumes.
 func (c *Client) Drain(ctx context.Context) error {
 	for {
 		s := c.store.Get()
-		if len(s.Outbox) == 0 {
+		if len(s.Outbox) == 0 || s.TunnelParked() {
 			return nil
 		}
 		head := s.Outbox[0]
