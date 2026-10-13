@@ -1927,6 +1927,13 @@ func (s *Server) factoryReset(w http.ResponseWriter, r *http.Request) {
 // 401 any bearer of a forgotten household gets. Held under controllerMu so a
 // controller upsert or delete in flight (probe → cloud → persist) cannot
 // re-persist a controller after the drop.
+//
+// Latency: because of that lock, a reset that arrives while a controller
+// upsert, rotate or delete is in flight waits for it — up to the controller
+// probe plus a cloud call (cloud.RequestTimeout, 15 s) — before answering.
+// Clients must treat a timeout here as "no signal" and the whole call as
+// best-effort: the lifecycle watcher still resets the relay on its own once it
+// learns the household was deleted.
 func (s *Server) householdReset(w http.ResponseWriter, r *http.Request) {
 	deviceID := deviceIDFromContext(r)
 	s.controllerMu.Lock()
