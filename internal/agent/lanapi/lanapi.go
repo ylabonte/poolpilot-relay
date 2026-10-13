@@ -131,6 +131,23 @@ type Server struct {
 	// Kick; rate-limited and a no-op when not parked). Nil-safe.
 	Lifecycle interface{ Kick() }
 
+	// tunnelMu serializes reconfigureTunnel's read-of-state + Tunnel.Configure
+	// for EVERY caller — the LAN handlers (which also hold controllerMu) and
+	// the lifecycle watcher (ApplyTunnelState, which holds nothing else).
+	// Tunnel.Configure is last-writer-wins, and every writer persists its
+	// state change BEFORE re-applying, so reading inside this lock guarantees
+	// the last apply reflects the latest persisted state. Without it a LAN
+	// re-apply holding a pre-park snapshot could land after the watcher's
+	// park (frp back in its 20 s loop), or one holding a pre-resume snapshot
+	// after its resume (remote access dead until the next change). A
+	// dedicated mutex rather than controllerMu: some controllerMu holders make
+	// cloud calls, and the watcher must not wait on those. Always the
+	// innermost lock: nothing is acquired while it is held.
+	tunnelMu sync.Mutex
+	// afterTunnelStateRead, when set (tests only), runs inside
+	// reconfigureTunnel between reading the state and applying it.
+	afterTunnelStateRead func()
+
 	// controllerMu serializes controller upserts (PUT /v1/controllers) and
 	// deletes. Two concurrent upserts of the SAME new address would otherwise
 	// both miss dedup and double-register with the cloud; holding this across
@@ -1502,8 +1519,14 @@ func deriveRemoteAPIURL(guid, subdomainHost string) string {
 // reconfigureTunnel pushes the current persisted state into the frp tunnel.
 // Also called from main on boot when a controller is already configured.
 func (s *Server) reconfigureTunnel() error {
+	s.tunnelMu.Lock()
+	defer s.tunnelMu.Unlock()
 	s.InstallCtrlFilterAuth()
-	return ReconfigureTunnel(s.Tunnel, s.Store.Get(), s.TunnelAddr, s.CtrlFilter)
+	st := s.Store.Get()
+	if s.afterTunnelStateRead != nil {
+		s.afterTunnelStateRead() // test seam: widen the read→apply window
+	}
+	return ReconfigureTunnel(s.Tunnel, st, s.TunnelAddr, s.CtrlFilter)
 }
 
 // ApplyTunnelState re-applies the tunnel from the current persisted state —

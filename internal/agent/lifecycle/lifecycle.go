@@ -216,9 +216,13 @@ func (w *Watcher) ask(ctx context.Context, st state.State, now time.Time) {
 			w.resume(token, st.Cloud.Lifecycle)
 			return
 		}
-		// The relay is in good standing and the tunnel is still down: a
-		// network or frps problem, nothing to change here.
-		slog.Info("relay lifecycle: control plane reports the relay active; tunnel still down")
+		// The relay is in good standing and the tunnel is still down: most
+		// likely a network or frps problem. Re-apply the tunnel config from the
+		// current state anyway (cheap; a no-op when it already matches), so a
+		// tunnel left with a stale config by any path heals itself here
+		// instead of only being logged.
+		slog.Info("relay lifecycle: control plane reports the relay active; tunnel still down, re-applying its config")
+		w.reconfigure()
 		w.schedule(now, activeBackoffMin, activeBackoffMax)
 	case resp.State == wire.RelayStateSuspended:
 		w.clearStrikes()

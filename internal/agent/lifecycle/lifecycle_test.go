@@ -335,18 +335,23 @@ func TestNoSignalChangesNothingAndBacksOff(t *testing.T) {
 	}
 }
 
-// "active" with the tunnel still down is a network/frps problem: nothing
-// changes, re-asked with a backoff capped at activeBackoffMax.
-func TestActiveWithTunnelDownChangesNothing(t *testing.T) {
+// "active" with the tunnel still down is most likely a network/frps problem:
+// nothing is parked, but the tunnel config is re-applied on every answer (so a
+// stale config self-heals), and it is re-asked with a backoff capped at
+// activeBackoffMax.
+func TestActiveWithTunnelDownReappliesButNeverParks(t *testing.T) {
 	r := newRig(t)
 	r.cloud.answer(wire.RelayStateActive, "")
 	r.stepUntilAsked(t, downGrace+time.Minute)
+	if r.reconfigures != 1 {
+		t.Fatalf("active with the tunnel down must re-apply the config, reconfigures=%d", r.reconfigures)
+	}
 	var last time.Duration
 	for range 10 {
 		last = r.stepUntilAsked(t, 2*activeBackoffMax)
 	}
-	if r.store.Get().TunnelParked() || r.reconfigures != 0 {
-		t.Fatal("active must not park or reconfigure")
+	if r.store.Get().TunnelParked() || r.reconfigures != 11 {
+		t.Fatalf("active must not park, and must re-apply once per answer (reconfigures=%d, want 11)", r.reconfigures)
 	}
 	if last > activeBackoffMax*11/10+tickEvery {
 		t.Errorf("active re-ask %v exceeds cap %v", last, activeBackoffMax)

@@ -161,3 +161,52 @@ func TestDroppedHouseholdIsSetupReadyAndRepairs(t *testing.T) {
 		t.Fatalf("tunnel after re-setup still disabled: %+v", ts)
 	}
 }
+
+// Review round 1 on #59 [blocking]: the watcher's ApplyTunnelState and a LAN
+// handler's re-apply each read the state and then Configure the tunnel
+// (last-writer-wins). Unserialized, a LAN re-apply holding a pre-park snapshot
+// could land after the park (frp back in its 20 s loop), or one holding a
+// pre-resume snapshot after the resume (remote access dead). The seam holds the
+// LAN re-apply between its read and its apply while the watcher persists and
+// applies; serialized, the watcher has to wait and applies last — so the
+// tunnel must always end matching the persisted state.
+func TestTunnelReapplyIsSerializedAcrossParkAndResume(t *testing.T) {
+	f, _ := configuredFixture(t)
+	for i, park := range []bool{true, false, true, false} {
+		watcherDone := make(chan struct{})
+		lanRead := make(chan struct{})
+		f.srv.afterTunnelStateRead = func() {
+			close(lanRead)
+			select { // give an UNserialized watcher every chance to finish first
+			case <-watcherDone:
+			case <-time.After(200 * time.Millisecond):
+			}
+		}
+		lanDone := make(chan struct{})
+		go func() {
+			defer close(lanDone)
+			_ = f.srv.reconfigureTunnel()
+		}()
+		<-lanRead
+		f.srv.afterTunnelStateRead = nil
+		if err := f.store.Update(func(s *state.State) {
+			if park {
+				s.Cloud.Lifecycle = state.LifecycleSuspended
+			} else {
+				s.Cloud.Lifecycle = ""
+			}
+		}); err != nil {
+			t.Fatal(err)
+		}
+		go func() {
+			defer close(watcherDone)
+			_ = f.srv.ApplyTunnelState()
+		}()
+		<-lanDone
+		<-watcherDone
+		disabled := f.tunnel.Status().State == "disabled"
+		if parked := f.store.Get().TunnelParked(); disabled != parked {
+			t.Fatalf("round %d (park=%v): tunnel disabled=%v but parked=%v — a stale re-apply landed last", i, park, disabled, parked)
+		}
+	}
+}
