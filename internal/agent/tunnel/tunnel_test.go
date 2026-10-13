@@ -1,8 +1,11 @@
 package tunnel
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	v1 "github.com/fatedier/frp/pkg/config/v1"
 )
@@ -128,8 +131,8 @@ func TestTranslateTwoControllersFourProxies(t *testing.T) {
 	}
 }
 
-// An empty controller list is valid (all controllers deleted) → zero proxies,
-// only the control connection.
+// An empty controller list is valid (all controllers deleted) → zero proxies.
+// (Run then builds no service from it at all — see TestRunIdlesWithoutControllers.)
 func TestTranslateNoControllersIsValid(t *testing.T) {
 	cfg := testConfig()
 	cfg.Controllers = nil
@@ -258,10 +261,18 @@ func TestStatusLifecycleWithoutNetwork(t *testing.T) {
 	if err := tn.Configure(testConfig()); err != nil {
 		t.Fatalf("Configure: %v", err)
 	}
-	// Configured but not running: no service yet → error state (supervisor
-	// hasn't started it), never a false "connected".
-	if got := tn.Status(); got.State == "connected" {
-		t.Errorf("status without Run = %+v must not report connected", got)
+	// Configured but not running: no service yet → "connecting" (the
+	// supervisor hasn't built it) — never a false "connected", and not an
+	// "error" with no error behind it either.
+	if got := tn.Status(); got.State != "connecting" || got.LastErr != "" {
+		t.Errorf("status without Run = %+v, want connecting", got)
+	}
+	// A recorded failure with no service is still an error.
+	tn.(*frpTunnel).mu.Lock()
+	tn.(*frpTunnel).lastErr = "tunnel: build frp service: boom"
+	tn.(*frpTunnel).mu.Unlock()
+	if got := tn.Status(); got.State != "error" || got.LastErr == "" {
+		t.Errorf("status after a recorded failure = %+v, want error with LastErr", got)
 	}
 
 	if err := tn.Configure(Config{}); err == nil {
@@ -289,7 +300,10 @@ func TestNeedsRestart(t *testing.T) {
 		{"add controller", proxyOnly(func(c *Config) {
 			c.Controllers = append(c.Controllers, ProxySpec{GUID: "ffffffffffffffffffffffffffffffff", LocalAddr: "192.168.2.9:80"})
 		}), false},
-		{"drop all controllers", proxyOnly(func(c *Config) { c.Controllers = nil }), false},
+		// Emptying the proxy set tears the service down (poolpilot-cloud#242): a
+		// proxy-less control connection has nothing to serve and would keep
+		// logging in forever once the cloud forgot the relay token.
+		{"drop all controllers", proxyOnly(func(c *Config) { c.Controllers = nil }), true},
 		{"change local addr", proxyOnly(func(c *Config) { c.Controllers[0].LocalAddr = "192.168.2.99:8080" }), false},
 		{"toggle api local addr", proxyOnly(func(c *Config) { c.APILocalAddr = "127.0.0.1:8480" }), false},
 		{"change subdomain host", proxyOnly(func(c *Config) { c.SubdomainHost = "other.example" }), false},
@@ -438,5 +452,176 @@ func TestWorseOrdering(t *testing.T) {
 		if got := worse(tc.a, tc.b); got != tc.want {
 			t.Errorf("worse(%q,%q) = %q, want %q", tc.a, tc.b, got, tc.want)
 		}
+	}
+}
+
+// serviceRunning reports whether Run currently holds a built frp service — the
+// observable for "is a control connection being maintained". Same package, so
+// it reads the supervisor's own field under its lock.
+func serviceRunning(tn *frpTunnel) bool {
+	tn.mu.Lock()
+	defer tn.mu.Unlock()
+	return tn.svc != nil
+}
+
+// waitFor polls cond until it holds or the deadline passes.
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// offlineConfig points the tunnel at a loopback port nothing listens on, so a
+// running service only ever retries a refused local dial — no real network.
+func offlineConfig() Config {
+	cfg := testConfig()
+	cfg.ServerAddr = "127.0.0.1"
+	cfg.ServerPort = 1
+	return cfg
+}
+
+// poolpilot-cloud#242: a tunnel configured with ZERO controllers must run no frp
+// service at all — the boot path never starts one for that state, and a
+// proxy-less control connection retried its login every 20 s forever once the
+// cloud had deleted the relay token. It must report "disabled", never "error".
+func TestRunIdlesWithoutControllers(t *testing.T) {
+	tn := New().(*frpTunnel)
+	cfg := offlineConfig()
+	cfg.Controllers = nil
+	if err := tn.Configure(cfg); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- tn.Run(ctx) }()
+
+	// Give Run ample time to (wrongly) build a service.
+	time.Sleep(200 * time.Millisecond)
+	if serviceRunning(tn) {
+		t.Error("a zero-controller tunnel must not build an frp service")
+	}
+	if got := tn.Status(); got.State != "disabled" {
+		t.Errorf("zero-controller status = %+v, want disabled", got)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after ctx cancel")
+	}
+}
+
+// The runtime lifecycle the relay goes through when the user deletes its last
+// controller and later adds one again: N controllers → service runs; 0 → the
+// service is torn down (no control connection left to retry); N again → a fresh
+// service is built.
+func TestRunTearsDownWhenLastControllerRemovedAndRebuilds(t *testing.T) {
+	tn := New().(*frpTunnel)
+	if err := tn.Configure(offlineConfig()); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- tn.Run(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("Run did not return after ctx cancel")
+		}
+	}()
+
+	waitFor(t, "service with one controller", func() bool { return serviceRunning(tn) })
+
+	empty := offlineConfig()
+	empty.Controllers = nil
+	if err := tn.Configure(empty); err != nil {
+		t.Fatalf("Configure(empty): %v", err)
+	}
+	waitFor(t, "teardown after the last controller is removed", func() bool { return !serviceRunning(tn) })
+	if got := tn.Status(); got.State != "disabled" {
+		t.Errorf("status after removing the last controller = %+v, want disabled", got)
+	}
+
+	if err := tn.Configure(offlineConfig()); err != nil {
+		t.Fatalf("Configure(re-add): %v", err)
+	}
+	waitFor(t, "rebuild after a controller is added again", func() bool { return serviceRunning(tn) })
+}
+
+// Regression (review of relay#58): toggling between a controller set and an
+// empty one in quick succession reaches the teardown path while frp's own Run
+// goroutine may not have started yet. Tearing down with svc.Close() then
+// dereferenced frp's not-yet-assigned cancel func and panicked; teardown must
+// rely on cancelling the run context alone. Run must survive every toggle and
+// still return context.Canceled when its ctx ends.
+func TestRunSurvivesRapidReconfigureToggles(t *testing.T) {
+	tn := New().(*frpTunnel)
+	with := offlineConfig()
+	empty := offlineConfig()
+	empty.Controllers = nil
+	if err := tn.Configure(with); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- fmt.Errorf("Run panicked: %v", r)
+			}
+		}()
+		done <- tn.Run(ctx)
+	}()
+
+	// Each round adds a controller, waits only until Run has built the service
+	// (svc is stored just before frp's Run goroutine is spawned), then empties
+	// the set at once — so the teardown races that goroutine's start. Waiting
+	// for each edge also keeps Configure from collapsing the whole loop into
+	// one final config before Run ever wakes.
+	for i := 0; i < 1000; i++ {
+		if err := tn.Configure(with); err != nil {
+			t.Fatalf("Configure(with) #%d: %v", i, err)
+		}
+		waitForOrRunExit(t, done, "service built", func() bool { return serviceRunning(tn) })
+		if err := tn.Configure(empty); err != nil {
+			t.Fatalf("Configure(empty) #%d: %v", i, err)
+		}
+		waitForOrRunExit(t, done, "service torn down", func() bool { return !serviceRunning(tn) })
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Run returned %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after ctx cancel")
+	}
+}
+
+// waitForOrRunExit is waitFor that also fails fast when Run has returned (or
+// panicked) in the meantime, instead of timing out on a dead supervisor.
+func waitForOrRunExit(t *testing.T, done <-chan error, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		select {
+		case err := <-done:
+			t.Fatalf("Run returned while waiting for %s: %v", what, err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(50 * time.Microsecond)
 	}
 }
