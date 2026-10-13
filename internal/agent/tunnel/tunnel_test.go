@@ -275,8 +275,18 @@ func TestStatusLifecycleWithoutNetwork(t *testing.T) {
 		t.Errorf("status after a recorded failure = %+v, want error with LastErr", got)
 	}
 
-	if err := tn.Configure(Config{}); err == nil {
+	bad := testConfig()
+	bad.ServerAddr = ""
+	if err := tn.Configure(bad); err == nil {
 		t.Error("Configure must reject an invalid config upfront")
+	}
+	// An idle config needs no transport at all: it is how a relay whose cloud
+	// credentials were dropped stops its tunnel (internal/agent/lifecycle).
+	if err := tn.Configure(Config{}); err != nil {
+		t.Errorf("Configure(idle, no transport) = %v, want accepted", err)
+	}
+	if got := tn.Status(); got.State != "disabled" {
+		t.Errorf("status after an idle Configure = %+v, want disabled", got)
 	}
 }
 
