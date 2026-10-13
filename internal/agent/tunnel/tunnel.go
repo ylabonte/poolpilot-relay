@@ -44,8 +44,12 @@ type Config struct {
 	// validates on Login/NewProxy (metadatas.token).
 	RelayToken string
 	// Controllers is one ProxySpec per configured controller; may be empty
-	// (all controllers deleted) → the service maintains only its control
-	// connection and Status() reports "disabled".
+	// (all controllers deleted) → NO frp service runs at all and Status()
+	// reports "disabled". An empty proxy set has nothing to serve, and keeping
+	// the bare control connection alive used to mean an endless 20 s login loop
+	// once the cloud forgot the relay token (poolpilot-cloud#242) — while the
+	// boot path (main's bootHasRegisteredController) never started a tunnel for
+	// the same state. Adding a controller again builds a fresh service.
 	Controllers []ProxySpec
 	// SubdomainHost is informational (the subdomain host lives in frps config);
 	// kept so Status/debug output can print the public URL.
@@ -141,7 +145,13 @@ func (t *frpTunnel) Run(ctx context.Context) error {
 		cfg := t.cfg
 		t.mu.Unlock()
 
-		if cfg == nil {
+		if idle(cfg) {
+			// Nothing to serve (unconfigured, or every controller deleted): run no
+			// frp service, so no control connection keeps logging in — see
+			// Config.Controllers. The next Configure with controllers wakes us.
+			t.mu.Lock()
+			t.svc, t.applied, t.lastErr = nil, nil, ""
+			t.mu.Unlock()
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -275,8 +285,13 @@ func reconcile(old, new Config, apply func(*v1.ClientCommonConfig, []v1.ProxyCon
 // are not hot-swappable. Everything else (the proxy set, SubdomainHost,
 // APILocalAddr) only shapes proxies, which frp reloads live via
 // UpdateConfigSource.
+//
+// Emptying the proxy set also counts: the service is torn down rather than left
+// holding a proxy-less control connection (see Config.Controllers), and Run's
+// outer loop then idles until controllers come back.
 func needsRestart(old, new Config) bool {
-	return old.ServerAddr != new.ServerAddr ||
+	return idle(&old) != idle(&new) ||
+		old.ServerAddr != new.ServerAddr ||
 		old.ServerPort != new.ServerPort ||
 		old.AuthToken != new.AuthToken ||
 		old.RelayToken != new.RelayToken ||
@@ -287,16 +302,14 @@ func needsRestart(old, new Config) bool {
 func (t *frpTunnel) Status() Status {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.cfg == nil {
+	// With no controllers there is nothing to serve, and no service runs at all
+	// (Config.Controllers) — checked before the svc == nil arm so an idle tunnel
+	// never reports "error".
+	if idle(t.cfg) {
 		return Status{State: "disabled"}
 	}
 	if t.svc == nil {
 		return Status{State: "error", LastErr: t.lastErr}
-	}
-	// With no controllers there is nothing to serve — the service holds only its
-	// control connection.
-	if len(t.cfg.Controllers) == 0 {
-		return Status{State: "disabled"}
 	}
 
 	perGUID := make(map[string]ProxyStatus, len(t.cfg.Controllers))
@@ -317,6 +330,12 @@ func (t *frpTunnel) Status() Status {
 		}
 	}
 	return Status{State: headline, LastErr: headlineErr, APIState: apiHeadline, Controllers: perGUID}
+}
+
+// idle reports whether cfg leaves the tunnel nothing to serve: unconfigured, or
+// configured with zero controllers. An idle tunnel runs no frp service.
+func idle(cfg *Config) bool {
+	return cfg == nil || len(cfg.Controllers) == 0
 }
 
 // worse returns the more-severe of two coarse proxy states. Severity order:
