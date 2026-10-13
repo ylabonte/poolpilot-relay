@@ -545,13 +545,16 @@ func (c *Client) CheckUpdate(ctx context.Context, currentVersion string) (Update
 // a control plane older than the route, the per-IP throttle's 429, 5xx,
 // transport failures, an undecodable body, or a State added after this agent
 // was built — is ErrUnavailable, i.e. "no signal": the caller changes nothing.
-func (c *Client) RelayStatus(ctx context.Context) (wire.RelayStatusResponse, error) {
-	s := c.store.Get()
-	if !s.Enrolled() {
+//
+// baseURL and frpcToken are explicit (like Release), not read from the store:
+// the caller must know exactly which credentials the answer is about, so it can
+// refuse to apply it once they have changed (state.Store.UpdateIfToken).
+func (c *Client) RelayStatus(ctx context.Context, baseURL, frpcToken string) (wire.RelayStatusResponse, error) {
+	if frpcToken == "" {
 		return wire.RelayStatusResponse{}, fmt.Errorf("%w: not enrolled", ErrRejected)
 	}
 	var out wire.RelayStatusResponse
-	status, err := c.doJSON(ctx, http.MethodPost, s.Cloud.BaseURL+"/relay/status", s.Cloud.FrpcToken, nil, &out)
+	status, err := c.doJSON(ctx, http.MethodPost, baseURL+"/relay/status", frpcToken, nil, &out)
 	if err != nil {
 		return wire.RelayStatusResponse{}, err
 	}

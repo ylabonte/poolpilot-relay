@@ -128,8 +128,8 @@ func TestDroppedHouseholdIsSetupReadyAndRepairs(t *testing.T) {
 	if err := f.store.Update(func(s *state.State) { s.Cloud.Lifecycle = state.LifecycleSuspended }); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.store.DropHousehold(); err != nil {
-		t.Fatal(err)
+	if dropped, err := f.store.DropHousehold(f.store.Get().Cloud.FrpcToken); err != nil || !dropped {
+		t.Fatalf("DropHousehold = %v, %v", dropped, err)
 	}
 	if err := f.srv.ApplyTunnelState(); err != nil {
 		t.Fatalf("ApplyTunnelState with no credentials: %v", err)

@@ -38,8 +38,8 @@ func TestDropHouseholdKeepsIdentityDropsHouseholdData(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := st.DropHousehold(); err != nil {
-		t.Fatalf("DropHousehold: %v", err)
+	if dropped, err := st.DropHousehold("tok"); err != nil || !dropped {
+		t.Fatalf("DropHousehold = %v, %v", dropped, err)
 	}
 
 	for _, got := range []State{st.Get(), reopen(t, path)} {
@@ -92,4 +92,71 @@ func reopen(t *testing.T, path string) State {
 		t.Fatalf("reopen: %v", err)
 	}
 	return st.Get()
+}
+
+// A "deleted" answer obtained for one token must never drop a household set up
+// with another in the meantime (re-pair between question and answer), and a
+// wiped store is never touched.
+func TestDropHouseholdOnlyForTheTokenAskedAbout(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Update(func(s *State) {
+		s.Cloud = Cloud{FrpcToken: "new-household-token"}
+		s.Devices = []Device{{ID: "d-new"}}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tok := range []string{"old-household-token", ""} {
+		dropped, err := st.DropHousehold(tok)
+		if err != nil || dropped {
+			t.Fatalf("DropHousehold(%q) = %v, %v; want a no-op", tok, dropped, err)
+		}
+	}
+	if got := st.Get(); got.Cloud.FrpcToken != "new-household-token" || len(got.Devices) != 1 {
+		t.Fatalf("the new household was touched: %+v", got)
+	}
+	applied, err := st.UpdateIfToken("old-household-token", func(s *State) { s.Cloud.Lifecycle = LifecycleSuspended })
+	if err != nil || applied || st.Get().Cloud.Lifecycle != "" {
+		t.Fatalf("UpdateIfToken with a stale token applied (%v, %v)", applied, err)
+	}
+	if err := st.Wipe(); err != nil {
+		t.Fatal(err)
+	}
+	if dropped, err := st.DropHousehold("new-household-token"); err != nil || dropped {
+		t.Fatalf("DropHousehold on a wiped store = %v, %v; want a no-op", dropped, err)
+	}
+}
+
+// The token check and the write happen under one lock: hammer DropHousehold
+// against concurrent re-setups and require that the final document is never a
+// re-setup that got dropped. Run with -race.
+func TestDropHouseholdRacesReSetup(t *testing.T) {
+	for i := range 50 {
+		st, err := Open(filepath.Join(t.TempDir(), "state.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := st.Update(func(s *State) { s.Cloud = Cloud{FrpcToken: "old"} }); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_ = st.Update(func(s *State) {
+				s.Cloud = Cloud{FrpcToken: "new"}
+				s.Devices = []Device{{ID: "d-new"}}
+			})
+		}()
+		_, _ = st.DropHousehold("old")
+		<-done
+		got := st.Get()
+		// Either order is legal: drop then re-setup (new household intact), or
+		// re-setup then a no-op drop (new household intact). Never: dropped new.
+		if got.Cloud.FrpcToken != "new" || len(got.Devices) != 1 {
+			t.Fatalf("iteration %d: re-setup was dropped: %+v", i, got)
+		}
+	}
 }

@@ -67,7 +67,7 @@ var (
 
 // StatusClient is the slice of cloud.Client the Watcher needs.
 type StatusClient interface {
-	RelayStatus(ctx context.Context) (wire.RelayStatusResponse, error)
+	RelayStatus(ctx context.Context, baseURL, frpcToken string) (wire.RelayStatusResponse, error)
 }
 
 // PairedNotifier is told when the paired state changes (the mDNS TXT record).
@@ -190,9 +190,16 @@ func hasTunnel(st state.State) bool {
 	return false
 }
 
+// ask puts the question with the credentials of the snapshot st and acts on
+// the answer. Every action is bound to THOSE credentials: the answer can take
+// seconds to arrive, and a re-setup (a new token), a factory reset or a manual
+// change may land in between — park, resume and drop all apply through
+// state.Store.UpdateIfToken, so an answer about the old household can never
+// park, resume or wipe the new one.
 func (w *Watcher) ask(ctx context.Context, st state.State, now time.Time) {
 	parked := st.TunnelParked()
-	resp, err := w.o.Cloud.RelayStatus(ctx)
+	token := st.Cloud.FrpcToken
+	resp, err := w.o.Cloud.RelayStatus(ctx, st.Cloud.BaseURL, token)
 	switch {
 	case errors.Is(err, cloud.ErrUnknownToken):
 		w.onUnknown(st, now)
@@ -206,7 +213,7 @@ func (w *Watcher) ask(ctx context.Context, st state.State, now time.Time) {
 	case resp.State == wire.RelayStateActive:
 		w.clearStrikes()
 		if parked {
-			w.resume(st)
+			w.resume(token, st.Cloud.Lifecycle)
 			return
 		}
 		// The relay is in good standing and the tunnel is still down: a
@@ -216,12 +223,12 @@ func (w *Watcher) ask(ctx context.Context, st state.State, now time.Time) {
 	case resp.State == wire.RelayStateSuspended:
 		w.clearStrikes()
 		if st.Cloud.Lifecycle != state.LifecycleSuspended || st.Cloud.LifecycleReason != resp.Reason {
-			w.park(state.LifecycleSuspended, resp.Reason, now)
+			w.park(token, state.LifecycleSuspended, resp.Reason, now)
 			w.resetBackoff()
 		}
 		w.schedule(now, parkedBackoffMin, parkedBackoffMax)
 	case resp.State == wire.RelayStateDeleted:
-		w.drop(resp.Reason)
+		w.drop(token, resp.Reason)
 	}
 }
 
@@ -239,7 +246,7 @@ func (w *Watcher) onUnknown(st state.State, now time.Time) {
 		return
 	}
 	if n >= unknownStrikes {
-		w.park(state.LifecycleUnknown, "", now)
+		w.park(st.Cloud.FrpcToken, state.LifecycleUnknown, "", now)
 		w.resetBackoff()
 		w.schedule(now, parkedBackoffMin, parkedBackoffMax)
 		return
@@ -250,36 +257,51 @@ func (w *Watcher) onUnknown(st state.State, now time.Time) {
 	w.mu.Unlock()
 }
 
-func (w *Watcher) park(lifecycle, reason string, now time.Time) {
-	if err := w.o.Store.Update(func(s *state.State) {
+func (w *Watcher) park(token, lifecycle, reason string, now time.Time) {
+	applied, err := w.o.Store.UpdateIfToken(token, func(s *state.State) {
 		s.Cloud.Lifecycle = lifecycle
 		s.Cloud.LifecycleReason = reason
 		s.Cloud.LifecycleSince = now.UTC()
-	}); err != nil {
+	})
+	if err != nil {
 		slog.Error("relay lifecycle: persist parked state", "err", err)
+		return
+	}
+	if !applied {
+		w.credentialsChanged()
 		return
 	}
 	slog.Warn("relay lifecycle: parking the tunnel; credentials kept", "state", lifecycle, "reason", reason)
 	w.reconfigure()
 }
 
-func (w *Watcher) resume(st state.State) {
-	if err := w.o.Store.Update(func(s *state.State) {
+func (w *Watcher) resume(token, was string) {
+	applied, err := w.o.Store.UpdateIfToken(token, func(s *state.State) {
 		s.Cloud.Lifecycle = ""
 		s.Cloud.LifecycleReason = ""
 		s.Cloud.LifecycleSince = time.Time{}
-	}); err != nil {
+	})
+	if err != nil {
 		slog.Error("relay lifecycle: persist resume", "err", err)
 		return
 	}
-	slog.Warn("relay lifecycle: control plane reports the relay active; resuming the tunnel", "was", st.Cloud.Lifecycle)
+	if !applied {
+		w.credentialsChanged()
+		return
+	}
+	slog.Warn("relay lifecycle: control plane reports the relay active; resuming the tunnel", "was", was)
 	w.resetPacing(true)
 	w.reconfigure()
 }
 
-func (w *Watcher) drop(reason string) {
-	if err := w.o.Store.DropHousehold(); err != nil {
+func (w *Watcher) drop(token, reason string) {
+	dropped, err := w.o.Store.DropHousehold(token)
+	if err != nil {
 		slog.Error("relay lifecycle: drop household data", "err", err)
+		return
+	}
+	if !dropped {
+		w.credentialsChanged()
 		return
 	}
 	slog.Warn("relay lifecycle: household deleted in the cloud; dropped household data, relay is ready for a new setup (identity kept)", "reason", reason)
@@ -288,6 +310,14 @@ func (w *Watcher) drop(reason string) {
 	if w.o.OnPaired != nil {
 		w.o.OnPaired.UpdatePaired(false)
 	}
+}
+
+// credentialsChanged handles an answer that arrived for credentials the relay
+// no longer holds (re-setup, factory reset): it is discarded, and pacing starts
+// over for whatever the relay holds now.
+func (w *Watcher) credentialsChanged() {
+	slog.Info("relay lifecycle: credentials changed while asking; answer discarded")
+	w.resetPacing(true)
 }
 
 func (w *Watcher) reconfigure() {

@@ -724,20 +724,56 @@ func (st *Store) Wipe() error {
 	return nil
 }
 
-// DropHousehold applies State.ResetHousehold and persists it, then removes the
-// "<path>.v1.bak" migration backup best-effort: that backup is a copy of an
-// older document carrying the same household's credentials and devices, which
-// must not outlive the household. Unlike Wipe the store stays live — the agent
-// keeps running with its identity, ready for a new setup.
-func (st *Store) DropHousehold() error {
-	if err := st.Update(func(s *State) { s.ResetHousehold() }); err != nil {
-		return err
+// UpdateIfToken is Update, applied only while the document still holds the
+// frpc token token — checked under the same lock the write takes. It is how a
+// decision based on a cloud answer obtained for ONE set of credentials is kept
+// from landing on another: a re-setup (pairFirst replaces Cloud) or a factory
+// reset between the question and the answer makes this a no-op. Reports
+// whether fn was applied; nothing is persisted when it was not.
+func (st *Store) UpdateIfToken(token string, fn func(*State)) (bool, error) {
+	if token == "" {
+		return false, nil
+	}
+	st.mu.Lock()
+	match := !st.wiped && st.s.Cloud.FrpcToken == token
+	st.mu.Unlock()
+	if !match {
+		return false, nil
+	}
+	applied := false
+	err := st.Update(func(s *State) {
+		// Re-checked inside Update's critical section: the unlocked pre-check
+		// above only avoids a pointless persist, it decides nothing.
+		if s.Cloud.FrpcToken != token {
+			return
+		}
+		fn(s)
+		applied = true
+	})
+	if err != nil {
+		return false, err
+	}
+	return applied, nil
+}
+
+// DropHousehold applies State.ResetHousehold and persists it — but only while
+// the document still holds the frpc token the "deleted" answer was obtained
+// for (see UpdateIfToken): a new household set up in the meantime is never
+// dropped. Then it removes the "<path>.v1.bak" migration backup best-effort:
+// that backup is a copy of an older document carrying the same household's
+// credentials and devices, which must not outlive the household. Unlike Wipe
+// the store stays live — the agent keeps running with its identity, ready for
+// a new setup. Reports whether the household was dropped.
+func (st *Store) DropHousehold(token string) (bool, error) {
+	applied, err := st.UpdateIfToken(token, func(s *State) { s.ResetHousehold() })
+	if err != nil || !applied {
+		return applied, err
 	}
 	bak := st.path + ".v1.bak"
 	if err := os.Remove(bak); err != nil && !errors.Is(err, os.ErrNotExist) {
 		slog.Warn("household reset: could not remove migration backup", "path", bak, "err", err)
 	}
-	return nil
+	return true, nil
 }
 
 // PathName returns the backing file path (for logs).

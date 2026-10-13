@@ -56,7 +56,7 @@ func TestRelayStatusMapping(t *testing.T) {
 			}))
 			defer srv.Close()
 			c := New(newStore(t, srv.URL))
-			resp, err := c.RelayStatus(context.Background())
+			resp, err := c.RelayStatus(context.Background(), srv.URL, "relay-token")
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
 					t.Fatalf("err = %v, want %v", err, tc.wantErr)
@@ -81,14 +81,14 @@ func TestRelayStatusTransportFailureIsNoSignal(t *testing.T) {
 	url := srv.URL
 	srv.Close()
 	c := New(newStore(t, url))
-	if _, err := c.RelayStatus(context.Background()); !errors.Is(err, ErrUnavailable) {
+	if _, err := c.RelayStatus(context.Background(), url, "relay-token"); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("err = %v, want ErrUnavailable", err)
 	}
 }
 
-func TestRelayStatusNotEnrolledMakesNoRequest(t *testing.T) {
+func TestRelayStatusWithoutTokenMakesNoRequest(t *testing.T) {
 	c := New(newStore(t, ""))
-	if _, err := c.RelayStatus(context.Background()); !errors.Is(err, ErrRejected) {
+	if _, err := c.RelayStatus(context.Background(), "http://127.0.0.1:1", ""); !errors.Is(err, ErrRejected) {
 		t.Fatalf("err = %v, want ErrRejected", err)
 	}
 }

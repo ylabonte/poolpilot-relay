@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,13 +15,21 @@ import (
 
 // fakeCloud answers RelayStatus with whatever next is set to, counting calls.
 type fakeCloud struct {
-	resp  wire.RelayStatusResponse
-	err   error
-	calls int
+	resp      wire.RelayStatusResponse
+	err       error
+	calls     int
+	lastToken string
+	// during, when set, runs while the question is "in flight" — how a test
+	// lands a concurrent change between the question and the answer.
+	during func()
 }
 
-func (f *fakeCloud) RelayStatus(context.Context) (wire.RelayStatusResponse, error) {
+func (f *fakeCloud) RelayStatus(_ context.Context, _, token string) (wire.RelayStatusResponse, error) {
 	f.calls++
+	f.lastToken = token
+	if f.during != nil {
+		f.during()
+	}
 	return f.resp, f.err
 }
 
@@ -378,4 +387,130 @@ func TestRunStopsOnContextCancel(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not stop")
 	}
+}
+
+// reSetupDuringQuestion makes the next question race a re-setup: while it is in
+// flight, the relay gets a new household (pairFirst replaces Cloud wholesale).
+func (r *rig) reSetupDuringQuestion(t *testing.T) {
+	t.Helper()
+	r.cloud.during = func() {
+		r.cloud.during = nil
+		if err := r.store.Update(func(s *state.State) {
+			s.Cloud = state.Cloud{BaseURL: "https://api.example", FrpcToken: "new-tok", FRPS: state.FRPS{ServerAddr: "frps.example"}}
+			s.Devices = []state.Device{{ID: "d-new"}}
+		}); err != nil {
+			t.Errorf("re-setup: %v", err)
+		}
+	}
+}
+
+// An answer is about the credentials it was asked with. If the relay was set up
+// again while the question was in flight, a "deleted" / "suspended" answer
+// about the OLD household must not wipe or park the NEW one (security review
+// of this PR: check-then-act across the network round trip).
+func TestAnswerForOldCredentialsNeverTouchesANewSetup(t *testing.T) {
+	for _, tc := range []struct{ state, reason string }{
+		{wire.RelayStateDeleted, wire.RelayReasonHouseholdDeleted},
+		{wire.RelayStateSuspended, wire.RelayReasonLapsed},
+	} {
+		t.Run(tc.state, func(t *testing.T) {
+			r := newRig(t)
+			r.cloud.answer(tc.state, tc.reason)
+			r.reSetupDuringQuestion(t)
+			r.stepUntilAsked(t, downGrace+time.Minute)
+			if r.cloud.lastToken != "tok" {
+				t.Fatalf("asked with %q, want the old token", r.cloud.lastToken)
+			}
+			got := r.store.Get()
+			if got.Cloud.FrpcToken != "new-tok" || got.TunnelParked() || len(got.Devices) != 1 || got.Devices[0].ID != "d-new" {
+				t.Fatalf("the new household was touched by an answer about the old one: %+v", got)
+			}
+			if r.reconfigures != 0 || len(r.paired.calls) != 0 {
+				t.Fatalf("a discarded answer must not reconfigure/unpair (reconfigures=%d paired=%v)", r.reconfigures, r.paired.calls)
+			}
+		})
+	}
+}
+
+// Same for resume: an "active" answer about the old (parked) credentials must
+// not un-park whatever the relay holds now.
+func TestResumeForOldCredentialsIsDiscarded(t *testing.T) {
+	r := newRig(t)
+	r.cloud.answer(wire.RelayStateSuspended, wire.RelayReasonLapsed)
+	r.stepUntilAsked(t, downGrace+time.Minute)
+	// The new household is (independently) parked too; an "active" for the old
+	// token must not resume it.
+	r.cloud.answer(wire.RelayStateActive, "")
+	r.cloud.during = func() {
+		r.cloud.during = nil
+		_ = r.store.Update(func(s *state.State) {
+			s.Cloud = state.Cloud{FrpcToken: "new-tok", Lifecycle: state.LifecycleSuspended}
+		})
+	}
+	r.stepUntilAsked(t, parkedBackoffMax+time.Hour)
+	if got := r.store.Get(); got.Cloud.FrpcToken != "new-tok" || got.Cloud.Lifecycle != state.LifecycleSuspended {
+		t.Fatalf("resume about the old token touched the new one: %+v", got.Cloud)
+	}
+}
+
+// Run, Kick and concurrent state writers interleave freely: run under -race.
+func TestRunKickAndStoreWritersAreRaceFree(t *testing.T) {
+	saved := tickEvery
+	tickEvery = time.Millisecond
+	defer func() { tickEvery = saved }()
+
+	st, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = st.Update(func(s *state.State) {
+		s.Cloud = state.Cloud{FrpcToken: "tok", Lifecycle: state.LifecycleSuspended}
+		s.Controllers = []state.Controller{{GUID: "g1", LanAddress: "192.168.2.3:80"}}
+	})
+	var mu sync.Mutex
+	answer := wire.RelayStatusResponse{State: wire.RelayStateSuspended, Reason: wire.RelayReasonLapsed}
+	w := New(Options{
+		Store: st,
+		Cloud: statusFunc(func() (wire.RelayStatusResponse, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			return answer, nil
+		}),
+		TunnelState: func() string { return "connecting" },
+		Reconfigure: func() error { return nil },
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx) }()
+
+	var wg sync.WaitGroup
+	for g := range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range 200 {
+				w.Kick()
+				if i%20 == 0 {
+					_ = st.Update(func(s *state.State) {
+						s.Cloud = state.Cloud{FrpcToken: fmt.Sprintf("tok-%d-%d", g, i), Lifecycle: state.LifecycleSuspended}
+					})
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	mu.Lock()
+	answer = wire.RelayStatusResponse{State: wire.RelayStateActive}
+	mu.Unlock()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	if err := <-done; err != context.Canceled {
+		t.Fatalf("Run = %v", err)
+	}
+}
+
+type statusFunc func() (wire.RelayStatusResponse, error)
+
+func (f statusFunc) RelayStatus(context.Context, string, string) (wire.RelayStatusResponse, error) {
+	return f()
 }
