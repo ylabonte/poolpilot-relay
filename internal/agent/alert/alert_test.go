@@ -725,6 +725,11 @@ func TestBandsFromControl(t *testing.T) {
 	if _, ok := bandsFromControl(measure.ControlConfig{Target: 700, Min: 700, Max: 700}, 75); ok {
 		t.Error("Min == Max (empty range) must not derive a collapsed band")
 	}
+	// Unbanded wins even over otherwise-valid values: the controller says this
+	// type has no band by configuration.
+	if _, ok := bandsFromControl(measure.ControlConfig{Target: 700, Min: 600, Max: 850, Unbanded: true}, 75); ok {
+		t.Error("an Unbanded config must not derive a band")
+	}
 }
 
 func TestBandsFromControlCorridor(t *testing.T) {

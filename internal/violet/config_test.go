@@ -478,13 +478,20 @@ func h2o2Body(extra map[string]string) []byte {
 // band — the type is omitted, so alerts/status grade it neutral — while pH is
 // untouched. The predicate mirrors the apps' VioletControlConfig.activeOxygen.
 func TestFetchControlConfigActiveOxygenPoolHasNoChlorineBand(t *testing.T) {
+	// Each type resolves to a real band, to an explicit Unbanded entry (deliberately
+	// neutral by configuration), or is absent (incomplete → unknown).
+	const (
+		band     = "band"
+		unbanded = "unbanded"
+		absent   = "absent"
+	)
 	type want struct {
-		orp      bool    // ORP band present
-		orpMin   float64 // its Min when present (600 = liquid chlorine, 550 = electrolysis)
-		chlorine bool    // chlorine band present (needs the liquid-chlorine setpoint)
+		orp      string
+		orpMin   float64 // ORP Min when it is a band (600 = liquid chlorine, 550 = electrolysis)
+		chlorine string
 	}
-	liquid := want{orp: true, orpMin: 600, chlorine: true}
-	neutral := want{}
+	liquid := want{orp: band, orpMin: 600, chlorine: band}
+	neutral := want{orp: unbanded, chlorine: unbanded}
 	cases := []struct {
 		name  string
 		extra map[string]string
@@ -517,10 +524,11 @@ func TestFetchControlConfigActiveOxygenPoolHasNoChlorineBand(t *testing.T) {
 		{"electrolysis pool, cell active",
 			map[string]string{"MENU_dosage_1": "none", "MENU_dosage_2": "block", "MENU_dosage_3": "none", "DOSAGE_electrolysis_use": "1", "DOSAGE_chlorine_use": "0"},
 			// the electrolysis family has no chlorine setpoint, so chlorine stays omitted (unchanged behaviour)
-			want{orp: true, orpMin: 550}},
+			want{orp: band, orpMin: 550, chlorine: absent}},
 		{"H2O2 menu + electrolysis channel whose own _use=1 still resolves",
 			map[string]string{"MENU_dosage_1": "none", "MENU_dosage_3": "block", "DOSAGE_electrolysis_use": "1", "DOSAGE_h2o2_use": "1"},
-			want{orp: true, orpMin: 550}},
+			// chlorine: the leftover is excluded, the electrolysis cl channel has no setpoint → incomplete
+			want{orp: band, orpMin: 550, chlorine: absent}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -530,15 +538,31 @@ func TestFetchControlConfigActiveOxygenPoolHasNoChlorineBand(t *testing.T) {
 				t.Fatalf("fetch: %v", err)
 			}
 			assertControl(t, "pH", got[bands.TypePH], 7.2, 6.8, 7.8)
-			orp, hasORP := got[bands.TypeORP]
-			if hasORP != tc.want.orp {
-				t.Fatalf("ORP band present: got %v (%+v), want %v", hasORP, orp, tc.want.orp)
+			kind := func(typ string) string {
+				cc, ok := got[typ]
+				switch {
+				case !ok:
+					return absent
+				case cc.Unbanded:
+					if cc != (measure.ControlConfig{Unbanded: true}) {
+						t.Errorf("%s: Unbanded entry carries values: %+v", typ, cc)
+					}
+					return unbanded
+				default:
+					return band
+				}
 			}
-			if hasORP && !almostEqual(orp.Min, tc.want.orpMin) {
-				t.Errorf("ORP Min: got %v, want %v", orp.Min, tc.want.orpMin)
+			if k := kind(bands.TypeORP); k != tc.want.orp {
+				t.Fatalf("ORP: got %s (%+v), want %s", k, got[bands.TypeORP], tc.want.orp)
 			}
-			if cl, hasCl := got[bands.TypeChlorine]; hasCl != tc.want.chlorine {
-				t.Errorf("chlorine band present: got %v (%+v), want %v", hasCl, cl, tc.want.chlorine)
+			if tc.want.orp == band && !almostEqual(got[bands.TypeORP].Min, tc.want.orpMin) {
+				t.Errorf("ORP Min: got %v, want %v", got[bands.TypeORP].Min, tc.want.orpMin)
+			}
+			if k := kind(bands.TypeChlorine); k != tc.want.chlorine {
+				t.Errorf("chlorine: got %s (%+v), want %s", k, got[bands.TypeChlorine], tc.want.chlorine)
+			}
+			if got[bands.TypePH].Unbanded {
+				t.Error("pH must never be Unbanded")
 			}
 		})
 	}

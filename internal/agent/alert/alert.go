@@ -438,7 +438,8 @@ func toleranceFor(rule wire.AlertRule) float64 {
 // yet, so a chlorine ControlConfig never sets HasOkZone today — HasOkZone is the
 // hook Plan B can reuse once it does.
 //
-// It returns false for an unusable config (single-setpoint with non-positive
+// It returns false for a config the controller marks Unbanded, and for an
+// unusable config (single-setpoint with non-positive
 // tolerance; inverted or EMPTY limits where Min >= Max; or an OK zone so far
 // outside the limits that the clamp degenerates), and effectiveBands then
 // propagates that false straight through — there is no default-band fallback
@@ -450,7 +451,7 @@ func toleranceFor(rule wire.AlertRule) float64 {
 // reading "bad" — perpetual alarm spam. Newly reachable since the TYPE gate was
 // dropped, so a disabled/parked channel now reaches here.
 func bandsFromControl(cc measure.ControlConfig, tol float64) (bands.BandsConfig, bool) {
-	if cc.Min >= cc.Max {
+	if cc.Unbanded || cc.Min >= cc.Max {
 		return bands.BandsConfig{}, false
 	}
 	var okMin, okMax float64

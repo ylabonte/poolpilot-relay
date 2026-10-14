@@ -239,14 +239,19 @@ func (c *Client) FetchControlConfig(ctx context.Context) (map[string]measure.Con
 // On an active-oxygen pool (activeOxygen) the liquid-chlorine channel is a
 // leftover and never resolves, not even as the fallback: Redox and free chlorine
 // then have no channel at all (unless an electrolysis channel's own _use flag
-// reads 1), so the type is omitted and graded neutral — the maintainer's
-// "neutral gauge, no band" decision for H2O2 pools, matching the apps.
+// reads 1), so the type is reported Unbanded (ok=true) and graded neutral — the
+// maintainer's "neutral gauge, no band" decision for H2O2 pools, matching the
+// apps. Unbanded, unlike omission, tells the alert engine the band is gone by
+// configuration rather than temporarily unknown.
 func resolveControlConfig(baseURL string, m controlMeasurement, raw map[string]any) (measure.ControlConfig, bool) {
 	active := activeFields(m, raw)
 	if len(active) == 0 {
-		slog.Debug("violet active-oxygen pool; type graded neutral (no chlorine-derived band)",
+		// Unbanded by configuration, not unknown: report it explicitly so the
+		// alert engine clears a rule latched against the old chlorine band
+		// instead of pausing it forever.
+		slog.Debug("violet active-oxygen pool; type unbanded (no chlorine-derived band)",
 			"base_url", baseURL, "type", m.bandsType)
-		return measure.ControlConfig{}, false
+		return measure.ControlConfig{Unbanded: true}, true
 	}
 
 	var setpoints, warnLows, warnHighs []float64

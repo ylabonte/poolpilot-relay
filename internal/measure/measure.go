@@ -57,6 +57,15 @@ type ControlConfig struct {
 	OkLow     float64
 	OkHigh    float64
 	HasOkZone bool
+	// Unbanded marks a type the controller's own configuration deliberately
+	// leaves without a band — e.g. Redox / free chlorine on a VIOLET pool that
+	// doses active oxygen, whose DOSAGE_chlorine_* values are unused leftovers.
+	// Such a type is graded neutral like an absent one, but the alert engine
+	// additionally clears any state a rule latched for it (see alert.Evaluate).
+	// It is distinct from the type being ABSENT from the control map, which
+	// means "band unknown right now" (a fail-soft read drop) and only pauses the
+	// rule. When set, every other field is zero and must be ignored.
+	Unbanded bool
 }
 
 // Sentinel errors every controller driver maps its transport failures onto,
