@@ -17,8 +17,12 @@
   "DOSAGE_electrolysis_use": "0",
   "DOSAGE_chlorine_limits_cl_warnlow": "0.15",
   "DOSAGE_chlorine_limits_cl_warnhigh": "1.5",
+  "DOSAGE_chlorine_lowerval_cl": "0.25",
+  "DOSAGE_chlorine_upperval_cl_day": "0.65",
   "DOSAGE_electrolysis_limits_cl_warnlow": "-20.0",
   "DOSAGE_electrolysis_limits_cl_warnhigh": "110",
+  "DOSAGE_electrolysis_lowerval_cl": "0.10",
+  "DOSAGE_electrolysis_upperval_cl_day": "0.70",
   "date": "31.08.2026",
   "time": "05:23:31"
 }

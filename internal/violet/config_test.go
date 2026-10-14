@@ -92,15 +92,17 @@ func TestFetchControlConfigFromSeed(t *testing.T) {
 	assertControl(t, "ORP", orp, 790, 550, 900)
 
 	// Chlorine: the demo box is Redox-regulated, so /getConfig never echoes
-	// DOSAGE_chlorine_setpoint_cl, but it does echo the chlorine warn limits.
-	// Like the apps, the relay grades that limits-only → whole window OK
-	// (issue #65); it used to omit the type.
+	// DOSAGE_chlorine_setpoint_cl, but it does echo the chlorine warn limits and
+	// the ideal range (values as the vendor demo answered on 2026-10-14). Like
+	// the apps, the relay grades the ideal range 0.25..0.65 as the OK zone inside
+	// the 0.15..1.5 warn window (issue #65); it used to omit the type. The
+	// limits-only whole-window path is TestFetchControlConfigLimitsOnlyGradesWholeWindow.
 	cl, ok := got[bands.TypeChlorine]
 	if !ok {
 		t.Fatal("no chlorine control config derived from the warn limits")
 	}
 	assertControl(t, "chlorine", cl, 0, 0.15, 1.5)
-	assertOkZone(t, "chlorine", cl, 0.15, 1.5)
+	assertOkZone(t, "chlorine", cl, 0.25, 0.65)
 }
 
 func TestFetchControlConfigDerivesChlorineWhenSetpointPresent(t *testing.T) {
