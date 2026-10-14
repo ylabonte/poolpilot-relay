@@ -92,11 +92,17 @@ func TestFetchControlConfigFromSeed(t *testing.T) {
 	assertControl(t, "ORP", orp, 790, 550, 900)
 
 	// Chlorine: the demo box is Redox-regulated, so /getConfig never echoes
-	// DOSAGE_chlorine_setpoint_cl — chlorine is absent from the map (graded
-	// neutral by the alert engine), not fabricated from warn limits alone.
-	if _, ok := got[bands.TypeChlorine]; ok {
-		t.Errorf("chlorine control config: got one, want none (no setpoint_cl on a Redox pool)")
+	// DOSAGE_chlorine_setpoint_cl, but it does echo the chlorine warn limits and
+	// the ideal range (values as the vendor demo answered on 2026-10-14). Like
+	// the apps, the relay grades the ideal range 0.25..0.65 as the OK zone inside
+	// the 0.15..1.5 warn window (issue #65); it used to omit the type. The
+	// limits-only whole-window path is TestFetchControlConfigLimitsOnlyGradesWholeWindow.
+	cl, ok := got[bands.TypeChlorine]
+	if !ok {
+		t.Fatal("no chlorine control config derived from the warn limits")
 	}
+	assertControl(t, "chlorine", cl, 0, 0.15, 1.5)
+	assertOkZone(t, "chlorine", cl, 0.25, 0.65)
 }
 
 func TestFetchControlConfigDerivesChlorineWhenSetpointPresent(t *testing.T) {
@@ -152,14 +158,12 @@ func TestFetchControlConfigMergesTwoActivePhChannels(t *testing.T) {
 	}
 }
 
-func TestFetchControlConfigIdenticalActiveSetpointsHaveNoCorridor(t *testing.T) {
-	// Two active channels sharing the SAME setpoint (7.2) are a degenerate case:
-	// minOf(setpoints) == maxOf(setpoints), so `hi > lo` is false and this relay
-	// falls back to Target ± tolerance (HasOkZone stays false, Target is still
-	// the mean — 7.2 either way) rather than an explicit corridor. This is a
-	// known, documented divergence from the apps (which land on a zero-width
-	// ideal band here and grade the whole warn window OK), tracked for the
-	// Plan B rollout — not a bug in the merge/corridor logic above.
+func TestFetchControlConfigIdenticalActiveSetpointsGradeWholeWindow(t *testing.T) {
+	// Two active channels sharing the SAME setpoint (7.2) span a zero-width
+	// corridor. The apps' merge never collapses two channels back to a single
+	// setpoint: it lands on setpoint=nil plus that degenerate ideal band, which
+	// they drop — so the whole warn window grades OK. The relay now does the same
+	// (issue #65; was Target ± tolerance, a documented divergence).
 	body := []byte(`{
 		"DOSAGE_phminus_use":"1",
 		"DOSAGE_phminus_setpoint":"7.2",
@@ -178,9 +182,7 @@ func TestFetchControlConfigIdenticalActiveSetpointsHaveNoCorridor(t *testing.T) 
 	}
 	ph := got[bands.TypePH]
 	assertControl(t, "pH", ph, 7.2, 6.6, 7.8)
-	if ph.HasOkZone {
-		t.Errorf("identical active setpoints must not set an OK corridor, got [%v, %v]", ph.OkLow, ph.OkHigh)
-	}
+	assertOkZone(t, "pH", ph, 6.6, 7.8)
 }
 
 func TestFetchControlConfigSingleSetpointHasNoCorridor(t *testing.T) {
@@ -223,11 +225,11 @@ func TestFetchControlConfigFallsBackToDefaultChannelWithoutUseFlags(t *testing.T
 	assertControl(t, "pH", got[bands.TypePH], 7.3, 6.9, 7.7)
 }
 
-func TestFetchControlConfigOmitsIncompleteOrGarbledType(t *testing.T) {
-	// pH- has warn limits but NO setpoint (can't centre a band → omit); ORP's
-	// setpoint is non-numeric (→ omit). Neither type appears; the alert engine
-	// grades both neutral (no hardcoded-band fallback, per the app's
-	// D-no-fallback decision).
+func TestFetchControlConfigLimitsOnlyGradesWholeWindow(t *testing.T) {
+	// pH- has warn limits but NO setpoint, ORP's setpoint is non-numeric (read as
+	// absent, like the apps' nonBlankDoubleOrNull). The apps grade both
+	// limits-only → whole window OK (issue #65), and so does the relay now; it
+	// used to omit both.
 	body := []byte(`{
 		"DOSAGE_phminus_use":"1",
 		"DOSAGE_phminus_limits_warnlow":"6.8",
@@ -243,8 +245,82 @@ func TestFetchControlConfigOmitsIncompleteOrGarbledType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
+	assertControl(t, "pH", got[bands.TypePH], 0, 6.8, 7.8)
+	assertOkZone(t, "pH", got[bands.TypePH], 6.8, 7.8)
+	assertControl(t, "ORP", got[bands.TypeORP], 0, 550, 900)
+	assertOkZone(t, "ORP", got[bands.TypeORP], 550, 900)
+}
+
+func TestFetchControlConfigOmitsIncompleteOrGarbledType(t *testing.T) {
+	// pH- has a setpoint and only ONE warn limit; ORP's limits are garbled and
+	// inverted-free but missing the high side; chlorine's limits are inverted
+	// with no setpoint. None yields a usable warn window, and none is setpointless
+	// by configuration (a liquid-chlorine pool), so all are omitted — unknown
+	// right now, graded neutral (no hardcoded-band fallback, per the app's
+	// D-no-fallback decision).
+	body := []byte(`{
+		"DOSAGE_phminus_use":"1",
+		"DOSAGE_phminus_setpoint":"7.2",
+		"DOSAGE_phminus_limits_warnlow":"6.8",
+		"DOSAGE_chlorine_use":"1",
+		"DOSAGE_chlorine_setpoint_orp":"750",
+		"DOSAGE_chlorine_limits_orp_warnlow":"550",
+		"DOSAGE_chlorine_limits_orp_warnhigh":"n/a",
+		"DOSAGE_chlorine_limits_cl_warnlow":"1.5",
+		"DOSAGE_chlorine_limits_cl_warnhigh":"0.3"
+	}`)
+	srv, _ := configServer(t, "", "", body)
+
+	got, err := (&Client{BaseURL: srv.URL}).FetchControlConfig(context.Background())
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
 	if len(got) != 0 {
-		t.Errorf("control config: got %v, want empty (both types incomplete/garbled)", got)
+		t.Errorf("control config: got %v, want empty (every type incomplete/garbled)", got)
+	}
+}
+
+func TestFetchControlConfigChlorineIdealRange(t *testing.T) {
+	// The chlorine channels' ideal range (lowerval_cl / upperval_cl_day) is the OK
+	// zone, ahead of setpoint ± tolerance — the apps' ideal-as-OK precedence.
+	// Liquid chlorine (setpoint present) and an electrolysis pool (no chlorine
+	// setpoint key) alike.
+	cases := []struct {
+		name   string
+		body   string
+		target float64
+		min    float64
+		max    float64
+		okLow  float64
+		okHigh float64
+	}{
+		{"liquid chlorine", `{
+			"MENU_dosage_1":"block","MENU_dosage_2":"none","DOSAGE_chlorine_use":"1",
+			"DOSAGE_chlorine_setpoint_cl":"0.6",
+			"DOSAGE_chlorine_limits_cl_warnlow":"0.3","DOSAGE_chlorine_limits_cl_warnhigh":"1.5",
+			"DOSAGE_chlorine_lowerval_cl":"0.5","DOSAGE_chlorine_upperval_cl_day":"1.0",
+			"DOSAGE_chlorine_upperval_cl_night":"0.8"
+		}`, 0.6, 0.3, 1.5, 0.5, 1.0},
+		{"electrolysis pool, cell running", `{
+			"MENU_dosage_1":"none","MENU_dosage_2":"block","DOSAGE_electrolysis_use":"1","DOSAGE_chlorine_use":"0",
+			"DOSAGE_chlorine_setpoint_cl":"0.6",
+			"DOSAGE_chlorine_limits_cl_warnlow":"0.3","DOSAGE_chlorine_limits_cl_warnhigh":"1.5",
+			"DOSAGE_chlorine_lowerval_cl":"0.5","DOSAGE_chlorine_upperval_cl_day":"1.0",
+			"DOSAGE_electrolysis_limits_cl_warnlow":"0.2","DOSAGE_electrolysis_limits_cl_warnhigh":"1.2",
+			"DOSAGE_electrolysis_lowerval_cl":"0.4","DOSAGE_electrolysis_upperval_cl_day":"0.8"
+		}`, 0, 0.2, 1.2, 0.4, 0.8},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, _ := configServer(t, "", "", []byte(tc.body))
+			got, err := (&Client{BaseURL: srv.URL}).FetchControlConfig(context.Background())
+			if err != nil {
+				t.Fatalf("fetch: %v", err)
+			}
+			cl := got[bands.TypeChlorine]
+			assertControl(t, "chlorine", cl, tc.target, tc.min, tc.max)
+			assertOkZone(t, "chlorine", cl, tc.okLow, tc.okHigh)
+		})
 	}
 }
 
@@ -434,6 +510,13 @@ func assertControl(t *testing.T, name string, cc measure.ControlConfig, target, 
 	}
 }
 
+func assertOkZone(t *testing.T, name string, cc measure.ControlConfig, okLow, okHigh float64) {
+	t.Helper()
+	if !cc.HasOkZone || !almostEqual(cc.OkLow, okLow) || !almostEqual(cc.OkHigh, okHigh) {
+		t.Errorf("%s OK zone: got [%v, %v] (HasOkZone=%v), want [%v, %v]", name, cc.OkLow, cc.OkHigh, cc.HasOkZone, okLow, okHigh)
+	}
+}
+
 // h2o2Body is a /getConfig body carrying a full pH- channel plus the complete
 // DOSAGE_chlorine_* and DOSAGE_electrolysis_* families, with extra overriding /
 // adding keys — so each case below varies only the dosing-variant keys
@@ -525,14 +608,13 @@ func TestFetchControlConfigActiveOxygenPoolHasNoChlorineBand(t *testing.T) {
 			map[string]string{"MENU_dosage_1": "block", "MENU_dosage_3": "none", "DOSAGE_h2o2_use": "0", "DOSAGE_chlorine_use": "0"}, liquid},
 		{"electrolysis pool, cell active",
 			map[string]string{"MENU_dosage_1": "none", "MENU_dosage_2": "block", "MENU_dosage_3": "none", "DOSAGE_electrolysis_use": "1", "DOSAGE_chlorine_use": "0"},
-			// the electrolysis family has no chlorine setpoint KEY, so chlorine is
-			// unbanded by configuration (#1081 review; was omitted, which kept a
-			// latched chlorine alert active forever)
-			want{orp: band, orpMin: 550, chlorine: unbanded}},
+			// the electrolysis family has no chlorine setpoint KEY: chlorine is
+			// graded from its warn limits, whole window OK (issue #65)
+			want{orp: band, orpMin: 550, chlorine: band}},
 		{"H2O2 menu + electrolysis channel whose own _use=1 still resolves",
 			map[string]string{"MENU_dosage_1": "none", "MENU_dosage_3": "block", "DOSAGE_electrolysis_use": "1", "DOSAGE_h2o2_use": "1"},
-			// chlorine: the leftover is excluded, the electrolysis cl channel has no setpoint key → unbanded
-			want{orp: band, orpMin: 550, chlorine: unbanded}},
+			// chlorine: the leftover is excluded, the electrolysis cl channel grades limits-only (issue #65)
+			want{orp: band, orpMin: 550, chlorine: band}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -664,8 +746,9 @@ func TestActiveFieldsOxidiserCaseTable(t *testing.T) {
 
 // TestFetchControlConfigPausedElectrolysisCell pins ylabonte/poolpilot-app#1081:
 // a paused cell grades Redox against the electrolysis family, never the chlorine
-// leftovers; chlorine (no electrolysis setpoint key) and an ORP whose
-// electrolysis settings are missing are reported Unbanded, so a rule latched
+// leftovers; chlorine (no electrolysis setpoint key) grades from the
+// electrolysis warn limits (issue #65); and an ORP or chlorine whose
+// electrolysis settings are missing is reported Unbanded, so a rule latched
 // against the old chlorine band resets.
 func TestFetchControlConfigPausedElectrolysisCell(t *testing.T) {
 	paused := map[string]string{
@@ -678,9 +761,8 @@ func TestFetchControlConfigPausedElectrolysisCell(t *testing.T) {
 		t.Fatalf("fetch: %v", err)
 	}
 	assertControl(t, "ORP", got[bands.TypeORP], 700, 550, 800)
-	if cc := got[bands.TypeChlorine]; cc != (measure.ControlConfig{Unbanded: true}) {
-		t.Errorf("chlorine: got %+v, want Unbanded", cc)
-	}
+	assertControl(t, "chlorine", got[bands.TypeChlorine], 0, 0.2, 1.2)
+	assertOkZone(t, "chlorine", got[bands.TypeChlorine], 0.2, 1.2)
 
 	// Without electrolysis settings the paused cell is neutral, not chlorine.
 	body := map[string]any{}
@@ -704,9 +786,8 @@ func TestFetchControlConfigPausedElectrolysisCell(t *testing.T) {
 		}
 	}
 
-	// A RUNNING cell's chlorine is Unbanded too: the electrolysis family has no
-	// chlorine setpoint key, so the band can never come back by itself — also
-	// with a stale DOSAGE_chlorine_use=1, which on main still gave a chlorine band.
+	// A RUNNING cell's chlorine grades from the electrolysis limits too — also
+	// with a stale DOSAGE_chlorine_use=1, never from the chlorine leftovers.
 	for _, cl := range []string{"0", "1"} {
 		running := map[string]string{
 			"MENU_dosage_1": "none", "MENU_dosage_2": "block", "MENU_dosage_3": "none",
@@ -717,9 +798,8 @@ func TestFetchControlConfigPausedElectrolysisCell(t *testing.T) {
 		if err != nil {
 			t.Fatalf("fetch: %v", err)
 		}
-		if cc, ok := got[bands.TypeChlorine]; !ok || cc != (measure.ControlConfig{Unbanded: true}) {
-			t.Errorf("running cell (chlorine_use=%s) chlorine: got %+v (present=%v), want Unbanded", cl, cc, ok)
-		}
+		assertControl(t, "running cell (chlorine_use="+cl+") chlorine", got[bands.TypeChlorine], 0, 0.2, 1.2)
+		assertOkZone(t, "running cell (chlorine_use="+cl+") chlorine", got[bands.TypeChlorine], 0.2, 1.2)
 		assertControl(t, "running cell ORP", got[bands.TypeORP], 700, 550, 800)
 	}
 
@@ -748,6 +828,23 @@ func TestControlConfigQueryIncludesElectrolysisMenuKey(t *testing.T) {
 	for _, want := range []string{"MENU_dosage_2", "DOSAGE_electrolysis_use", "DOSAGE_chlorine_use"} {
 		if !keys[want] {
 			t.Errorf("control config query missing %q (needed to detect an electrolysis pool)", want)
+		}
+	}
+}
+
+func TestControlConfigQueryIncludesChlorineIdealKeys(t *testing.T) {
+	// Key names confirmed read-only against the vendor's VIOLET demo (2026-10-14)
+	// and identical to the apps' SetpointField.idealLowKey / idealHighKey.
+	keys := map[string]bool{}
+	for _, k := range strings.Split(controlConfigQuery, ",") {
+		keys[k] = true
+	}
+	for _, want := range []string{
+		"DOSAGE_chlorine_lowerval_cl", "DOSAGE_chlorine_upperval_cl_day",
+		"DOSAGE_electrolysis_lowerval_cl", "DOSAGE_electrolysis_upperval_cl_day",
+	} {
+		if !keys[want] {
+			t.Errorf("control config query missing %q (chlorine ideal range, issue #65)", want)
 		}
 	}
 }
