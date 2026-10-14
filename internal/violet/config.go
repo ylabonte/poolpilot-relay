@@ -91,22 +91,28 @@ func buildControlConfigQuery() string {
 			add(f.useKey)
 		}
 	}
-	// The dosing-variant keys activeOxygen reads (not part of any channel row).
+	// The dosing-variant keys activeOxygen / electrolysisPool read (not part of
+	// any channel row; the _use flags of chlorine and electrolysis already are).
 	add(menuDosageLiquidChlorineKey)
+	add(menuDosageElectrolysisKey)
 	add(menuDosageActiveOxygenKey)
 	add(activeOxygenUseKey)
 	return strings.Join(keys, ",")
 }
 
-// The keys that tell an active-oxygen (H2O2) pool apart from a chlorine one —
-// the same keys the apps' VioletControlConfig.activeOxygen reads. MENU_dosage_n
-// is the vendor dashboard's own per-slot visibility flag ("block" = shown,
-// "none" = hidden): slot 1 is liquid chlorine, slot 3 active oxygen.
+// The keys that tell the pool's oxidiser apart — liquid chlorine, a salt
+// electrolysis cell, or active oxygen (H2O2) — the same keys the apps'
+// VioletControlConfig.activeOxygen / chlorineReplacedByElectrolysis read.
+// MENU_dosage_n is the vendor dashboard's own per-slot visibility flag
+// ("block" = shown, "none" = hidden): slot 1 is liquid chlorine, slot 2 the
+// electrolysis cell, slot 3 active oxygen.
 const (
 	menuDosageLiquidChlorineKey = "MENU_dosage_1"
+	menuDosageElectrolysisKey   = "MENU_dosage_2"
 	menuDosageActiveOxygenKey   = "MENU_dosage_3"
 	activeOxygenUseKey          = "DOSAGE_h2o2_use"
 	liquidChlorineUseKey        = "DOSAGE_chlorine_use"
+	electrolysisUseKey          = "DOSAGE_electrolysis_use"
 )
 
 // activeOxygen reports whether the pool doses active oxygen (H2O2) instead of
@@ -130,6 +136,24 @@ func activeOxygen(raw map[string]any) bool {
 		return byUseFlags
 	}
 	return slot
+}
+
+// electrolysisPool reports whether the pool's chlorine comes from a salt
+// electrolysis cell and it has no liquid-chlorine dosing, so its
+// DOSAGE_chlorine_* family is a leftover (ylabonte/poolpilot-app#1081).
+//
+// Mirrors the apps' VioletControlConfig.chlorineReplacedByElectrolysis exactly:
+// when the firmware reports either MENU slot 1 or 2, the menu decides (slot 2
+// shown and slot 1 not) — so a paused cell (DOSAGE_electrolysis_use = 0) stays
+// an electrolysis pool. Only firmware that reports neither falls back to the
+// _use flags: DOSAGE_electrolysis_use = 1 and DOSAGE_chlorine_use != 1.
+func electrolysisPool(raw map[string]any) bool {
+	cell, cellReported := menuShown(raw, menuDosageElectrolysisKey)
+	liquid, liquidReported := menuShown(raw, menuDosageLiquidChlorineKey)
+	if cellReported || liquidReported {
+		return cell && !liquid
+	}
+	return configFlag(raw, electrolysisUseKey) && !configFlag(raw, liquidChlorineUseKey)
 }
 
 // menuShown reads a MENU_dosage_n slot: "block" → shown, "none" → hidden
@@ -242,7 +266,28 @@ func (c *Client) FetchControlConfig(ctx context.Context) (map[string]measure.Con
 // reads 1), so the type is reported Unbanded (ok=true) and graded neutral — the
 // maintainer's "neutral gauge, no band" decision for H2O2 pools, matching the
 // apps. Unbanded, unlike omission, tells the alert engine the band is gone by
-// configuration rather than temporarily unknown.
+// configuration rather than temporarily unknown. On an electrolysis pool
+// (electrolysisPool) the liquid channel is a leftover too, but a paused cell
+// falls back to the electrolysis channel, so the cell's own settings grade it
+// (ylabonte/poolpilot-app#1081).
+//
+// Two more cases are Unbanded rather than omitted, because the band cannot
+// come back by itself:
+//   - every resolved channel lacks a setpoint KEY (setpointless) — above all
+//     free chlorine on an electrolysis pool, running or paused: the
+//     DOSAGE_electrolysis_* family has chlorine warn limits and an ideal range
+//     but no chlorine setpoint key;
+//   - a paused cell's fallback whose electrolysis values define no complete
+//     band (pausedCellFallback).
+//
+// Known app divergence (tracked in issue #65): the apps still
+// grade electrolysis chlorine from its warn limits + ideal range with no
+// setpoint, and a paused cell's partial ORP band (limits without a setpoint);
+// this relay needs the full setpoint + warn-limit triple and stays neutral
+// there — missing alerts, never false ones. Electrolysis chlorine is the MAIN
+// electrolysis case, not a rare edge: don't assume the two agree on it. A
+// running cell's ORP with missing VALUES (setpoint key exists) stays omitted —
+// that one is "unknown right now".
 func resolveControlConfig(baseURL string, m controlMeasurement, raw map[string]any) (measure.ControlConfig, bool) {
 	active := activeFields(m, raw)
 	if len(active) == 0 {
@@ -270,6 +315,14 @@ func resolveControlConfig(baseURL string, m controlMeasurement, raw map[string]a
 	}
 
 	if len(setpoints) == 0 || len(warnLows) == 0 || len(warnHighs) == 0 {
+		if setpointless(active) || pausedCellFallback(active, raw) {
+			// Neutral by configuration, not unknown: a rule latched against an
+			// earlier band (e.g. the chlorine leftovers) resets instead of
+			// pausing forever.
+			slog.Debug("violet type has no setpoint-based band by configuration; type unbanded",
+				"base_url", baseURL, "type", m.bandsType)
+			return measure.ControlConfig{Unbanded: true}, true
+		}
 		slog.Warn("violet control config incomplete; type graded neutral (no control band)",
 			"base_url", baseURL, "type", m.bandsType,
 			"setpoints", len(setpoints), "warn_lows", len(warnLows), "warn_highs", len(warnHighs))
@@ -307,15 +360,25 @@ func resolveControlConfig(baseURL string, m controlMeasurement, raw map[string]a
 }
 
 // activeFields returns the measurement's channels whose `_use` flag reads 1,
-// falling back to the default channel (fields[0]) when none does — mirroring
-// VioletControlConfig.activeFields in the apps. On an active-oxygen pool the
-// liquid-chlorine (DOSAGE_chlorine_*) channels are leftovers and are excluded
-// from both the active set and the fallback, so the result can be empty
-// (ylabonte/poolpilot-app#1065); pH is unaffected.
+// falling back to the default channel (fields[0]) when none does — a 1:1 port of
+// VioletControlConfig.activeFields in the apps; one case table pins both sides
+// (TestActiveFieldsOxidiserCaseTable here, VioletOxidiserBandCaseTableTest
+// there), so change them together.
+//
+// The vendor menu decides the oxidiser first: on a pool that doesn't dose
+// liquid chlorine the DOSAGE_chlorine_* channels are leftovers and are excluded
+// from both the active set and the fallback.
+//   - active oxygen (activeOxygen, checked first): no fallback at all, so the
+//     result can be empty (ylabonte/poolpilot-app#1065);
+//   - electrolysis (electrolysisPool): the fallback is the electrolysis
+//     channel, also while the cell is paused (ylabonte/poolpilot-app#1081).
+//
+// pH is unaffected.
 func activeFields(m controlMeasurement, raw map[string]any) []controlField {
 	h2o2 := activeOxygen(raw)
+	cell := !h2o2 && electrolysisPool(raw)
 	leftover := func(f controlField) bool {
-		return h2o2 && f.useKey == liquidChlorineUseKey
+		return (h2o2 || cell) && f.useKey == liquidChlorineUseKey
 	}
 	var active []controlField
 	for _, f := range m.fields {
@@ -323,10 +386,45 @@ func activeFields(m controlMeasurement, raw map[string]any) []controlField {
 			active = append(active, f)
 		}
 	}
-	if len(active) == 0 && !leftover(m.fields[0]) {
+	if len(active) > 0 {
+		return active
+	}
+	if cell {
+		for _, f := range m.fields {
+			if f.useKey == electrolysisUseKey {
+				return []controlField{f}
+			}
+		}
+	}
+	if !leftover(m.fields[0]) {
 		return m.fields[:1]
 	}
-	return active
+	return nil
+}
+
+// setpointless reports whether none of the resolved channels has a setpoint
+// key at all, so the relay can never build a band for the type from them —
+// structurally, whatever the values say. Today that is free chlorine resolved
+// to the electrolysis channel alone (running or paused cell).
+func setpointless(active []controlField) bool {
+	for _, f := range active {
+		if f.setpointKey != "" {
+			return false
+		}
+	}
+	return true
+}
+
+// pausedCellFallback reports whether activeFields resolved a measurement to the
+// electrolysis channel only as an electrolysis pool's fallback — its _use flag
+// is off, i.e. the cell is paused (ylabonte/poolpilot-app#1081). The
+// electrolysis channel never is the legacy default (fields[0]), so a resolved
+// electrolysis channel with its flag off can only come from that fallback. Such
+// a fallback with incomplete values is Unbanded even for ORP (whose setpoint
+// key exists): the cell is paused by configuration, and the band it replaced
+// was the chlorine leftovers, which must not stay latched.
+func pausedCellFallback(active []controlField, raw map[string]any) bool {
+	return len(active) == 1 && active[0].useKey == electrolysisUseKey && !configFlag(raw, electrolysisUseKey)
 }
 
 // configDouble reads one /getConfig value as a finite float64. The firmware types
