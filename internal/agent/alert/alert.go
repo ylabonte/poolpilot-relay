@@ -415,7 +415,7 @@ func EffectiveSeverity(rules []wire.AlertRule, control map[string]measure.Contro
 // effectiveBands resolves the band a rule evaluates against, in precedence
 // order: an explicit app override (rule.Bands) wins; else the controller's live
 // config derives min/max = its warn limits and the OK zone (setpoint ± tolerance,
-// or the dual-setpoint corridor). When neither is available it reports ok=false
+// or the controller's explicit OK corridor — see bandsFromControl). When neither is available it reports ok=false
 // so the caller stays neutral — there
 // is NO hardcoded-band severity fallback (the app's D-no-fallback decision): a
 // measurement with no real control band yields no severity, exactly as the apps
@@ -444,15 +444,14 @@ func toleranceFor(rule wire.AlertRule) float64 {
 
 // bandsFromControl derives the bad/warn/ok/warn/bad band from a controller's
 // live config: min/max are the controller's own warn limits, and the OK zone is
-// setpoint ± tol clamped inside those limits. A dual-setpoint config
-// (cc.HasOkZone — a both-directions pH−/pH+ pool that regulates BETWEEN two
-// targets) instead grades its explicit [OkLow, OkHigh] corridor as the OK zone,
-// clamped to the limits with the tolerance ignored — matching the apps'
-// ideal-band-as-OK-band semantics for that dual-setpoint pH−/pH+ corridor
-// (issue #31). This is exact parity only there: VIOLET chlorine's own ideal-band
-// keys (DOSAGE_chlorine_lowerval_cl / DOSAGE_chlorine_upperval_cl_day) are not read
-// yet, so a chlorine ControlConfig never sets HasOkZone today — HasOkZone is the
-// hook Plan B can reuse once it does.
+// setpoint ± tol clamped inside those limits. A config with an explicit OK
+// corridor (cc.HasOkZone) instead grades [OkLow, OkHigh] as the OK zone, clamped
+// to the limits with the tolerance ignored. VIOLET sets that corridor for a
+// dual-setpoint pH−/pH+ pool (issue #31), a chlorine channel's ideal range, and
+// a limits-only type whose whole warn window is OK (issue #65) — together the
+// apps' MeasurementControlBand.resolvedBands precedence (ideal, else
+// whole window without a setpoint, else setpoint ± tolerance), pinned by
+// TestControlBandParityCaseTable.
 //
 // It returns false for a config the controller marks Unbanded, and for an
 // unusable config (single-setpoint with non-positive
@@ -472,8 +471,8 @@ func bandsFromControl(cc measure.ControlConfig, tol float64) (bands.BandsConfig,
 	}
 	var okMin, okMax float64
 	if cc.HasOkZone {
-		// Dual-setpoint corridor: the [OkLow, OkHigh] window IS the OK zone; the
-		// tolerance does not apply (the pool regulates between the two setpoints).
+		// Explicit corridor (dual setpoints, ideal range, or the whole window of a
+		// limits-only type): it IS the OK zone; the tolerance does not apply.
 		okMin, okMax = cc.OkLow, cc.OkHigh
 	} else {
 		// Single setpoint: OK = Target ± tolerance.

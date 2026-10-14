@@ -16,15 +16,20 @@ import (
 )
 
 // controlField is one VIOLET dosing channel's regulation keys in /getConfig:
-// the dosing setpoint, the two hard warn limits, and the channel's `_use` flag.
-// setpointKey is empty for a channel that carries warn limits but no setpoint of
-// its own (the electrolysis family exposes chlorine LIMITS but no chlorine
-// setpoint), matching SetpointField.configKey == null in the apps.
+// the dosing setpoint, the two hard warn limits, the optional ideal range, and
+// the channel's `_use` flag. setpointKey is empty for a channel that carries
+// warn limits but no setpoint of its own (the electrolysis family exposes
+// chlorine LIMITS but no chlorine setpoint), matching SetpointField.configKey ==
+// null in the apps. idealLowKey / idealHighKey are set only for the free-chlorine
+// channels (lowerval_cl / upperval_cl_day — the daytime bound, as in the apps'
+// SetpointField.idealLowKey / idealHighKey); empty elsewhere.
 type controlField struct {
-	setpointKey string
-	warnLowKey  string
-	warnHighKey string
-	useKey      string
+	setpointKey  string
+	warnLowKey   string
+	warnHighKey  string
+	idealLowKey  string
+	idealHighKey string
+	useKey       string
 }
 
 // controlMeasurement groups the dosing channels that regulate one measurement
@@ -40,30 +45,37 @@ type controlMeasurement struct {
 // controlMeasurements is the VIOLET chemistry-regulation key map. It is the Go
 // port of the apps' canonical SetpointField key tables in
 // shared/violet-client/.../VioletConstants.kt (configKey / warnLowKey /
-// warnHighKey / useKey) reduced to the three types the relay alerts on (pH, ORP,
-// chlorine — heater/solar are not alert-banded here). These key names are a
+// warnHighKey / idealLowKey / idealHighKey / useKey) reduced to the three types
+// the relay alerts on (pH, ORP, chlorine — heater/solar are not alert-banded
+// here). These key names are a
 // VIOLET-firmware contract shared with the apps: if the firmware renames a key,
 // update BOTH this table and VioletConstants.kt.
 var controlMeasurements = []controlMeasurement{
 	{
 		bandsType: bands.TypePH,
 		fields: []controlField{
-			{"DOSAGE_phminus_setpoint", "DOSAGE_phminus_limits_warnlow", "DOSAGE_phminus_limits_warnhigh", "DOSAGE_phminus_use"},
-			{"DOSAGE_phplus_setpoint", "DOSAGE_phplus_limits_warnlow", "DOSAGE_phplus_limits_warnhigh", "DOSAGE_phplus_use"},
+			{setpointKey: "DOSAGE_phminus_setpoint", warnLowKey: "DOSAGE_phminus_limits_warnlow", warnHighKey: "DOSAGE_phminus_limits_warnhigh", useKey: "DOSAGE_phminus_use"},
+			{setpointKey: "DOSAGE_phplus_setpoint", warnLowKey: "DOSAGE_phplus_limits_warnlow", warnHighKey: "DOSAGE_phplus_limits_warnhigh", useKey: "DOSAGE_phplus_use"},
 		},
 	},
 	{
 		bandsType: bands.TypeORP,
 		fields: []controlField{
-			{"DOSAGE_chlorine_setpoint_orp", "DOSAGE_chlorine_limits_orp_warnlow", "DOSAGE_chlorine_limits_orp_warnhigh", "DOSAGE_chlorine_use"},
-			{"DOSAGE_electrolysis_setpoint_orp", "DOSAGE_electrolysis_limits_orp_warnlow", "DOSAGE_electrolysis_limits_orp_warnhigh", "DOSAGE_electrolysis_use"},
+			{setpointKey: "DOSAGE_chlorine_setpoint_orp", warnLowKey: "DOSAGE_chlorine_limits_orp_warnlow", warnHighKey: "DOSAGE_chlorine_limits_orp_warnhigh", useKey: "DOSAGE_chlorine_use"},
+			{setpointKey: "DOSAGE_electrolysis_setpoint_orp", warnLowKey: "DOSAGE_electrolysis_limits_orp_warnlow", warnHighKey: "DOSAGE_electrolysis_limits_orp_warnhigh", useKey: "DOSAGE_electrolysis_use"},
 		},
 	},
 	{
 		bandsType: bands.TypeChlorine,
 		fields: []controlField{
-			{"DOSAGE_chlorine_setpoint_cl", "DOSAGE_chlorine_limits_cl_warnlow", "DOSAGE_chlorine_limits_cl_warnhigh", "DOSAGE_chlorine_use"},
-			{"", "DOSAGE_electrolysis_limits_cl_warnlow", "DOSAGE_electrolysis_limits_cl_warnhigh", "DOSAGE_electrolysis_use"},
+			{
+				setpointKey: "DOSAGE_chlorine_setpoint_cl", warnLowKey: "DOSAGE_chlorine_limits_cl_warnlow", warnHighKey: "DOSAGE_chlorine_limits_cl_warnhigh",
+				idealLowKey: "DOSAGE_chlorine_lowerval_cl", idealHighKey: "DOSAGE_chlorine_upperval_cl_day", useKey: "DOSAGE_chlorine_use",
+			},
+			{
+				warnLowKey: "DOSAGE_electrolysis_limits_cl_warnlow", warnHighKey: "DOSAGE_electrolysis_limits_cl_warnhigh",
+				idealLowKey: "DOSAGE_electrolysis_lowerval_cl", idealHighKey: "DOSAGE_electrolysis_upperval_cl_day", useKey: "DOSAGE_electrolysis_use",
+			},
 		},
 	},
 }
@@ -88,6 +100,8 @@ func buildControlConfigQuery() string {
 			add(f.setpointKey)
 			add(f.warnLowKey)
 			add(f.warnHighKey)
+			add(f.idealLowKey)
+			add(f.idealHighKey)
 			add(f.useKey)
 		}
 	}
@@ -175,14 +189,14 @@ func menuShown(raw map[string]any, key string) (shown, reported bool) {
 }
 
 // FetchControlConfig reads the VIOLET controller's live regulation config from
-// /getConfig and returns the setpoint + warn limits per measurement type, keyed
-// by bands type — the VIOLET counterpart of proconip.Client.FetchControlConfig,
-// and what makes violetDriver a driver.ControlConfigReader.
+// /getConfig and returns the control band per measurement type (warn limits plus
+// a setpoint, an ideal range, or both — see resolveControlConfig), keyed by
+// bands type — the VIOLET counterpart of proconip.Client.FetchControlConfig, and
+// what makes violetDriver a driver.ControlConfigReader.
 //
 // It is fail-soft on CONTENT (mirroring the ProCon.IP driver): a measurement
-// whose setpoint or warn limits /getConfig doesn't echo — a Redox-regulated pool
-// has no chlorine sensor, older firmware omits keys — is simply absent from the
-// map, so the alert engine grades it neutral (no real control band → no severity;
+// whose warn limits /getConfig doesn't echo — a Redox-regulated pool has no
+// chlorine sensor, older firmware omits keys — is simply absent from the map, so the alert engine grades it neutral (no real control band → no severity;
 // there is no hardcoded-band fallback, per the app's D-no-fallback decision). A
 // partial or empty map is a normal, non-error result.
 //
@@ -237,57 +251,49 @@ func (c *Client) FetchControlConfig(ctx context.Context) (map[string]measure.Con
 }
 
 // resolveControlConfig reduces a measurement's dosing channels to a warn-limit
-// band plus an OK zone. It picks the channels the pool actually doses from
-// (their `_use` flag reads 1), falling back to the default channel when none
-// resolves, then merges: Min is the lowest warn-low and Max the highest warn-high
-// across active channels (the widest safe window). Reports ok=false when the
-// active channels don't yield all of setpoint + warn-low + warn-high, so the
-// caller omits the type and the alert engine grades it neutral (no severity, per
-// the app's D-no-fallback decision) — the same "need the full triple or drop"
-// rule the ProCon.IP INI reader applies.
+// band plus an OK zone — a 1:1 port of the apps' controlBandForMeasurement +
+// MeasurementControlBand.resolvedBands (shared/violet-client VioletControlConfig.kt,
+// shared/core MeasurementControlBand.kt); TestControlBandParityCaseTable
+// (internal/agent/alert) pins the resulting severities against the apps'.
 //
-// The OK zone follows the apps' controlBandForMeasurement for the dual-setpoint
-// pH−/pH+ corridor case below; VIOLET chlorine's own ideal-band keys
-// (DOSAGE_chlorine_lowerval_cl / DOSAGE_chlorine_upperval_cl_day) are not read yet,
-// so this exactness does not extend there today —
-// HasOkZone (internal/measure) is the hook a future Plan-B change can reuse
-// once it does. A single active setpoint sets Target and the alert path grades
-// Target ± tolerance. A both-directions pool (pH− + pH+ both active, two
-// distinct setpoints) does NOT
-// dose toward the mean — it regulates BETWEEN its two targets — so the pair is
-// kept as an explicit OK corridor [OkLow, OkHigh] (the apps' idealLow..idealHigh
-// sub-band, no single marker) that the alert path grades as the OK zone directly.
-// Target is still the mean for informational continuity but no longer drives the
-// band. This closes the mean-approximation gap tracked in issue #31.
+// It picks the channels the pool actually doses from (activeFields). A channel
+// that echoes none of setpoint / warn-low / warn-high contributes nothing (not
+// even its ideal range), like the apps' controlBand returning null. The rest
+// merge: Min is the lowest warn-low and Max the highest warn-high (the widest
+// safe window). The OK zone then follows the apps' precedence:
 //
-// On an active-oxygen pool (activeOxygen) the liquid-chlorine channel is a
-// leftover and never resolves, not even as the fallback: Redox and free chlorine
-// then have no channel at all (unless an electrolysis channel's own _use flag
-// reads 1), so the type is reported Unbanded (ok=true) and graded neutral — the
-// maintainer's "neutral gauge, no band" decision for H2O2 pools, matching the
-// apps. Unbanded, unlike omission, tells the alert engine the band is gone by
-// configuration rather than temporarily unknown. On an electrolysis pool
-// (electrolysisPool) the liquid channel is a leftover too, but a paused cell
-// falls back to the electrolysis channel, so the cell's own settings grade it
-// (ylabonte/poolpilot-app#1081).
+//  1. an ideal range, when one exists with idealHigh > idealLow — two or more
+//     active setpoints span it as a corridor [lowest, highest] (a pH−/pH+ pool
+//     regulates BETWEEN its targets, issue #31); otherwise the chlorine
+//     channels' own ideal keys (lowerval_cl / upperval_cl_day). Carried as
+//     HasOkZone [OkLow, OkHigh]; the alert path clamps it into the limits.
+//  2. no single setpoint (none at all, or several identical ones whose corridor
+//     is zero-width) — "limits-only → whole window OK": HasOkZone [Min, Max].
+//     This is free chlorine on an electrolysis pool, whose family has warn
+//     limits and an ideal range but no chlorine setpoint key (issue #65).
+//  3. a single setpoint: Target, graded Target ± tolerance by the alert path.
 //
-// Two more cases are Unbanded rather than omitted, because the band cannot
-// come back by itself:
-//   - every resolved channel lacks a setpoint KEY (setpointless) — above all
-//     free chlorine on an electrolysis pool, running or paused: the
-//     DOSAGE_electrolysis_* family has chlorine warn limits and an ideal range
-//     but no chlorine setpoint key;
-//   - a paused cell's fallback whose electrolysis values define no complete
-//     band (pausedCellFallback).
+// Target is the mean of the active setpoints (zero without one); it only drives
+// the band in case 3.
 //
-// Known app divergence (tracked in issue #65): the apps still
-// grade electrolysis chlorine from its warn limits + ideal range with no
-// setpoint, and a paused cell's partial ORP band (limits without a setpoint);
-// this relay needs the full setpoint + warn-limit triple and stays neutral
-// there — missing alerts, never false ones. Electrolysis chlorine is the MAIN
-// electrolysis case, not a rare edge: don't assume the two agree on it. A
-// running cell's ORP with missing VALUES (setpoint key exists) stays omitted —
-// that one is "unknown right now".
+// When the channels yield no usable warn window (a limit missing, or
+// warnLow >= warnHigh without any setpoint), there is no band. Whether that is
+// reported Unbanded (ok=true: neutral BY CONFIGURATION, so the alert engine
+// silently resets a latched rule) or omitted (ok=false: unknown right now, the
+// rule pauses) depends on why:
+//   - no channel at all — an active-oxygen pool (activeOxygen): the liquid
+//     channel is a leftover and never resolves, so Redox and free chlorine have
+//     nothing to grade against (the maintainer's "neutral gauge, no band"
+//     decision for H2O2 pools, ylabonte/poolpilot-app#1065) → Unbanded;
+//   - every resolved channel lacks a setpoint KEY (setpointless — free chlorine
+//     on an electrolysis pool whose limits are absent or unusable), or a paused
+//     cell's fallback (pausedCellFallback, ylabonte/poolpilot-app#1081) →
+//     Unbanded: the band cannot come back by itself;
+//   - anything else (e.g. a running cell's ORP whose values are missing) →
+//     omitted.
+//
+// A setpoint with inverted or equal limits is still emitted (Min >= Max) so the
+// alert path rejects it and the rule pauses, as before.
 func resolveControlConfig(baseURL string, m controlMeasurement, raw map[string]any) (measure.ControlConfig, bool) {
 	active := activeFields(m, raw)
 	if len(active) == 0 {
@@ -299,27 +305,38 @@ func resolveControlConfig(baseURL string, m controlMeasurement, raw map[string]a
 		return measure.ControlConfig{Unbanded: true}, true
 	}
 
-	var setpoints, warnLows, warnHighs []float64
+	var setpoints, warnLows, warnHighs, idealLows, idealHighs []float64
 	for _, f := range active {
-		if f.setpointKey != "" {
-			if v, ok := configDouble(raw, f.setpointKey); ok {
-				setpoints = append(setpoints, v)
-			}
+		sp, hasSp := optionalDouble(raw, f.setpointKey)
+		lo, hasLo := configDouble(raw, f.warnLowKey)
+		hi, hasHi := configDouble(raw, f.warnHighKey)
+		if !hasSp && !hasLo && !hasHi {
+			continue // the apps' controlBand(field) == null: the channel contributes nothing
 		}
-		if v, ok := configDouble(raw, f.warnLowKey); ok {
-			warnLows = append(warnLows, v)
+		if hasSp {
+			setpoints = append(setpoints, sp)
 		}
-		if v, ok := configDouble(raw, f.warnHighKey); ok {
-			warnHighs = append(warnHighs, v)
+		if hasLo {
+			warnLows = append(warnLows, lo)
+		}
+		if hasHi {
+			warnHighs = append(warnHighs, hi)
+		}
+		if v, ok := optionalDouble(raw, f.idealLowKey); ok {
+			idealLows = append(idealLows, v)
+		}
+		if v, ok := optionalDouble(raw, f.idealHighKey); ok {
+			idealHighs = append(idealHighs, v)
 		}
 	}
 
-	if len(setpoints) == 0 || len(warnLows) == 0 || len(warnHighs) == 0 {
+	limits := len(warnLows) > 0 && len(warnHighs) > 0
+	if !limits || (len(setpoints) == 0 && minOf(warnLows) >= maxOf(warnHighs)) {
 		if setpointless(active) || pausedCellFallback(active, raw) {
 			// Neutral by configuration, not unknown: a rule latched against an
 			// earlier band (e.g. the chlorine leftovers) resets instead of
 			// pausing forever.
-			slog.Debug("violet type has no setpoint-based band by configuration; type unbanded",
+			slog.Debug("violet type has no usable band by configuration; type unbanded",
 				"base_url", baseURL, "type", m.bandsType)
 			return measure.ControlConfig{Unbanded: true}, true
 		}
@@ -329,32 +346,28 @@ func resolveControlConfig(baseURL string, m controlMeasurement, raw map[string]a
 		return measure.ControlConfig{}, false
 	}
 
-	cc := measure.ControlConfig{
-		Target: mean(setpoints),
-		Min:    minOf(warnLows),
-		Max:    maxOf(warnHighs),
+	cc := measure.ControlConfig{Min: minOf(warnLows), Max: maxOf(warnHighs)}
+	if len(setpoints) > 0 {
+		cc.Target = mean(setpoints)
 	}
-	// Both-directions pool: two distinct active setpoints span a regulation
-	// corridor. Keep them as an explicit OK zone [low, high] instead of centring
-	// on the mean, so the alert path grades the whole corridor OK — exact parity
-	// with the apps' controlBandForMeasurement (issue #31). A single ACTIVE pH or
-	// ORP setpoint is likewise exact parity: both sides fall back to Target ±
-	// tolerance. A single active CHLORINE channel is NOT — the apps grade that
-	// channel's own ideal band [DOSAGE_chlorine_lowerval_cl, _upperval_cl_day],
-	// whereas this relay, not reading those keys yet, still falls back to Target ±
-	// tolerance (the same chlorine-ideal gap noted above).
-	//
-	// Two IDENTICAL active setpoints are NOT exact parity, though: this relay
-	// still falls back to Target ± tolerance here (hi > lo is false), but the
-	// apps' merge path never collapses two channels back to a single setpoint —
-	// it lands on setpoint=nil plus a degenerate (zero-width) ideal band, which
-	// the apps then grade OK across the ENTIRE warn window. That's the documented
-	// "limits-only → whole-window OK" extension the relay does not yet implement
-	// (docs/ARCHITECTURE.md § Measurement parity in the app repo; tracked for the
-	// Plan B rollout) — a known, deliberate divergence for this rare degenerate
-	// input, not a bug in this corridor logic.
-	if lo, hi := minOf(setpoints), maxOf(setpoints); hi > lo {
-		cc.OkLow, cc.OkHigh, cc.HasOkZone = lo, hi, true
+	// The ideal range, in the apps' precedence: a multi-setpoint corridor, else
+	// the chlorine channels' ideal keys (lowest low, highest high).
+	var idealLo, idealHi float64
+	hasIdeal := false
+	switch {
+	case len(setpoints) > 1:
+		idealLo, idealHi, hasIdeal = minOf(setpoints), maxOf(setpoints), true
+	case len(idealLows) > 0 && len(idealHighs) > 0:
+		idealLo, idealHi, hasIdeal = minOf(idealLows), maxOf(idealHighs), true
+	}
+	switch {
+	case hasIdeal && idealHi > idealLo:
+		cc.OkLow, cc.OkHigh, cc.HasOkZone = idealLo, idealHi, true
+	case len(setpoints) != 1:
+		// Limits-only → whole window OK (issue #65): no setpoint to centre on,
+		// no usable ideal range — the apps grade the entire warn window OK.
+		// Also two identical setpoints, whose zero-width corridor the apps drop.
+		cc.OkLow, cc.OkHigh, cc.HasOkZone = cc.Min, cc.Max, true
 	}
 	return cc, true
 }
@@ -403,9 +416,10 @@ func activeFields(m controlMeasurement, raw map[string]any) []controlField {
 }
 
 // setpointless reports whether none of the resolved channels has a setpoint
-// key at all, so the relay can never build a band for the type from them —
-// structurally, whatever the values say. Today that is free chlorine resolved
-// to the electrolysis channel alone (running or paused cell).
+// key at all, so only its warn limits (and ideal range) can band the type.
+// Today that is free chlorine resolved to the electrolysis channel alone
+// (running or paused cell). It only matters once those limits are missing or
+// unusable: the type is then Unbanded by configuration rather than omitted.
 func setpointless(active []controlField) bool {
 	for _, f := range active {
 		if f.setpointKey != "" {
@@ -458,6 +472,15 @@ func configDouble(raw map[string]any, key string) (float64, bool) {
 		return 0, false
 	}
 	return f, true
+}
+
+// optionalDouble is configDouble for an optional key: an empty key (the channel
+// has no such field, e.g. the electrolysis chlorine setpoint) reads as absent.
+func optionalDouble(raw map[string]any, key string) (float64, bool) {
+	if key == "" {
+		return 0, false
+	}
+	return configDouble(raw, key)
 }
 
 // configFlag reads a `_use`-style flag: true when the value renders as "1" or
