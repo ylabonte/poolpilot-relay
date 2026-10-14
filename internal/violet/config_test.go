@@ -2,11 +2,13 @@ package violet
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -576,6 +578,147 @@ func TestControlConfigQueryIncludesDosingVariantKeys(t *testing.T) {
 	for _, want := range []string{"MENU_dosage_1", "MENU_dosage_3", "DOSAGE_h2o2_use"} {
 		if !keys[want] {
 			t.Errorf("control config query missing %q (needed to detect an active-oxygen pool)", want)
+		}
+	}
+}
+
+// oxidiserCase is one row of the oxidiser case table (ylabonte/poolpilot-app#1065,
+// #1081): menu is MENU_dosage_1..3 as one char each ('b' = block, 'n' = none,
+// '-' = not reported), use the DOSAGE_<family>_use flags that are reported
+// ("cl" = chlorine, "elo" = electrolysis, "h2o2" = active oxygen), families what
+// Redox and chlorine resolve to.
+type oxidiserCase struct {
+	name     string
+	menu     string
+	use      map[string]int
+	families []string
+}
+
+const (
+	famCL  = "chlorine"
+	famELO = "electrolysis"
+)
+
+// oxidiserCases is the SAME table as the apps' VioletOxidiserBandCaseTableTest
+// (shared/violet-client commonTest in ylabonte/poolpilot-app): the app gauges and
+// the relay alerts must grade against the same family. Change both together.
+var oxidiserCases = []oxidiserCase{
+	{"liquid chlorine", "bnn", map[string]int{"cl": 1, "elo": 0}, []string{famCL}},
+	{"cell running", "nbn", map[string]int{"cl": 0, "elo": 1}, []string{famELO}},
+	{"cell paused", "nbn", map[string]int{"cl": 0, "elo": 0}, []string{famELO}},
+	{"cell paused, stale chlorine use", "nbn", map[string]int{"cl": 1, "elo": 0}, []string{famELO}},
+	{"cell running, stale chlorine use", "nbn", map[string]int{"cl": 1, "elo": 1}, []string{famELO}},
+	{"only slot 2 reported, cell paused", "-b-", map[string]int{"cl": 0, "elo": 0}, []string{famELO}},
+	{"active oxygen", "nnb", map[string]int{"cl": 0, "h2o2": 1}, nil},
+	{"active oxygen paused, stale chlorine use", "n-b", map[string]int{"cl": 1, "h2o2": 0}, nil},
+	{"slots 2+3 shown, cell paused", "nbb", map[string]int{"cl": 0, "elo": 0}, nil},
+	{"slots 2+3 shown, cell running", "nbb", map[string]int{"cl": 0, "elo": 1}, []string{famELO}},
+	{"slots 1+2 shown, both on", "bbn", map[string]int{"cl": 1, "elo": 1}, []string{famCL, famELO}},
+	{"slots 1+2 shown, both off", "bbn", map[string]int{"cl": 0, "elo": 0}, []string{famCL}},
+	{"all slots hidden", "nnn", map[string]int{"cl": 0, "elo": 0}, []string{famCL}},
+	{"no MENU, cell on", "---", map[string]int{"cl": 0, "elo": 1}, []string{famELO}},
+	{"no MENU, everything off", "---", map[string]int{"cl": 0, "elo": 0, "h2o2": 0}, []string{famCL}},
+	{"no MENU, chlorine and cell on", "---", map[string]int{"cl": 1, "elo": 1}, []string{famCL, famELO}},
+	{"no MENU, active oxygen on", "---", map[string]int{"cl": 0, "h2o2": 1}, nil},
+	{"no flags at all", "---", map[string]int{}, []string{famCL}},
+}
+
+func (c oxidiserCase) raw() map[string]any {
+	useKeys := map[string]string{"cl": liquidChlorineUseKey, "elo": electrolysisUseKey, "h2o2": activeOxygenUseKey}
+	raw := map[string]any{}
+	for i, ch := range c.menu {
+		key := "MENU_dosage_" + strconv.Itoa(i+1)
+		switch ch {
+		case 'b':
+			raw[key] = "block"
+		case 'n':
+			raw[key] = "none"
+		}
+	}
+	for fam, on := range c.use {
+		raw[useKeys[fam]] = strconv.Itoa(on)
+	}
+	return raw
+}
+
+func TestActiveFieldsOxidiserCaseTable(t *testing.T) {
+	family := map[string]string{liquidChlorineUseKey: famCL, electrolysisUseKey: famELO}
+	for _, tc := range oxidiserCases {
+		raw := tc.raw()
+		for _, m := range controlMeasurements {
+			if m.bandsType == bands.TypePH {
+				continue
+			}
+			var got []string
+			for _, f := range activeFields(m, raw) {
+				got = append(got, family[f.useKey])
+			}
+			if strings.Join(got, ",") != strings.Join(tc.families, ",") {
+				t.Errorf("%s / %s: got %v, want %v", tc.name, m.bandsType, got, tc.families)
+			}
+		}
+	}
+}
+
+// TestFetchControlConfigPausedElectrolysisCell pins ylabonte/poolpilot-app#1081:
+// a paused cell grades Redox against the electrolysis family, never the chlorine
+// leftovers; chlorine (no electrolysis setpoint key) and an ORP whose
+// electrolysis settings are missing are reported Unbanded, so a rule latched
+// against the old chlorine band resets.
+func TestFetchControlConfigPausedElectrolysisCell(t *testing.T) {
+	paused := map[string]string{
+		"MENU_dosage_1": "none", "MENU_dosage_2": "block", "MENU_dosage_3": "none",
+		"DOSAGE_chlorine_use": "1", "DOSAGE_electrolysis_use": "0",
+	}
+	srv, _ := configServer(t, "", "", h2o2Body(paused))
+	got, err := (&Client{BaseURL: srv.URL}).FetchControlConfig(context.Background())
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	assertControl(t, "ORP", got[bands.TypeORP], 700, 550, 800)
+	if cc := got[bands.TypeChlorine]; cc != (measure.ControlConfig{Unbanded: true}) {
+		t.Errorf("chlorine: got %+v, want Unbanded", cc)
+	}
+
+	// Without electrolysis settings the paused cell is neutral, not chlorine.
+	body := map[string]any{}
+	if err := json.Unmarshal(h2o2Body(paused), &body); err != nil {
+		t.Fatal(err)
+	}
+	for k := range body {
+		if strings.HasPrefix(k, "DOSAGE_electrolysis_") && k != electrolysisUseKey {
+			delete(body, k)
+		}
+	}
+	stripped, _ := json.Marshal(body)
+	srv2, _ := configServer(t, "", "", stripped)
+	got, err = (&Client{BaseURL: srv2.URL}).FetchControlConfig(context.Background())
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	for _, typ := range []string{bands.TypeORP, bands.TypeChlorine} {
+		if cc, ok := got[typ]; !ok || cc != (measure.ControlConfig{Unbanded: true}) {
+			t.Errorf("%s: got %+v (present=%v), want Unbanded", typ, cc, ok)
+		}
+	}
+
+	// A RUNNING cell's chlorine stays omitted (incomplete), unchanged by #1081.
+	running := map[string]string{"MENU_dosage_1": "none", "MENU_dosage_2": "block", "DOSAGE_electrolysis_use": "1"}
+	srv3, _ := configServer(t, "", "", h2o2Body(running))
+	got, _ = (&Client{BaseURL: srv3.URL}).FetchControlConfig(context.Background())
+	if _, ok := got[bands.TypeChlorine]; ok {
+		t.Errorf("running cell chlorine: got %+v, want omitted", got[bands.TypeChlorine])
+	}
+}
+
+func TestControlConfigQueryIncludesElectrolysisMenuKey(t *testing.T) {
+	keys := map[string]bool{}
+	for _, k := range strings.Split(controlConfigQuery, ",") {
+		keys[k] = true
+	}
+	for _, want := range []string{"MENU_dosage_2", "DOSAGE_electrolysis_use", "DOSAGE_chlorine_use"} {
+		if !keys[want] {
+			t.Errorf("control config query missing %q (needed to detect an electrolysis pool)", want)
 		}
 	}
 }
