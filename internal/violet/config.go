@@ -269,8 +269,25 @@ func (c *Client) FetchControlConfig(ctx context.Context) (map[string]measure.Con
 // configuration rather than temporarily unknown. On an electrolysis pool
 // (electrolysisPool) the liquid channel is a leftover too, but a paused cell
 // falls back to the electrolysis channel, so the cell's own settings grade it
-// (ylabonte/poolpilot-app#1081); when those define no complete band the type
-// is reported Unbanded too (a running cell's incomplete read stays omitted).
+// (ylabonte/poolpilot-app#1081).
+//
+// Two more cases are Unbanded rather than omitted, because the band cannot
+// come back by itself:
+//   - every resolved channel lacks a setpoint KEY (setpointless) — above all
+//     free chlorine on an electrolysis pool, running or paused: the
+//     DOSAGE_electrolysis_* family has chlorine warn limits and an ideal range
+//     but no chlorine setpoint key;
+//   - a paused cell's fallback whose electrolysis values define no complete
+//     band (pausedCellFallback).
+//
+// Known app divergence (tracked in issue #65): the apps still
+// grade electrolysis chlorine from its warn limits + ideal range with no
+// setpoint, and a paused cell's partial ORP band (limits without a setpoint);
+// this relay needs the full setpoint + warn-limit triple and stays neutral
+// there — missing alerts, never false ones. Electrolysis chlorine is the MAIN
+// electrolysis case, not a rare edge: don't assume the two agree on it. A
+// running cell's ORP with missing VALUES (setpoint key exists) stays omitted —
+// that one is "unknown right now".
 func resolveControlConfig(baseURL string, m controlMeasurement, raw map[string]any) (measure.ControlConfig, bool) {
 	active := activeFields(m, raw)
 	if len(active) == 0 {
@@ -298,11 +315,11 @@ func resolveControlConfig(baseURL string, m controlMeasurement, raw map[string]a
 	}
 
 	if len(setpoints) == 0 || len(warnLows) == 0 || len(warnHighs) == 0 {
-		if pausedCellFallback(active, raw) {
-			// A paused cell whose own settings define no band: neutral by
-			// configuration, so a rule latched against the old chlorine
-			// leftovers resets instead of pausing forever.
-			slog.Debug("violet paused electrolysis cell; type unbanded (no electrolysis band)",
+		if setpointless(active) || pausedCellFallback(active, raw) {
+			// Neutral by configuration, not unknown: a rule latched against an
+			// earlier band (e.g. the chlorine leftovers) resets instead of
+			// pausing forever.
+			slog.Debug("violet type has no setpoint-based band by configuration; type unbanded",
 				"base_url", baseURL, "type", m.bandsType)
 			return measure.ControlConfig{Unbanded: true}, true
 		}
@@ -385,11 +402,27 @@ func activeFields(m controlMeasurement, raw map[string]any) []controlField {
 	return nil
 }
 
+// setpointless reports whether none of the resolved channels has a setpoint
+// key at all, so the relay can never build a band for the type from them —
+// structurally, whatever the values say. Today that is free chlorine resolved
+// to the electrolysis channel alone (running or paused cell).
+func setpointless(active []controlField) bool {
+	for _, f := range active {
+		if f.setpointKey != "" {
+			return false
+		}
+	}
+	return true
+}
+
 // pausedCellFallback reports whether activeFields resolved a measurement to the
 // electrolysis channel only as an electrolysis pool's fallback — its _use flag
 // is off, i.e. the cell is paused (ylabonte/poolpilot-app#1081). The
 // electrolysis channel never is the legacy default (fields[0]), so a resolved
-// electrolysis channel with its flag off can only come from that fallback.
+// electrolysis channel with its flag off can only come from that fallback. Such
+// a fallback with incomplete values is Unbanded even for ORP (whose setpoint
+// key exists): the cell is paused by configuration, and the band it replaced
+// was the chlorine leftovers, which must not stay latched.
 func pausedCellFallback(active []controlField, raw map[string]any) bool {
 	return len(active) == 1 && active[0].useKey == electrolysisUseKey && !configFlag(raw, electrolysisUseKey)
 }

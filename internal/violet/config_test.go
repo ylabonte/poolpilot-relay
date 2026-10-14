@@ -525,12 +525,14 @@ func TestFetchControlConfigActiveOxygenPoolHasNoChlorineBand(t *testing.T) {
 			map[string]string{"MENU_dosage_1": "block", "MENU_dosage_3": "none", "DOSAGE_h2o2_use": "0", "DOSAGE_chlorine_use": "0"}, liquid},
 		{"electrolysis pool, cell active",
 			map[string]string{"MENU_dosage_1": "none", "MENU_dosage_2": "block", "MENU_dosage_3": "none", "DOSAGE_electrolysis_use": "1", "DOSAGE_chlorine_use": "0"},
-			// the electrolysis family has no chlorine setpoint, so chlorine stays omitted (unchanged behaviour)
-			want{orp: band, orpMin: 550, chlorine: absent}},
+			// the electrolysis family has no chlorine setpoint KEY, so chlorine is
+			// unbanded by configuration (#1081 review; was omitted, which kept a
+			// latched chlorine alert active forever)
+			want{orp: band, orpMin: 550, chlorine: unbanded}},
 		{"H2O2 menu + electrolysis channel whose own _use=1 still resolves",
 			map[string]string{"MENU_dosage_1": "none", "MENU_dosage_3": "block", "DOSAGE_electrolysis_use": "1", "DOSAGE_h2o2_use": "1"},
-			// chlorine: the leftover is excluded, the electrolysis cl channel has no setpoint → incomplete
-			want{orp: band, orpMin: 550, chlorine: absent}},
+			// chlorine: the leftover is excluded, the electrolysis cl channel has no setpoint key → unbanded
+			want{orp: band, orpMin: 550, chlorine: unbanded}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -702,12 +704,39 @@ func TestFetchControlConfigPausedElectrolysisCell(t *testing.T) {
 		}
 	}
 
-	// A RUNNING cell's chlorine stays omitted (incomplete), unchanged by #1081.
-	running := map[string]string{"MENU_dosage_1": "none", "MENU_dosage_2": "block", "DOSAGE_electrolysis_use": "1"}
-	srv3, _ := configServer(t, "", "", h2o2Body(running))
-	got, _ = (&Client{BaseURL: srv3.URL}).FetchControlConfig(context.Background())
-	if _, ok := got[bands.TypeChlorine]; ok {
-		t.Errorf("running cell chlorine: got %+v, want omitted", got[bands.TypeChlorine])
+	// A RUNNING cell's chlorine is Unbanded too: the electrolysis family has no
+	// chlorine setpoint key, so the band can never come back by itself — also
+	// with a stale DOSAGE_chlorine_use=1, which on main still gave a chlorine band.
+	for _, cl := range []string{"0", "1"} {
+		running := map[string]string{
+			"MENU_dosage_1": "none", "MENU_dosage_2": "block", "MENU_dosage_3": "none",
+			"DOSAGE_electrolysis_use": "1", "DOSAGE_chlorine_use": cl,
+		}
+		srv3, _ := configServer(t, "", "", h2o2Body(running))
+		got, err = (&Client{BaseURL: srv3.URL}).FetchControlConfig(context.Background())
+		if err != nil {
+			t.Fatalf("fetch: %v", err)
+		}
+		if cc, ok := got[bands.TypeChlorine]; !ok || cc != (measure.ControlConfig{Unbanded: true}) {
+			t.Errorf("running cell (chlorine_use=%s) chlorine: got %+v (present=%v), want Unbanded", cl, cc, ok)
+		}
+		assertControl(t, "running cell ORP", got[bands.TypeORP], 700, 550, 800)
+	}
+
+	// A RUNNING cell's ORP with missing VALUES (its setpoint key exists) stays
+	// omitted: that is "unknown right now", not neutral by configuration.
+	running := map[string]any{
+		"MENU_dosage_1": "none", "MENU_dosage_2": "block", "MENU_dosage_3": "none",
+		"DOSAGE_electrolysis_use": "1", "DOSAGE_chlorine_use": "0",
+	}
+	runningBody, _ := json.Marshal(running)
+	srv4, _ := configServer(t, "", "", runningBody)
+	got, err = (&Client{BaseURL: srv4.URL}).FetchControlConfig(context.Background())
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if cc, ok := got[bands.TypeORP]; ok {
+		t.Errorf("running cell ORP without values: got %+v, want omitted", cc)
 	}
 }
 

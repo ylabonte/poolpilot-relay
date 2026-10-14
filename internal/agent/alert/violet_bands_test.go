@@ -126,3 +126,55 @@ func TestVioletActiveOxygenPoolGradesRedoxNeutral(t *testing.T) {
 		t.Errorf("latched Redox alert must be cleared on an H2O2 pool, got %+v", rs)
 	}
 }
+
+// TestVioletElectrolysisPoolClearsLatchedChlorineAlert is the relay half of the
+// ylabonte/poolpilot-app#1081 review: on an electrolysis pool (running cell,
+// even with a stale DOSAGE_chlorine_use=1 that used to yield a chlorine band)
+// free chlorine is Unbanded — the electrolysis family has no chlorine setpoint
+// key — so a chlorine rule latched "bad" before the update is cleared silently
+// instead of staying in active_alerts forever, while Redox keeps grading
+// against the cell's own band.
+func TestVioletElectrolysisPoolClearsLatchedChlorineAlert(t *testing.T) {
+	const body = `{"DOSAGE_phminus_use":"1","DOSAGE_phminus_setpoint":"7.2",` +
+		`"DOSAGE_phminus_limits_warnlow":"6.8","DOSAGE_phminus_limits_warnhigh":"7.8",` +
+		`"DOSAGE_chlorine_setpoint_orp":"750","DOSAGE_chlorine_limits_orp_warnlow":"600",` +
+		`"DOSAGE_chlorine_limits_orp_warnhigh":"850","DOSAGE_chlorine_setpoint_cl":"0.6",` +
+		`"DOSAGE_chlorine_limits_cl_warnlow":"0.3","DOSAGE_chlorine_limits_cl_warnhigh":"1.5",` +
+		`"DOSAGE_electrolysis_setpoint_orp":"700","DOSAGE_electrolysis_limits_orp_warnlow":"550",` +
+		`"DOSAGE_electrolysis_limits_orp_warnhigh":"800","DOSAGE_electrolysis_limits_cl_warnlow":"0.2",` +
+		`"DOSAGE_electrolysis_limits_cl_warnhigh":"1.2",` +
+		`"MENU_dosage_1":"none","MENU_dosage_2":"block","MENU_dosage_3":"none",` +
+		`"DOSAGE_electrolysis_use":"1","DOSAGE_chlorine_use":"1"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	control, err := (&violet.Client{BaseURL: srv.URL}).FetchControlConfig(context.Background())
+	if err != nil {
+		t.Fatalf("FetchControlConfig: %v", err)
+	}
+	if !control[bands.TypeChlorine].Unbanded {
+		t.Fatalf("electrolysis pool chlorine: got %+v, want Unbanded", control[bands.TypeChlorine])
+	}
+
+	rules := alert.SeedDefaults(preset.Violet)
+	cl := measure.Reading{Type: bands.TypeChlorine, Value: 0.05, Unit: "mg/l", Label: "Chlorine"}
+	orp := measure.Reading{Type: bands.TypeORP, Value: 700, Unit: "mV", Label: "Redox"}
+	if sev, ok := alert.EffectiveSeverity(rules, control, orp); !ok || sev != string(bands.SeverityOK) {
+		t.Errorf("Redox 700 mV against the cell's own band: got %q,%v, want ok", sev, ok)
+	}
+
+	now := time.Now()
+	clRule := "default-" + bands.TypeChlorine
+	states := map[string]*alert.RuleState{
+		clRule: {LastSeverity: "bad", Notified: true, ActiveSince: now.Add(-48 * time.Hour), LastNotifiedAt: now.Add(-48 * time.Hour)},
+	}
+	for i := 0; i < 3; i++ {
+		if reqs := alert.Evaluate(rules, states, []measure.Reading{cl, orp}, control, "guid", now.Add(time.Duration(i)*time.Minute)); len(reqs) != 0 {
+			t.Fatalf("electrolysis pool poll %d: got alerts %+v, want none (silent reset)", i, reqs)
+		}
+	}
+	if rs, ok := states[clRule]; ok {
+		t.Errorf("latched chlorine alert must be deleted on an electrolysis pool, got %+v", rs)
+	}
+}
