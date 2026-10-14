@@ -91,7 +91,63 @@ func buildControlConfigQuery() string {
 			add(f.useKey)
 		}
 	}
+	// The dosing-variant keys activeOxygen reads (not part of any channel row).
+	add(menuDosageLiquidChlorineKey)
+	add(menuDosageActiveOxygenKey)
+	add(activeOxygenUseKey)
 	return strings.Join(keys, ",")
+}
+
+// The keys that tell an active-oxygen (H2O2) pool apart from a chlorine one —
+// the same keys the apps' VioletControlConfig.activeOxygen reads. MENU_dosage_n
+// is the vendor dashboard's own per-slot visibility flag ("block" = shown,
+// "none" = hidden): slot 1 is liquid chlorine, slot 3 active oxygen.
+const (
+	menuDosageLiquidChlorineKey = "MENU_dosage_1"
+	menuDosageActiveOxygenKey   = "MENU_dosage_3"
+	activeOxygenUseKey          = "DOSAGE_h2o2_use"
+	liquidChlorineUseKey        = "DOSAGE_chlorine_use"
+)
+
+// activeOxygen reports whether the pool doses active oxygen (H2O2) instead of
+// chlorine. VIOLET and BADU Blue (same firmware) dose it through the same
+// DOS_1_CL output as liquid chlorine; after the switch the firmware keeps the
+// DOSAGE_chlorine_* values and only drops DOSAGE_chlorine_use to 0, while the
+// DOSAGE_h2o2_* family has no setpoint or warn limits of its own.
+//
+// Mirrors the apps' VioletControlConfig.activeOxygen exactly: the vendor menu
+// decides when it reports slot 3 (shown → active oxygen, hidden → not). Firmware
+// that doesn't report MENU_dosage_3, and the both-slots-shown case (not settable
+// through the vendor UI, only via a raw /setConfig), fall back to the _use flags:
+// active oxygen only with DOSAGE_h2o2_use = 1 and DOSAGE_chlorine_use != 1.
+func activeOxygen(raw map[string]any) bool {
+	byUseFlags := configFlag(raw, activeOxygenUseKey) && !configFlag(raw, liquidChlorineUseKey)
+	slot, reported := menuShown(raw, menuDosageActiveOxygenKey)
+	if !reported {
+		return byUseFlags
+	}
+	if liquid, _ := menuShown(raw, menuDosageLiquidChlorineKey); slot && liquid {
+		return byUseFlags
+	}
+	return slot
+}
+
+// menuShown reads a MENU_dosage_n slot: "block" → shown, "none" → hidden
+// (case-insensitive); anything else (absent, blank, unknown) is unreported —
+// mirroring the apps' dosingMenuSlots.
+func menuShown(raw map[string]any, key string) (shown, reported bool) {
+	s, ok := raw[key].(string)
+	if !ok {
+		return false, false
+	}
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "block":
+		return true, true
+	case "none":
+		return false, true
+	default:
+		return false, false
+	}
 }
 
 // FetchControlConfig reads the VIOLET controller's live regulation config from
@@ -179,8 +235,19 @@ func (c *Client) FetchControlConfig(ctx context.Context) (map[string]measure.Con
 // sub-band, no single marker) that the alert path grades as the OK zone directly.
 // Target is still the mean for informational continuity but no longer drives the
 // band. This closes the mean-approximation gap tracked in issue #31.
+//
+// On an active-oxygen pool (activeOxygen) the liquid-chlorine channel is a
+// leftover and never resolves, not even as the fallback: Redox and free chlorine
+// then have no channel at all (unless an electrolysis channel's own _use flag
+// reads 1), so the type is omitted and graded neutral — the maintainer's
+// "neutral gauge, no band" decision for H2O2 pools, matching the apps.
 func resolveControlConfig(baseURL string, m controlMeasurement, raw map[string]any) (measure.ControlConfig, bool) {
 	active := activeFields(m, raw)
+	if len(active) == 0 {
+		slog.Debug("violet active-oxygen pool; type graded neutral (no chlorine-derived band)",
+			"base_url", baseURL, "type", m.bandsType)
+		return measure.ControlConfig{}, false
+	}
 
 	var setpoints, warnLows, warnHighs []float64
 	for _, f := range active {
@@ -236,15 +303,22 @@ func resolveControlConfig(baseURL string, m controlMeasurement, raw map[string]a
 
 // activeFields returns the measurement's channels whose `_use` flag reads 1,
 // falling back to the default channel (fields[0]) when none does — mirroring
-// VioletControlConfig.activeFields in the apps.
+// VioletControlConfig.activeFields in the apps. On an active-oxygen pool the
+// liquid-chlorine (DOSAGE_chlorine_*) channels are leftovers and are excluded
+// from both the active set and the fallback, so the result can be empty
+// (ylabonte/poolpilot-app#1065); pH is unaffected.
 func activeFields(m controlMeasurement, raw map[string]any) []controlField {
+	h2o2 := activeOxygen(raw)
+	leftover := func(f controlField) bool {
+		return h2o2 && f.useKey == liquidChlorineUseKey
+	}
 	var active []controlField
 	for _, f := range m.fields {
-		if configFlag(raw, f.useKey) {
+		if configFlag(raw, f.useKey) && !leftover(f) {
 			active = append(active, f)
 		}
 	}
-	if len(active) == 0 {
+	if len(active) == 0 && !leftover(m.fields[0]) {
 		return m.fields[:1]
 	}
 	return active
