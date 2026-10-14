@@ -414,13 +414,13 @@ func EffectiveSeverity(rules []wire.AlertRule, control map[string]measure.Contro
 
 // effectiveBands resolves the band a rule evaluates against, in precedence
 // order: an explicit app override (rule.Bands) wins; else the controller's live
-// config derives min/max = its warn limits and the OK zone (setpoint ± tolerance,
-// or the controller's explicit OK corridor — see bandsFromControl). When neither is available it reports ok=false
-// so the caller stays neutral — there
-// is NO hardcoded-band severity fallback (the app's D-no-fallback decision): a
-// measurement with no real control band yields no severity, exactly as the apps
-// now render it. bands.Defaults survives only as the known-banded-type set, not
-// a source of severity.
+// config derives min/max = its warn limits and the OK zone (setpoint ±
+// tolerance, or the controller's explicit OK corridor — see bandsFromControl).
+// When neither is available it reports ok=false so the caller stays neutral —
+// there is NO hardcoded-band severity fallback (the app's D-no-fallback
+// decision): a measurement with no real control band yields no severity,
+// exactly as the apps now render it. bands.Defaults survives only as the
+// known-banded-type set, not a source of severity.
 func effectiveBands(rule wire.AlertRule, control map[string]measure.ControlConfig) (bands.BandsConfig, bool) {
 	if rule.Bands != nil {
 		return *rule.Bands, true

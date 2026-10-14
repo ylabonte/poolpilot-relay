@@ -195,10 +195,14 @@ func menuShown(raw map[string]any, key string) (shown, reported bool) {
 // what makes violetDriver a driver.ControlConfigReader.
 //
 // It is fail-soft on CONTENT (mirroring the ProCon.IP driver): a measurement
-// whose warn limits /getConfig doesn't echo — a Redox-regulated pool has no
-// chlorine sensor, older firmware omits keys — is simply absent from the map, so the alert engine grades it neutral (no real control band → no severity;
-// there is no hardcoded-band fallback, per the app's D-no-fallback decision). A
-// partial or empty map is a normal, non-error result.
+// whose warn limits /getConfig doesn't echo (older firmware omits keys) is
+// absent from the map — band unknown right now, so the alert engine grades it
+// neutral and pauses its rule — or reported Unbanded when it is band-less by
+// configuration (an active-oxygen pool, or a setpointless / paused-cell
+// channel without usable limits — see resolveControlConfig), so a latched rule
+// resets silently. Either way there is no severity and no hardcoded-band
+// fallback (the app's D-no-fallback decision). A partial or empty map is a
+// normal, non-error result.
 //
 // It DOES return an error on TRANSPORT failure (unreachable, non-200, unreadable
 // or non-JSON body): the poller retains the last-known-good bands on a control
