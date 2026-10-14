@@ -169,6 +169,19 @@ var parityCases = []parityCase{
 			{bands.TypeChlorine, ctlBand, pts(0.2, sBad, 0.4, sWarn, 0.7, sOK, 1.2, sWarn, 1.6, sBad)}},
 	},
 	{
+		// The apps' fixture row "ideal band fully outside the limits → neutral".
+		// Same severity here, by a different route: the type stays PRESENT with
+		// a band that bandsFromControl rejects (the clamped OK zone inverts), so
+		// a latched rule PAUSES rather than resetting — deliberately the same
+		// handling as a setpoint outside its limits; the apps have no latched
+		// state to keep, so neutral is all they need.
+		name: "chlorine pool, ideal range entirely outside the warn limits",
+		violet: []string{parityChlorine, parityPH, parityLiquid,
+			`"DOSAGE_chlorine_lowerval_cl":"2.0","DOSAGE_chlorine_upperval_cl_day":"3.0"`},
+		rows: []parityRow{phRow, liquidORPRow,
+			{bands.TypeChlorine, ctlBand, pts(0.1, sNone, 0.6, sNone, 1.4, sNone, 2.5, sNone)}},
+	},
+	{
 		name:   "active-oxygen pool (unchanged)",
 		violet: []string{parityH2O2, parityPH, parityLiquid, parityLiquidIdeal, parityCellORP, parityCellClLimit},
 		rows: []parityRow{phRow,
