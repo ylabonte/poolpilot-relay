@@ -376,6 +376,70 @@ func TestRulePausesAndResumesWhenBandDisappears(t *testing.T) {
 	}
 }
 
+// TestRuleSilentlyResetsWhenTypeIsUnbanded pins the active-oxygen exception
+// (ylabonte/poolpilot-app#1065): a rule latched "bad" against a band the
+// controller now marks Unbanded by configuration is cleared without any push,
+// and a later return of the band starts from a clean "ok" baseline with the
+// normal debounce — unlike a merely missing band, which pauses (test above).
+func TestRuleSilentlyResetsWhenTypeIsUnbanded(t *testing.T) {
+	rules := []wire.AlertRule{phRule()}
+	states := map[string]*RuleState{}
+	for n := 1; n <= 3; n++ {
+		Evaluate(rules, states, phReading(7.9), phControl, guid, tick(n))
+	}
+	if rs := states["r-ph"]; rs == nil || !rs.Notified || rs.LastSeverity != "bad" {
+		t.Fatalf("setup: rule must be notified bad, got %+v", rs)
+	}
+
+	unbanded := map[string]measure.ControlConfig{bands.TypePH: {Unbanded: true}}
+	// Well past the 6h cooldown, still reading "bad": no recover, no renotify.
+	for _, n := range []int{400, 800} {
+		if got := Evaluate(rules, states, phReading(7.9), unbanded, guid, tick(n)); len(got) != 0 {
+			t.Fatalf("unbanded poll at tick %d must emit nothing, got %+v", n, got)
+		}
+		if rs, ok := states["r-ph"]; ok {
+			t.Fatalf("unbanded poll at tick %d must clear the rule state, got %+v", n, rs)
+		}
+	}
+	// No reading at all for the type still clears it (the band, not the value, decides).
+	states["r-ph"] = &RuleState{LastSeverity: "bad", Notified: true, ActiveSince: tick(3), LastNotifiedAt: tick(3)}
+	if got := Evaluate(rules, states, nil, unbanded, guid, tick(801)); len(got) != 0 || states["r-ph"] != nil {
+		t.Fatalf("unbanded without a reading: got %+v, state %+v", got, states["r-ph"])
+	}
+
+	// The band comes back (pool switched back to chlorine): a fresh rule from
+	// "ok" — two "bad" polls stay silent (debounce 3), the third enters.
+	for n := 900; n <= 901; n++ {
+		if got := Evaluate(rules, states, phReading(7.9), phControl, guid, tick(n)); len(got) != 0 {
+			t.Fatalf("debounce poll at tick %d must be silent, got %+v", n, got)
+		}
+	}
+	got := Evaluate(rules, states, phReading(7.9), phControl, guid, tick(902))
+	if len(got) != 1 || got[0].Transition != wire.TransitionEnter || got[0].Severity != "bad" {
+		t.Fatalf("after the band returns the rule must re-enter normally, got %+v", got)
+	}
+}
+
+// TestUnbandedTypeKeepsAppOverride: an explicit app band (rule.Bands) still
+// grades an Unbanded type and its state is NOT reset.
+func TestUnbandedTypeKeepsAppOverride(t *testing.T) {
+	rule := phRule()
+	rule.Bands = &bands.BandsConfig{Min: 6.6, OkMin: 7.0, OkMax: 7.4, Max: 7.8}
+	rules := []wire.AlertRule{rule}
+	states := map[string]*RuleState{}
+	unbanded := map[string]measure.ControlConfig{bands.TypePH: {Unbanded: true}}
+	var got []wire.AlertRequest
+	for n := 1; n <= 3; n++ {
+		got = Evaluate(rules, states, phReading(7.9), unbanded, guid, tick(n))
+	}
+	if len(got) != 1 || got[0].Transition != wire.TransitionEnter {
+		t.Fatalf("app override must still alert on an Unbanded type, got %+v", got)
+	}
+	if rs := states["r-ph"]; rs == nil || !rs.Notified {
+		t.Fatalf("app override state must persist, got %+v", rs)
+	}
+}
+
 func TestWarnNotNotifiedByDefault(t *testing.T) {
 	rules := []wire.AlertRule{phRule()} // notify_severities = ["bad"]
 	states := map[string]*RuleState{}
@@ -724,6 +788,11 @@ func TestBandsFromControl(t *testing.T) {
 	}
 	if _, ok := bandsFromControl(measure.ControlConfig{Target: 700, Min: 700, Max: 700}, 75); ok {
 		t.Error("Min == Max (empty range) must not derive a collapsed band")
+	}
+	// Unbanded wins even over otherwise-valid values: the controller says this
+	// type has no band by configuration.
+	if _, ok := bandsFromControl(measure.ControlConfig{Target: 700, Min: 600, Max: 850, Unbanded: true}, 75); ok {
+		t.Error("an Unbanded config must not derive a band")
 	}
 }
 

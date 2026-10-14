@@ -431,3 +431,151 @@ func assertControl(t *testing.T, name string, cc measure.ControlConfig, target, 
 		t.Errorf("%s Max: got %v, want %v", name, cc.Max, max)
 	}
 }
+
+// h2o2Body is a /getConfig body carrying a full pH- channel plus the complete
+// DOSAGE_chlorine_* and DOSAGE_electrolysis_* families, with extra overriding /
+// adding keys — so each case below varies only the dosing-variant keys
+// (MENU_dosage_1/3, the _use flags). It mirrors the live firmware after a switch
+// to active oxygen: the chlorine values stay, only the flags/menu change.
+func h2o2Body(extra map[string]string) []byte {
+	kv := map[string]string{
+		"DOSAGE_phminus_use":                      "1",
+		"DOSAGE_phminus_setpoint":                 "7.2",
+		"DOSAGE_phminus_limits_warnlow":           "6.8",
+		"DOSAGE_phminus_limits_warnhigh":          "7.8",
+		"DOSAGE_chlorine_setpoint_orp":            "750",
+		"DOSAGE_chlorine_limits_orp_warnlow":      "600",
+		"DOSAGE_chlorine_limits_orp_warnhigh":     "850",
+		"DOSAGE_chlorine_setpoint_cl":             "0.6",
+		"DOSAGE_chlorine_limits_cl_warnlow":       "0.3",
+		"DOSAGE_chlorine_limits_cl_warnhigh":      "1.5",
+		"DOSAGE_electrolysis_setpoint_orp":        "700",
+		"DOSAGE_electrolysis_limits_orp_warnlow":  "550",
+		"DOSAGE_electrolysis_limits_orp_warnhigh": "800",
+		"DOSAGE_electrolysis_limits_cl_warnlow":   "0.2",
+		"DOSAGE_electrolysis_limits_cl_warnhigh":  "1.2",
+	}
+	for k, v := range extra {
+		kv[k] = v
+	}
+	var b strings.Builder
+	b.WriteString("{")
+	first := true
+	for k, v := range kv {
+		if !first {
+			b.WriteString(",")
+		}
+		first = false
+		b.WriteString(`"` + k + `":"` + v + `"`)
+	}
+	b.WriteString("}")
+	return []byte(b.String())
+}
+
+// TestFetchControlConfigActiveOxygenPoolHasNoChlorineBand pins the
+// ylabonte/poolpilot-app#1065 decision on the relay side: on an active-oxygen
+// (H2O2) pool the DOSAGE_chlorine_* leftovers must not yield an ORP or chlorine
+// band — the type is omitted, so alerts/status grade it neutral — while pH is
+// untouched. The predicate mirrors the apps' VioletControlConfig.activeOxygen.
+func TestFetchControlConfigActiveOxygenPoolHasNoChlorineBand(t *testing.T) {
+	// Each type resolves to a real band, to an explicit Unbanded entry (deliberately
+	// neutral by configuration), or is absent (incomplete → unknown).
+	const (
+		band     = "band"
+		unbanded = "unbanded"
+		absent   = "absent"
+	)
+	type want struct {
+		orp      string
+		orpMin   float64 // ORP Min when it is a band (600 = liquid chlorine, 550 = electrolysis)
+		chlorine string
+	}
+	liquid := want{orp: band, orpMin: 600, chlorine: band}
+	neutral := want{orp: unbanded, chlorine: unbanded}
+	cases := []struct {
+		name  string
+		extra map[string]string
+		want  want
+	}{
+		{"H2O2 pool, vendor menu (slot 3 shown, slot 1 hidden)",
+			map[string]string{"MENU_dosage_1": "none", "MENU_dosage_3": "block", "DOSAGE_h2o2_use": "1", "DOSAGE_chlorine_use": "0"}, neutral},
+		{"H2O2 pool, menu decides even with stale chlorine_use=1",
+			map[string]string{"MENU_dosage_1": "none", "MENU_dosage_3": "block", "DOSAGE_h2o2_use": "1", "DOSAGE_chlorine_use": "1"}, neutral},
+		{"paused H2O2 pool (h2o2_use=0) with stale chlorine_use, menu says H2O2",
+			map[string]string{"MENU_dosage_1": "none", "MENU_dosage_3": "BLOCK", "DOSAGE_h2o2_use": "0", "DOSAGE_chlorine_use": "1"}, neutral},
+		{"paused H2O2 pool, all flags off, menu says H2O2 (no legacy fallback)",
+			map[string]string{"MENU_dosage_1": "none", "MENU_dosage_3": "block", "DOSAGE_h2o2_use": "0", "DOSAGE_chlorine_use": "0"}, neutral},
+		{"H2O2 pool without MENU keys (h2o2_use=1, chlorine_use=0)",
+			map[string]string{"DOSAGE_h2o2_use": "1", "DOSAGE_chlorine_use": "0"}, neutral},
+		{"H2O2 pool without MENU keys, chlorine_use absent",
+			map[string]string{"DOSAGE_h2o2_use": "1"}, neutral},
+		{"no MENU keys, both flags on → chlorine wins",
+			map[string]string{"DOSAGE_h2o2_use": "1", "DOSAGE_chlorine_use": "1"}, liquid},
+		{"no MENU keys, both flags off → legacy chlorine fallback",
+			map[string]string{"DOSAGE_h2o2_use": "0", "DOSAGE_chlorine_use": "0"}, liquid},
+		{"both slots shown, h2o2_use=1, chlorine_use=0 → active oxygen",
+			map[string]string{"MENU_dosage_1": "block", "MENU_dosage_3": "block", "DOSAGE_h2o2_use": "1", "DOSAGE_chlorine_use": "0"}, neutral},
+		{"both slots shown, both flags on → chlorine",
+			map[string]string{"MENU_dosage_1": "block", "MENU_dosage_3": "block", "DOSAGE_h2o2_use": "1", "DOSAGE_chlorine_use": "1"}, liquid},
+		{"chlorine pool, vendor menu (slot 1 shown, slot 3 hidden), stale h2o2_use=1",
+			map[string]string{"MENU_dosage_1": "block", "MENU_dosage_3": "none", "DOSAGE_h2o2_use": "1", "DOSAGE_chlorine_use": "1"}, liquid},
+		{"chlorine pool with chlorine dosing paused (menu slot 1) → legacy fallback kept",
+			map[string]string{"MENU_dosage_1": "block", "MENU_dosage_3": "none", "DOSAGE_h2o2_use": "0", "DOSAGE_chlorine_use": "0"}, liquid},
+		{"electrolysis pool, cell active",
+			map[string]string{"MENU_dosage_1": "none", "MENU_dosage_2": "block", "MENU_dosage_3": "none", "DOSAGE_electrolysis_use": "1", "DOSAGE_chlorine_use": "0"},
+			// the electrolysis family has no chlorine setpoint, so chlorine stays omitted (unchanged behaviour)
+			want{orp: band, orpMin: 550, chlorine: absent}},
+		{"H2O2 menu + electrolysis channel whose own _use=1 still resolves",
+			map[string]string{"MENU_dosage_1": "none", "MENU_dosage_3": "block", "DOSAGE_electrolysis_use": "1", "DOSAGE_h2o2_use": "1"},
+			// chlorine: the leftover is excluded, the electrolysis cl channel has no setpoint → incomplete
+			want{orp: band, orpMin: 550, chlorine: absent}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, _ := configServer(t, "", "", h2o2Body(tc.extra))
+			got, err := (&Client{BaseURL: srv.URL}).FetchControlConfig(context.Background())
+			if err != nil {
+				t.Fatalf("fetch: %v", err)
+			}
+			assertControl(t, "pH", got[bands.TypePH], 7.2, 6.8, 7.8)
+			kind := func(typ string) string {
+				cc, ok := got[typ]
+				switch {
+				case !ok:
+					return absent
+				case cc.Unbanded:
+					if cc != (measure.ControlConfig{Unbanded: true}) {
+						t.Errorf("%s: Unbanded entry carries values: %+v", typ, cc)
+					}
+					return unbanded
+				default:
+					return band
+				}
+			}
+			if k := kind(bands.TypeORP); k != tc.want.orp {
+				t.Fatalf("ORP: got %s (%+v), want %s", k, got[bands.TypeORP], tc.want.orp)
+			}
+			if tc.want.orp == band && !almostEqual(got[bands.TypeORP].Min, tc.want.orpMin) {
+				t.Errorf("ORP Min: got %v, want %v", got[bands.TypeORP].Min, tc.want.orpMin)
+			}
+			if k := kind(bands.TypeChlorine); k != tc.want.chlorine {
+				t.Errorf("chlorine: got %s (%+v), want %s", k, got[bands.TypeChlorine], tc.want.chlorine)
+			}
+			if got[bands.TypePH].Unbanded {
+				t.Error("pH must never be Unbanded")
+			}
+		})
+	}
+}
+
+func TestControlConfigQueryIncludesDosingVariantKeys(t *testing.T) {
+	keys := map[string]bool{}
+	for _, k := range strings.Split(controlConfigQuery, ",") {
+		keys[k] = true
+	}
+	for _, want := range []string{"MENU_dosage_1", "MENU_dosage_3", "DOSAGE_h2o2_use"} {
+		if !keys[want] {
+			t.Errorf("control config query missing %q (needed to detect an active-oxygen pool)", want)
+		}
+	}
+}

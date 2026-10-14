@@ -237,10 +237,26 @@ func ValidateRules(rules []wire.AlertRule) error {
 // cost is that /v1/status can show a neutral measurement next to an active
 // "bad" alert for that same type while the band is missing;
 // TestRulePausesAndResumesWhenBandDisappears pins this state machine.
+//
+// The exception is a type the controller marks measure.ControlConfig.Unbanded —
+// deliberately band-less by its own configuration (Redox / free chlorine on a
+// VIOLET active-oxygen pool, ylabonte/poolpilot-app#1065), not temporarily
+// unknown. There the band will not come back, so pausing would keep a latched
+// alert active forever. Unless an app override (rule.Bands) still bands the
+// type, the rule's state is SILENTLY reset: no recovery push ("back in range"
+// would be false — the value is no longer graded at all), no renotify, and the
+// alert drops out of /v1/status active_alerts. Should the band return later, the
+// rule starts from a clean "ok" baseline with the normal entry debounce. Only a
+// successful fetch can produce Unbanded, so a failed fetch (the poller retains
+// the last-known-good map) and a fail-soft omission keep the pause semantics.
 func Evaluate(rules []wire.AlertRule, states map[string]*RuleState, readings []measure.Reading, control map[string]measure.ControlConfig, guid string, now time.Time) []wire.AlertRequest {
 	var out []wire.AlertRequest
 	for _, rule := range rules {
 		if rule.Kind != wire.RuleKindMeasurementBand || !rule.Enabled {
+			continue
+		}
+		if rule.Bands == nil && control[rule.MeasurementType].Unbanded {
+			delete(states, rule.ID) // unbanded by configuration: silent reset — see doc comment above
 			continue
 		}
 		reading, ok := findReading(readings, rule.MeasurementType)
@@ -438,7 +454,8 @@ func toleranceFor(rule wire.AlertRule) float64 {
 // yet, so a chlorine ControlConfig never sets HasOkZone today — HasOkZone is the
 // hook Plan B can reuse once it does.
 //
-// It returns false for an unusable config (single-setpoint with non-positive
+// It returns false for a config the controller marks Unbanded, and for an
+// unusable config (single-setpoint with non-positive
 // tolerance; inverted or EMPTY limits where Min >= Max; or an OK zone so far
 // outside the limits that the clamp degenerates), and effectiveBands then
 // propagates that false straight through — there is no default-band fallback
@@ -450,7 +467,7 @@ func toleranceFor(rule wire.AlertRule) float64 {
 // reading "bad" — perpetual alarm spam. Newly reachable since the TYPE gate was
 // dropped, so a disabled/parked channel now reaches here.
 func bandsFromControl(cc measure.ControlConfig, tol float64) (bands.BandsConfig, bool) {
-	if cc.Min >= cc.Max {
+	if cc.Unbanded || cc.Min >= cc.Max {
 		return bands.BandsConfig{}, false
 	}
 	var okMin, okMax float64
