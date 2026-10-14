@@ -602,6 +602,65 @@ func TestTickRetainsLastKnownGoodControlOnFetchError(t *testing.T) {
 	}
 }
 
+// ylabonte/poolpilot-app#1065, through the real poll → persist path: an ORP
+// rule latched "bad" before an active-oxygen switch PAUSES (stays latched) while
+// the control fetch fails, and is SILENTLY cleared — no push of any kind, gone
+// from the persisted state /v1/status active_alerts reads — once a successful
+// fetch reports the type Unbanded by configuration.
+func TestTickSilentlyClearsLatchedAlertWhenControllerUnbandsType(t *testing.T) {
+	var alerts []wire.AlertRequest
+	cloudSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req wire.AlertRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		alerts = append(alerts, req)
+		_ = json.NewEncoder(w).Encode(wire.AlertResponse{Delivered: 1})
+	}))
+	defer cloudSrv.Close()
+
+	st, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatalf("state: %v", err)
+	}
+	rule := wire.AlertRule{
+		ID: "r-orp", Kind: wire.RuleKindMeasurementBand, Enabled: true, Source: "default",
+		MeasurementType: bands.TypeORP, OkTolerance: 75, NotifySeverities: []string{"bad"},
+		DebouncePolls: 1, CooldownSeconds: 1, NotifyRecovery: true,
+	}
+	latchedAt := time.Now().Add(-24 * time.Hour) // far past the cooldown
+	latched := alert.RuleState{LastSeverity: "bad", Notified: true, LastNotifiedAt: latchedAt, ActiveSince: latchedAt}
+	if err := st.Update(func(s *state.State) {
+		s.Cloud = state.Cloud{BaseURL: cloudSrv.URL, FrpcToken: "tok"}
+		s.Controllers = []state.Controller{{
+			Preset: "violet", LanAddress: "192.0.2.12:80", GUID: "g1",
+			AlertRules: []wire.AlertRule{rule},
+			AlertState: map[string]*alert.RuleState{"r-orp": &latched},
+		}}
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	p := New(st, cloud.New(st), time.Minute)
+	orp := []measure.Reading{{Type: bands.TypeORP, Value: 300, Unit: "mV", Label: "Redox"}}
+	persisted := func() *alert.RuleState { return st.Get().Controllers[0].AlertState["r-orp"] }
+
+	// A failed control fetch (no last-known-good map yet) keeps the pause: the
+	// latched alert survives untouched.
+	stubDriver(t, fakeDriver{readings: orp, controlErr: errors.New("getConfig dropped")})
+	p.tick(context.Background())
+	if rs := persisted(); rs == nil || !rs.Notified || rs.LastSeverity != "bad" {
+		t.Fatalf("failed fetch must pause (stay latched), got %+v", rs)
+	}
+
+	// A successful fetch that reports ORP Unbanded clears it silently.
+	stubDriver(t, fakeDriver{readings: orp, control: map[string]measure.ControlConfig{bands.TypeORP: {Unbanded: true}}})
+	p.tick(context.Background())
+	if rs := persisted(); rs != nil && rs.Notified {
+		t.Fatalf("unbanded type must clear the latched alert, got %+v", rs)
+	}
+	if len(alerts) != 0 {
+		t.Fatalf("clearing must be silent (no recover / renotify), got %+v", alerts)
+	}
+}
+
 // A controller config change the cloud could not be told about at the time
 // (state.Controller.CloudSyncPending, issue poolpilot-cloud#99) is retried on
 // the poll tick — the same retry seam the alert outbox uses — and the flag

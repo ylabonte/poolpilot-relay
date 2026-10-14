@@ -110,11 +110,19 @@ func TestVioletActiveOxygenPoolGradesRedoxNeutral(t *testing.T) {
 		t.Errorf("H2O2 pool pH: got %q,%v, want ok (pH band unchanged)", sev, ok)
 	}
 
-	states := map[string]*alert.RuleState{}
+	// The Redox rule latched "bad" against the chlorine leftovers before the
+	// upgrade: it is cleared silently (no recover/renotify), not kept active.
 	now := time.Now()
+	orpRule := "default-" + bands.TypeORP
+	states := map[string]*alert.RuleState{
+		orpRule: {LastSeverity: "bad", Notified: true, ActiveSince: now.Add(-48 * time.Hour), LastNotifiedAt: now.Add(-48 * time.Hour)},
+	}
 	for i := 0; i < 5; i++ {
 		if reqs := alert.Evaluate(rules, states, []measure.Reading{orp, cl, ph}, h2o2Control, "guid", now.Add(time.Duration(i)*time.Minute)); len(reqs) != 0 {
 			t.Fatalf("H2O2 pool poll %d: got alerts %+v, want none", i, reqs)
 		}
+	}
+	if rs := states[orpRule]; rs != nil && rs.Notified {
+		t.Errorf("latched Redox alert must be cleared on an H2O2 pool, got %+v", rs)
 	}
 }
