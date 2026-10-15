@@ -1176,10 +1176,11 @@ func TestDeviceRevokeKillsLiveWebSessions(t *testing.T) {
 		t.Fatalf("precondition: session cookie should serve the controller, got %d", got)
 	}
 
-	// Pair a second device so this is a cross-revoke, not an unpair, then let it
-	// revoke the first — the lost-phone flow.
-	token2, _ := f.addDevice(t, goodInvite, "second phone")
-	resp, raw = f.do(t, "DELETE", "/v1/devices/"+dev1, token2, nil)
+	// Pair a second device so this is not an unpair, then let the first device
+	// revoke ITSELF (leaving the relay). A cross-revoke is owner-only and the
+	// second device is a member, so self-revoke is the flow both roles share.
+	_, _ = f.addDevice(t, goodInvite, "second phone")
+	resp, raw = f.do(t, "DELETE", "/v1/devices/"+dev1, token, nil)
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("revoke: HTTP %d %s", resp.StatusCode, raw)
 	}
