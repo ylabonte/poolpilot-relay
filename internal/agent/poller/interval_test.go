@@ -137,8 +137,10 @@ func TestReloadAppliesIntervalLive(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.Reload()
-	waitFor(t, func() bool { return p.Interval() == time.Hour }, "default restored")
-	time.Sleep(60 * time.Millisecond) // let a tick already due land
+	// Interval() reads the store, so it flips at once; wait until Run itself has
+	// taken the signal (and re-armed its ticker) before counting.
+	waitFor(t, func() bool { return !p.ReloadPending() }, "Run to take the reload")
+	time.Sleep(50 * time.Millisecond) // the re-arm right after the receive, even on a loaded runner
 	settled := n.Load()
 	time.Sleep(100 * time.Millisecond)
 	if got := n.Load(); got != settled {
