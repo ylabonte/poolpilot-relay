@@ -48,6 +48,12 @@ automatische Updates**:
 Das ist die Einstellung, die die meisten wollen, weil sie das Gerät nie ohne
 Update-Möglichkeit zurücklässt.
 
+Schalter und **Jetzt aktualisieren** sind Sache des Haushalts-**Besitzers**.
+Jedes gekoppelte Telefon sieht den Update-Status und kann das Relay nach einem
+Update suchen lassen; ein Mitglieds-Telefon, das den Schalter ändern oder ein
+Update installieren will, wird abgewiesen (siehe
+[Besitzer- und Mitglieds-Telefone](troubleshooting.md#besitzer--und-mitglieds-telefone)).
+
 ### Am Gerät — vollständiges Abschalten
 
 Um ein einzelnes Gerät komplett aus dem Selbst-Update herauszunehmen, setze dies

@@ -45,6 +45,11 @@ The relay's page in the PoolPilot app has an **automatic updates** on/off toggle
 This is the setting most people want, because it never leaves the device unable
 to update.
 
+The toggle and **Update now** belong to the household **owner**. Any paired
+phone can see the update status and ask the relay to check for an update; a
+member phone that tries to change the toggle or install an update is refused
+(see [Owner and member phones](troubleshooting.md#owner-and-member-phones)).
+
 ### On the device — full opt‑out
 
 To take a single device completely out of self‑update, set this in

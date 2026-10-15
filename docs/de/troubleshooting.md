@@ -102,6 +102,38 @@ sudo poolpilot-relay show-pairing
 Scanne den QR-Code mit deinem Telefon oder füge den ausgegebenen Link in die App
 ein. Der Befehl ist schreibgeschützt und jederzeit gefahrlos aufrufbar.
 
+## Besitzer- und Mitglieds-Telefone
+
+Jedes mit dem Relay gekoppelte Telefon hat eine Haushaltsrolle, die beim Koppeln
+festgelegt wird:
+
+- **Besitzer**: das Telefon, das das Relay eingerichtet hat, und ein Telefon,
+  das die Besitzer-Rolle mit einem [Wiederherstellungscode](#besitzer-zugriff-verloren)
+  zurückgeholt hat.
+- **Mitglied**: ein Telefon, das mit einer Einladung des Besitzers beigetreten ist.
+
+Beide sehen den Pool, seine Messwerte, Warnungen und die eigene Weboberfläche des
+Controllers, und beide können **sich selbst** vom Relay entfernen. Das Relay
+selbst ändern dürfen nur Besitzer: Controller hinzufügen, ändern oder entfernen,
+den Fernzugriffs-Link eines Controllers erneuern, Warnregeln ändern, ein
+**anderes** Telefon entfernen, Updates installieren oder automatische Updates
+umschalten sowie Haushalts- und Werksreset. Fragt ein Mitglieds-Telefon eines
+davon an, antwortet die lokale API des Relays mit `403` und dem Fehlercode
+`owner_required`, und nichts ändert sich.
+
+Telefone, die gekoppelt wurden, bevor das Relay Rollen gespeichert hat, bekommen
+ihre Rolle einmalig beim ersten Start mit dieser Version: Das Telefon, das das
+Relay eingerichtet hat, und jedes Telefon, dessen Herkunft das Relay nicht
+sicher erkennen kann, werden Besitzer; ein Telefon, das erkennbar später per
+Einladung beigetreten ist, wird Mitglied. Hat ein Telefon die falsche Rolle, kann
+ein Besitzer es entfernen und neu einladen oder die Besitzer-Rolle mit einem
+Wiederherstellungscode zurückholen (unten).
+
+Die Rolle auf dem Relay wird beim Koppeln festgelegt. Wer in den
+Haushaltseinstellungen der App befördert oder herabgestuft wird, behält auf dem
+Relay seine Rolle; soll ein Mitglieds-Telefon auf dem Relay Besitzer-Rechte
+bekommen, koppel es mit einem Wiederherstellungscode.
+
 ## Besitzer-Zugriff verloren
 
 Wenn kein Telefon mehr als Haushalts-Besitzer agieren kann, erzeuge am Gerät

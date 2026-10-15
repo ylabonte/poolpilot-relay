@@ -97,6 +97,33 @@ sudo poolpilot-relay show-pairing
 Scan the QR with your phone, or paste the printed link into the app. This is
 read‑only and safe to run any time.
 
+## Owner and member phones
+
+Every phone paired with the relay has a household role, fixed when it is paired:
+
+- **Owner**: the phone that set the relay up, and a phone that took the owner
+  role back with a [recovery code](#lost-owner-access).
+- **Member**: a phone that joined with an invite from the owner.
+
+Both see the pool, its readings, alerts and the controller's own web interface,
+and both can remove **themselves** from the relay. Changing the relay itself is
+for owners only: adding, changing or removing controllers, regenerating a
+controller's remote link, changing alert rules, removing **another** phone,
+installing updates or switching automatic updates, and the household and factory
+resets. A member phone that asks for one of these gets `403` with the error code
+`owner_required` from the relay's local API, and nothing changes.
+
+Phones paired before the relay stored roles get theirs assigned once, when the
+relay first starts with this version: the phone that set the relay up, and any
+phone whose origin the relay cannot tell for certain, become owners; a phone
+that clearly joined later through an invite becomes a member. If a phone ends up
+with the wrong role, an owner can remove it and invite it again, or take the
+owner role back with a recovery code (below).
+
+The role on the relay is set at pairing. Promoting or demoting someone in the
+app's household settings does not change it; to give a member phone owner
+rights on the relay, pair it with a recovery code.
+
 ## Lost owner access
 
 If no phone can act as the household owner any more, mint a one‑time recovery
