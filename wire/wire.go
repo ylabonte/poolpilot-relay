@@ -1212,7 +1212,9 @@ type UpdateSettingsRequest struct {
 }
 
 // PollIntervalResponse is GET /v1/poll-interval and the 200 body of
-// PUT /v1/poll-interval (pairing bearer, both legs; poolpilot-relay#68).
+// PUT and DELETE /v1/poll-interval (pairing bearer, both legs;
+// poolpilot-relay#68). DELETE clears the override, so the relay falls back to
+// DefaultSeconds (POLL_INTERVAL) again.
 //
 //   - Seconds is the EFFECTIVE cadence the poller runs at right now: the
 //     persisted override when one is set, else DefaultSeconds.

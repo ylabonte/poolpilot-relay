@@ -202,3 +202,40 @@ func TestPollIntervalPutWakesThePoller(t *testing.T) {
 		t.Fatal("a successful PUT did not wake the poller")
 	}
 }
+
+// DELETE clears the override: back to the env/built-in default, persisted,
+// the poller woken, and idempotent.
+func TestPollIntervalDeleteFallsBackToTheDefault(t *testing.T) {
+	f := newFixture(t) // poller default: one minute
+	token := f.pair(t)
+	// Seed the override through the store, so no wake-up is pending yet and
+	// the DELETE's own one is observable.
+	if err := f.store.Update(func(s *state.State) { s.PollIntervalSeconds = 300 }); err != nil {
+		t.Fatal(err)
+	}
+	want := wire.PollIntervalResponse{Seconds: 60, DefaultSeconds: 60, MinSeconds: 3, MaxSeconds: 600}
+	for i := range 2 { // the second DELETE clears an absent override
+		resp, raw := f.do(t, "DELETE", "/v1/poll-interval", token, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("DELETE #%d: %d %s", i+1, resp.StatusCode, raw)
+		}
+		if got := decodePollInterval(t, raw); got != want {
+			t.Fatalf("DELETE #%d = %+v, want %+v", i+1, got, want)
+		}
+		if p := f.store.Get().PollIntervalSeconds; p != 0 {
+			t.Fatalf("persisted %d after DELETE", p)
+		}
+		if live := f.srv.Poller.Interval(); live != time.Minute {
+			t.Fatalf("poller interval %v after DELETE", live)
+		}
+		if !f.srv.Poller.ReloadPending() {
+			t.Fatal("DELETE did not wake the poller")
+		}
+	}
+	if got := infoPollInterval(t, f); got != 60 {
+		t.Fatalf("info after DELETE = %d", got)
+	}
+	if resp, _ := f.do(t, "DELETE", "/v1/poll-interval", "", nil); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("DELETE without bearer: %d", resp.StatusCode)
+	}
+}

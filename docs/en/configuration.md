@@ -52,6 +52,8 @@ poll on, and keeps it across restarts and updates.
 
 - **Precedence:** a value set in the app wins over `POLL_INTERVAL`. Until one is
   set, the relay polls at `POLL_INTERVAL` (or 60 s when that is unset).
+  Clearing the app's value (`DELETE /v1/poll-interval`, below) hands control
+  back to `POLL_INTERVAL`, so later edits to the config file take effect again.
 - **Lifetime:** the value belongs to the relay, not to the household — removing
   the household from the relay keeps it. A factory reset clears it.
 - **When to go slower:** some controllers, and some hosting setups in front of
@@ -99,6 +101,9 @@ a paired device's bearer token (changing the value is an owner setting):
   Whole seconds from 3 to 600; anything else is
   `400 {"error":"poll_interval_out_of_range","min_seconds":3,"max_seconds":600}`,
   a missing or non-integer value `400 {"error":"bad_json"}`.
+- `DELETE /v1/poll-interval` → `200` and the same body: clears the value set
+  over the API, so the relay polls at `default_seconds` again. Clearing when
+  nothing is set is a `200` too.
 - The unauthenticated `GET /v1/info` reports the cadence in force as
   `poll_interval_seconds`. This field is the **only** capability signal: a
   relay that predates the setting omits it. Do not read a `404` on

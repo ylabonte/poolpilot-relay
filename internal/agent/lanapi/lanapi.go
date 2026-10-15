@@ -257,6 +257,7 @@ func (s *Server) baseMux() *http.ServeMux {
 	// setting, routed through the ownerOnly seam.
 	mux.Handle("GET /v1/poll-interval", s.authed(s.getPollInterval))
 	mux.Handle("PUT /v1/poll-interval", s.authed(s.ownerOnly(s.putPollInterval)))
+	mux.Handle("DELETE /v1/poll-interval", s.authed(s.ownerOnly(s.deletePollInterval)))
 	return mux
 }
 
@@ -2117,11 +2118,31 @@ func (s *Server) putPollInterval(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "persist_failed")
 		return
 	}
+	s.reloadPoller()
+	slog.Info("controller poll interval set over the LAN API", "seconds", *req.Seconds)
+	writeJSON(w, http.StatusOK, s.pollIntervalOf(s.Store.Get()))
+}
+
+// deletePollInterval is DELETE /v1/poll-interval: clear the override, so the
+// relay falls back to POLL_INTERVAL (or the built-in default) — and later
+// edits to the env file take effect again. Idempotent: clearing an absent
+// override is a 200 too. Answers like GET.
+func (s *Server) deletePollInterval(w http.ResponseWriter, _ *http.Request) {
+	if err := s.Store.Update(func(st *state.State) { st.PollIntervalSeconds = 0 }); err != nil {
+		slog.Error("clear poll interval", "err", err)
+		writeErr(w, http.StatusInternalServerError, "persist_failed")
+		return
+	}
+	s.reloadPoller()
+	slog.Info("controller poll interval override cleared over the LAN API")
+	writeJSON(w, http.StatusOK, s.pollIntervalOf(s.Store.Get()))
+}
+
+// reloadPoller wakes the poller to re-read the persisted cadence.
+func (s *Server) reloadPoller() {
 	if s.Poller != nil {
 		s.Poller.Reload()
 	}
-	slog.Info("controller poll interval set over the LAN API", "seconds", *req.Seconds)
-	writeJSON(w, http.StatusOK, s.pollIntervalOf(s.Store.Get()))
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

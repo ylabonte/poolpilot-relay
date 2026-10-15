@@ -54,7 +54,9 @@ Updates hinweg.
 
 - **Vorrang:** Ein in der App gesetzter Wert schlägt `POLL_INTERVAL`. Solange
   keiner gesetzt ist, fragt das Relay im Takt von `POLL_INTERVAL` ab (bzw. alle
-  60 s, wenn das nicht gesetzt ist).
+  60 s, wenn das nicht gesetzt ist). Wird der App-Wert gelöscht
+  (`DELETE /v1/poll-interval`, siehe unten), gilt wieder `POLL_INTERVAL` — spätere
+  Änderungen an der Konfigurationsdatei wirken dann wieder.
 - **Lebensdauer:** Der Wert gehört zum Relay, nicht zum Haushalt — wird der
   Haushalt vom Relay entfernt, bleibt er erhalten. Ein Werksreset löscht ihn.
 - **Wann langsamer sinnvoll ist:** Manche Steuerungen und manche Hosting-Setups
@@ -107,6 +109,9 @@ Einstellung für den Besitzer):
   Ganze Sekunden von 3 bis 600; alles andere ergibt
   `400 {"error":"poll_interval_out_of_range","min_seconds":3,"max_seconds":600}`,
   ein fehlender oder nicht ganzzahliger Wert `400 {"error":"bad_json"}`.
+- `DELETE /v1/poll-interval` → `200` und derselbe Body: löscht den über die API
+  gesetzten Wert, sodass das Relay wieder im Takt von `default_seconds` abfragt.
+  Ist nichts gesetzt, gibt es ebenfalls `200`.
 - Das nicht authentifizierte `GET /v1/info` meldet den geltenden Takt als
   `poll_interval_seconds`. Dieses Feld ist das **einzige** Fähigkeitssignal: Ein
   Relay, das die Einstellung noch nicht kennt, lässt es weg. Werte ein `404` auf
