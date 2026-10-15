@@ -810,29 +810,29 @@ func TestListDevices(t *testing.T) {
 	}
 }
 
-// Cross-revoke (the lost-phone case): device 2's bearer revokes device 1, after
-// which device 1's bearer is dead but device 2 still works.
+// Cross-revoke (the lost-phone case): the owner's bearer revokes device 2,
+// after which device 2's bearer is dead but the owner's still works.
 func TestRevokeDeviceCrossRevoke(t *testing.T) {
 	f := newFixture(t)
-	tok1, dev1 := f.pairFirst(t)
-	tok2, _ := f.addDevice(t, goodInvite, "second phone")
+	tok1, _ := f.pairFirst(t)
+	tok2, dev2 := f.addDevice(t, goodInvite, "second phone")
 
-	resp, raw := f.do(t, "DELETE", "/v1/devices/"+dev1, tok2, nil)
+	resp, raw := f.do(t, "DELETE", "/v1/devices/"+dev2, tok1, nil)
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("cross-revoke: HTTP %d %s, want 204", resp.StatusCode, raw)
 	}
-	// Device 1's bearer is now rejected.
-	resp, raw = f.do(t, "GET", "/v1/status", tok1, nil)
+	// Device 2's bearer is now rejected.
+	resp, raw = f.do(t, "GET", "/v1/status", tok2, nil)
 	if resp.StatusCode != http.StatusUnauthorized || errCode(t, raw) != "unauthorized" {
 		t.Errorf("revoked bearer: HTTP %d %s, want 401", resp.StatusCode, raw)
 	}
-	// Device 2's bearer still works, and the agent is still paired.
-	resp, _ = f.do(t, "GET", "/v1/status", tok2, nil)
+	// The owner's bearer still works, and the agent is still paired.
+	resp, _ = f.do(t, "GET", "/v1/status", tok1, nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("surviving bearer: HTTP %d, want 200", resp.StatusCode)
 	}
 	if !f.store.Get().Paired() {
-		t.Error("agent must stay paired while device 2 is active")
+		t.Error("agent must stay paired while the owner's device is active")
 	}
 }
 
@@ -843,18 +843,18 @@ func TestRevokeDeviceCrossRevoke(t *testing.T) {
 // though this branch never touches controllers.
 func TestRevokeDeviceCallsCloudPushRevoke(t *testing.T) {
 	f := newFixture(t)
-	_, dev1 := f.pairFirst(t)
-	tok2, _ := f.addDevice(t, goodInvite, "second phone")
+	tok1, _ := f.pairFirst(t)
+	_, dev2 := f.addDevice(t, goodInvite, "second phone")
 
-	resp, raw := f.do(t, "DELETE", "/v1/devices/"+dev1, tok2, nil)
+	resp, raw := f.do(t, "DELETE", "/v1/devices/"+dev2, tok1, nil)
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("cross-revoke: HTTP %d %s, want 204", resp.StatusCode, raw)
 	}
 	f.revokedPushMu.Lock()
-	got := f.revokedPush[dev1]
+	got := f.revokedPush[dev2]
 	f.revokedPushMu.Unlock()
 	if !got {
-		t.Errorf("cloud was not asked to revoke push tokens for device %q", dev1)
+		t.Errorf("cloud was not asked to revoke push tokens for device %q", dev2)
 	}
 }
 
@@ -903,17 +903,17 @@ func TestRevokeLastDeviceCallsCloudPushRevoke(t *testing.T) {
 // side), not a reason to fail the request the user is waiting on.
 func TestRevokeDevicePushRevokeCloudDownStillSucceeds(t *testing.T) {
 	f := newFixture(t)
-	_, dev1 := f.pairFirst(t)
-	tok2, _ := f.addDevice(t, goodInvite, "second phone")
+	tok1, _ := f.pairFirst(t)
+	_, dev2 := f.addDevice(t, goodInvite, "second phone")
 
 	f.cloudSrv.Close() // simulate an unreachable control-plane
 
-	resp, raw := f.do(t, "DELETE", "/v1/devices/"+dev1, tok2, nil)
+	resp, raw := f.do(t, "DELETE", "/v1/devices/"+dev2, tok1, nil)
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("revoke with cloud down: HTTP %d %s, want 204 (best-effort push revoke must not fail the request)", resp.StatusCode, raw)
 	}
 	if !f.store.Get().Paired() {
-		t.Error("surviving device 2 must keep the agent paired even though the cloud push-revoke failed")
+		t.Error("the surviving owner device must keep the agent paired even though the cloud push-revoke failed")
 	}
 }
 
@@ -945,12 +945,12 @@ func TestRevokeLastDeviceOverTunnelBlocked(t *testing.T) {
 // But a NON-last device may be revoked over the tunnel (remote lost-phone).
 func TestRevokeNonLastDeviceOverTunnelAllowed(t *testing.T) {
 	f := newFixture(t)
-	_, dev1 := f.pairFirst(t)
-	tok2, _ := f.addDevice(t, goodInvite, "second phone")
+	tok1, _ := f.pairFirst(t)
+	_, dev2 := f.addDevice(t, goodInvite, "second phone")
 	ts := f.tunnelServer(t)
 
-	req, _ := http.NewRequest("DELETE", ts.URL+"/v1/devices/"+dev1, nil)
-	req.Header.Set("Authorization", "Bearer "+tok2)
+	req, _ := http.NewRequest("DELETE", ts.URL+"/v1/devices/"+dev2, nil)
+	req.Header.Set("Authorization", "Bearer "+tok1)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("do: %v", err)

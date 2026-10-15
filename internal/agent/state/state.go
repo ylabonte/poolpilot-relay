@@ -80,7 +80,26 @@ type Device struct {
 	TokenSHA256 string    `json:"token_sha256,omitempty"`
 	CreatedAt   time.Time `json:"created_at,omitzero"`
 	RevokedAt   time.Time `json:"revoked_at,omitzero"`
+	// Role is the household role the device was paired with: RoleOwner for the
+	// founding pairing (enrolment code) and for owner recovery, the brokered
+	// voucher's role for an invite join. The LAN API gates its owner-only
+	// routes on it (lanapi's ownerOnly). Additive with omitempty: a document
+	// written before roles existed lacks it, and Open infers it once (see
+	// inferLegacyRoles) — an active device never reaches the LAN API without one.
+	Role string `json:"role,omitempty"`
 }
+
+// Household roles a paired device can hold. The strings match the cloud's
+// household_member.role and wire.DeviceVoucherResponse.Role.
+const (
+	RoleOwner  = "owner"
+	RoleMember = "member"
+)
+
+// IsOwner reports whether the device holds the owner role. Anything else —
+// "member", and the empty or unknown role a device can never carry past Open —
+// is not an owner, so the gate fails closed.
+func (d Device) IsOwner() bool { return d.Role == RoleOwner }
 
 // FRPS is the tunnel endpoint handed out by the cloud at redeem time.
 type FRPS struct {
@@ -609,6 +628,13 @@ func Open(path string) (*Store, error) {
 
 	if st.s.AgentID == "" {
 		return nil, fmt.Errorf("state: %s is missing agent_id (refusing to re-mint over an existing file)", path)
+	}
+	// Devices paired before roles were stored get theirs inferred once, and
+	// the result is persisted so the inference never runs on them again.
+	if inferLegacyRoles(&st.s) {
+		if err := st.persistLocked(); err != nil {
+			return nil, fmt.Errorf("state: persist inferred device roles: %w", err)
+		}
 	}
 	return st, nil
 }
