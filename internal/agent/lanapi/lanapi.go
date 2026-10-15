@@ -53,17 +53,22 @@ const DeviceCap = 10
 // ctxKey namespaces this package's request-context values.
 type ctxKey int
 
-// deviceIDKey carries the id of the active device whose bearer authenticated the
-// request (set by authed) so /v1/devices can flag the "current" entry.
-const deviceIDKey ctxKey = iota
+// deviceKey carries the active device whose bearer authenticated the request
+// (set by authed): its id lets /v1/devices flag the "current" entry and
+// DELETE /v1/devices/{id} tell a self-revoke apart, its role drives ownerOnly.
+const deviceKey ctxKey = iota
 
-// deviceIDFromContext returns the authenticated device's id, or "" if unset.
-func deviceIDFromContext(r *http.Request) string {
-	if v, ok := r.Context().Value(deviceIDKey).(string); ok {
+// deviceFromContext returns the authenticated device, or the zero Device (no
+// id, no role — never an owner) if unset.
+func deviceFromContext(r *http.Request) state.Device {
+	if v, ok := r.Context().Value(deviceKey).(state.Device); ok {
 		return v
 	}
-	return ""
+	return state.Device{}
 }
+
+// deviceIDFromContext returns the authenticated device's id, or "" if unset.
+func deviceIDFromContext(r *http.Request) string { return deviceFromContext(r).ID }
 
 // Listen resolves LAN_LISTEN.
 func Listen() string {
@@ -224,17 +229,22 @@ func (s *Server) baseMux() *http.ServeMux {
 	// uniform lets the app address both legs through one client interface.
 	mux.HandleFunc("GET /v1/info", s.info)
 	// Canonical multi-controller surface (D4).
-	mux.Handle("PUT /v1/controllers", s.authed(s.putControllers))
+	//
+	// Routes that change the relay's configuration, its controller set or its
+	// software are owner-only (ownerOnly → 403 owner_required for a member):
+	// they act on the whole household's relay. Reading, the controller UI
+	// session and the controller data path stay open to every paired device.
+	mux.Handle("PUT /v1/controllers", s.authed(s.ownerOnly(s.putControllers)))
 	mux.Handle("GET /v1/controllers", s.authed(s.getControllers))
-	mux.Handle("DELETE /v1/controllers/{guid}", s.authed(s.deleteControllerHandler))
-	mux.Handle("POST /v1/controllers/{guid}/rotate", s.authed(s.rotateControllerHandler))
+	mux.Handle("DELETE /v1/controllers/{guid}", s.authed(s.ownerOnly(s.deleteControllerHandler)))
+	mux.Handle("POST /v1/controllers/{guid}/rotate", s.authed(s.ownerOnly(s.rotateControllerHandler)))
 	// Mints a web session for the controller's native UI (issue poolpilot-cloud#27). On
 	// baseMux deliberately, so it is reachable on BOTH legs: a device away from
 	// home has no other way to open that UI, and the tunnel leg already proves
 	// possession of the pairing bearer.
 	mux.Handle("POST /v1/controllers/{guid}/web-session", s.authed(s.webSessionHandler))
 	mux.Handle("GET /v1/controllers/{guid}/alert-rules", s.authed(s.getControllerRules))
-	mux.Handle("PUT /v1/controllers/{guid}/alert-rules", s.authed(s.putControllerRules))
+	mux.Handle("PUT /v1/controllers/{guid}/alert-rules", s.authed(s.ownerOnly(s.putControllerRules)))
 	// The guid-less GET/PUT /v1/alert-rules compat aliases (thin wrappers over
 	// controller[0], for pre-multi apps) are gone: apps now speak the guid-scoped
 	// route above. The PUT /v1/controller sibling alias was removed earlier, in
@@ -242,15 +252,19 @@ func (s *Server) baseMux() *http.ServeMux {
 	mux.Handle("GET /v1/status", s.authed(s.status))
 	// Listing devices is identical on both legs; deleting differs (the last-
 	// device guard is LAN-only, D9), so DELETE is mounted per-leg by the callers.
+	// Deleting is not behind ownerOnly: any device may revoke ITSELF (leaving
+	// the relay); revoking another device is owner-only, checked in deleteDevice.
 	mux.Handle("GET /v1/devices", s.authed(s.getDevices))
 	// Self-update management. Deliberately on BOTH legs: triggering a signed,
 	// health-checked update remotely is the feature, and none of these is a
-	// LAN-presence ceremony. The worst a stolen bearer can do here is install
+	// LAN-presence ceremony. The worst a stolen owner bearer can do here is install
 	// the newest official release — recoverable, unlike pair/factory-reset.
 	mux.Handle("GET /v1/update", s.authed(s.getUpdate))
 	mux.Handle("POST /v1/update/check", s.authed(s.checkUpdate))
-	mux.Handle("POST /v1/update/apply", s.authed(s.applyUpdate))
-	mux.Handle("PUT /v1/update", s.authed(s.putUpdate))
+	// Reading the status and asking for a fresh check are open; installing an
+	// update and switching auto-update are owner-only.
+	mux.Handle("POST /v1/update/apply", s.authed(s.ownerOnly(s.applyUpdate)))
+	mux.Handle("PUT /v1/update", s.authed(s.ownerOnly(s.putUpdate)))
 	return mux
 }
 
@@ -259,8 +273,8 @@ func (s *Server) baseMux() *http.ServeMux {
 func (s *Server) Handler() http.Handler {
 	mux := s.baseMux()
 	mux.HandleFunc("POST /v1/pair", s.pair)
-	mux.Handle("POST /v1/factory-reset", s.authed(s.factoryReset))
-	mux.Handle("POST /v1/household-reset", s.authed(s.householdReset))
+	mux.Handle("POST /v1/factory-reset", s.authed(s.ownerOnly(s.factoryReset)))
+	mux.Handle("POST /v1/household-reset", s.authed(s.ownerOnly(s.householdReset)))
 	// On the LAN leg, revoking the last active device is allowed (that is how
 	// "remove this phone" unpairs the agent).
 	mux.Handle("DELETE /v1/devices/{id}", s.authed(s.deleteDevice(false)))
@@ -422,7 +436,8 @@ func (s *Server) pairFirst(w http.ResponseWriter, r *http.Request, req wire.Pair
 		return
 	}
 
-	token, dev := mintDevice(req.DeviceName)
+	// The founding pairing creates the household, so its device is the owner.
+	token, dev := mintDevice(req.DeviceName, state.RoleOwner)
 	err = s.Store.Update(func(doc *state.State) {
 		doc.Devices = append(doc.Devices, dev)
 		// The whole Cloud struct is replaced, not patched: a fresh token also
@@ -462,7 +477,7 @@ func (s *Server) pairJoin(w http.ResponseWriter, r *http.Request, req wire.PairR
 	}
 	s.pairWithVoucher(w, r, req, func(ctx context.Context) (wire.DeviceVoucherResponse, error) {
 		return s.Cloud.BrokerVoucher(ctx, req.InviteCode)
-	})
+	}, joinRole)
 }
 
 // pairRecover is the physical-access ceremony: an operator ran
@@ -501,11 +516,27 @@ func (s *Server) pairRecover(w http.ResponseWriter, r *http.Request, req wire.Pa
 	}
 	s.pairWithVoucher(w, r, req, func(ctx context.Context) (wire.DeviceVoucherResponse, error) {
 		return s.Cloud.BrokerRecoveryVoucher(ctx)
-	}, window)
+	}, recoveryRole, window)
 }
 
+// joinRole is the local role of a device that joined with an invite: the role
+// the cloud minted the voucher for (an invite always yields "member" today).
+// Anything that is not a known role fails closed to member.
+func joinRole(v wire.DeviceVoucherResponse) string {
+	if v.Role == state.RoleOwner {
+		return state.RoleOwner
+	}
+	return state.RoleMember
+}
+
+// recoveryRole is the local role of a device paired by owner recovery: always
+// owner. The recovery code proves physical access to the relay — the ownership
+// anchor — so the role does not depend on what the voucher reports.
+func recoveryRole(wire.DeviceVoucherResponse) string { return state.RoleOwner }
+
 // pairWithVoucher is the body shared by the join and recovery flows: cap check,
-// broker the voucher at the cloud, mint a local device, persist, respond.
+// broker the voucher at the cloud, mint a local device with the role roleFor
+// assigns, persist, respond.
 //
 // consumedWindow, when present, is the recovery window to record as spent in the
 // SAME state write that appends the device — so a crash can leave the code
@@ -518,6 +549,7 @@ func (s *Server) pairWithVoucher(
 	r *http.Request,
 	req wire.PairRequest,
 	broker func(context.Context) (wire.DeviceVoucherResponse, error),
+	roleFor func(wire.DeviceVoucherResponse) string,
 	consumedWindow ...int64,
 ) {
 	st := s.Store.Get()
@@ -547,7 +579,7 @@ func (s *Server) pairWithVoucher(
 		return
 	}
 
-	token, dev := mintDevice(req.DeviceName)
+	token, dev := mintDevice(req.DeviceName, roleFor(voucher))
 	var overCap, windowSpent bool
 	err = s.Store.Update(func(doc *state.State) {
 		// Re-check the cap under the store lock: a concurrent add may have filled
@@ -618,10 +650,11 @@ func (s *Server) pairWithVoucher(
 
 // mintDevice generates a fresh per-device LAN bearer and the Device record that
 // persists only its SHA-256 (the plaintext token is returned once, shown to the
-// caller, and never stored). Shared verbatim by both pairing paths; the only
-// difference between them is what else each writes under the store lock (cloud
-// creds on first pair, the cap re-check on an additional device).
-func mintDevice(label string) (token string, dev state.Device) {
+// caller, and never stored), carrying the household role it was paired with.
+// Shared by every pairing path; besides the role, the only difference between
+// them is what else each writes under the store lock (cloud creds on first
+// pair, the cap re-check on an additional device).
+func mintDevice(label, role string) (token string, dev state.Device) {
 	token = idgen.Token()
 	sum := sha256.Sum256([]byte(token))
 	return token, state.Device{
@@ -629,6 +662,7 @@ func mintDevice(label string) (token string, dev state.Device) {
 		Label:       label,
 		TokenSHA256: hex.EncodeToString(sum[:]),
 		CreatedAt:   time.Now().UTC(),
+		Role:        role,
 	}
 }
 
@@ -656,7 +690,7 @@ func (s *Server) authed(next http.HandlerFunc) http.Handler {
 			writeErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		id, ok := s.deviceIDForBearer(token)
+		dev, ok := s.deviceForBearer(token)
 		if !ok {
 			writeErr(w, http.StatusUnauthorized, "unauthorized")
 			return
@@ -666,23 +700,39 @@ func (s *Server) authed(next http.HandlerFunc) http.Handler {
 		if s.Lifecycle != nil && st.TunnelParked() {
 			s.Lifecycle.Kick()
 		}
-		// The matched device id is stashed so /v1/devices can flag the caller's
-		// own entry.
-		next(w, r.WithContext(context.WithValue(r.Context(), deviceIDKey, id)))
+		// The matched device is stashed so /v1/devices can flag the caller's own
+		// entry and ownerOnly / deleteDevice can read its role.
+		next(w, r.WithContext(context.WithValue(r.Context(), deviceKey, dev)))
 	})
 }
 
-// deviceIDForBearer resolves a pairing bearer to the ACTIVE device that owns
+// ownerOnly gates a handler on the household OWNER role. It runs inside
+// authed, so the caller is already a paired device; a device that is not an
+// owner is refused with 403 owner_required before next runs. The role is the
+// one stored on the device at pairing (state.Device.Role; inferred once for
+// devices paired before roles were stored) — a device with no role is never an
+// owner, so the gate fails closed.
+func (s *Server) ownerOnly(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !deviceFromContext(r).IsOwner() {
+			writeErr(w, http.StatusForbidden, "owner_required")
+			return
+		}
+		next(w, r)
+	}
+}
+
+// deviceForBearer resolves a pairing bearer to the ACTIVE device that owns
 // it. n is small (the device cap) and each compare is constant-time over
 // equal-length digests. Shared by authed and AuthorizeCtrlBearer so the LAN API
 // and the ctrl vhost can never disagree about which bearers are live.
-func (s *Server) deviceIDForBearer(token string) (string, bool) {
+func (s *Server) deviceForBearer(token string) (state.Device, bool) {
 	if token == "" {
-		return "", false
+		return state.Device{}, false
 	}
 	st := s.Store.Get()
 	if !st.Paired() {
-		return "", false
+		return state.Device{}, false
 	}
 	sum := sha256.Sum256([]byte(token))
 	for _, d := range st.ActiveDevices() {
@@ -691,10 +741,10 @@ func (s *Server) deviceIDForBearer(token string) (string, bool) {
 			continue
 		}
 		if subtle.ConstantTimeCompare(sum[:], stored) == 1 {
-			return d.ID, true
+			return d, true
 		}
 	}
-	return "", false
+	return state.Device{}, false
 }
 
 // AuthorizeCtrlBearer is the ctrl vhost's pairing-bearer check (see
@@ -703,7 +753,7 @@ func (s *Server) deviceIDForBearer(token string) (string, bool) {
 // browser session cookie, so they present the pairing bearer instead — the same
 // credential, proving the same thing.
 func (s *Server) AuthorizeCtrlBearer(token string) bool {
-	_, ok := s.deviceIDForBearer(token)
+	_, ok := s.deviceForBearer(token)
 	return ok
 }
 
@@ -735,8 +785,10 @@ func (s *Server) getDevices(w http.ResponseWriter, r *http.Request) {
 // deleteDevice revokes a device by id (sets RevokedAt). tunnelLeg selects the
 // D9 guard: on the tunnel, revoking the LAST active device is refused
 // (last_device_lan_only) so a stolen bearer cannot remotely unpair the agent;
-// on the LAN it is allowed and unpairs. Cross-revoke (any active device revoking
-// another) and self-revoke are both permitted — that is the lost-phone flow.
+// on the LAN it is allowed and unpairs. Self-revoke (leaving) is open to every
+// paired device; revoking ANOTHER device — the lost-phone flow — is owner-only
+// (403 owner_required for a member, checked before the target is looked up, so
+// a member learns nothing about other device ids).
 //
 // The found check and the last-device guard both run INSIDE the serialized
 // Update closure (signalled back via the found/blocked sentinels): evaluating
@@ -749,6 +801,10 @@ func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 		id := r.PathValue("id")
 		if id == "" {
 			writeErr(w, http.StatusBadRequest, "bad_id")
+			return
+		}
+		if caller := deviceFromContext(r); id != caller.ID && !caller.IsOwner() {
+			writeErr(w, http.StatusForbidden, "owner_required")
 			return
 		}
 

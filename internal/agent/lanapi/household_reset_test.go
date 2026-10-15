@@ -130,7 +130,7 @@ func TestHouseholdResetDropsHouseholdKeepsIdentity(t *testing.T) {
 // between authed and the store lock.
 func TestHouseholdResetNeverWipesANewSetup(t *testing.T) {
 	f, _ := configuredFixture(t)
-	oldDevice := f.store.Get().ActiveDevices()[0].ID
+	oldDevice := f.store.Get().ActiveDevices()[0]
 	if dropped, err := f.store.DropHousehold(f.store.Get().Cloud.FrpcToken); err != nil || !dropped {
 		t.Fatalf("watcher-style drop = %v, %v", dropped, err)
 	}
@@ -138,7 +138,7 @@ func TestHouseholdResetNeverWipesANewSetup(t *testing.T) {
 	f.notifier.paired.Store(true)
 
 	req := httptest.NewRequest("POST", "/v1/household-reset", nil)
-	req = req.WithContext(context.WithValue(req.Context(), deviceIDKey, oldDevice))
+	req = req.WithContext(context.WithValue(req.Context(), deviceKey, oldDevice))
 	rec := httptest.NewRecorder()
 	f.srv.householdReset(rec, req)
 	if rec.Code != http.StatusUnauthorized {
