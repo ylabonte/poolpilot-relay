@@ -72,9 +72,12 @@ also direkt, wie schnell sie reagieren:
   also bei etwa *Entprellung × Abfrageintervall*: rund 3 Minuten beim Standard
   von 60 s, 30 Minuten bei 10 Minuten und 9 Sekunden bei 3 Sekunden.
 - Der Alarm **„keine aktuellen Daten"** ist zeitbasiert (standardmäßig 90 Minuten
-  ohne erfolgreiche Abfrage). Die Obergrenze von 10 Minuten hält selbst eine
-  volle Entprellung deutlich innerhalb dieses Fensters, sodass langsames Abfragen
-  allein nie wie ein Ausfall aussieht.
+  ohne erfolgreiche Abfrage) und wird direkt nach jeder Abfrage geprüft — ein
+  Relay, das langsam, aber erfolgreich abfragt, wirkt also nie veraltet. Ein
+  langsamer Takt verzögert ihn stattdessen: Ein Ausfall fällt bis zu ein
+  Abfrageintervall nach diesem Fenster auf. Ist das Fenster **kürzer als das
+  Abfrageintervall**, reicht schon eine einzige fehlgeschlagene Abfrage aus —
+  halte das Fenster also länger als das Intervall.
 - Erinnerungen an einen anhaltenden Zustand (die Ruhezeit, standardmäßig
   6 Stunden) sind ebenfalls zeitbasiert und ändern sich nicht mit dem
   Abfrageintervall.

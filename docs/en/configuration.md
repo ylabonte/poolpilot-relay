@@ -69,8 +69,11 @@ quickly they react:
   interval*: about 3 minutes at the default 60 s, 30 minutes at 10 minutes, and
   9 seconds at 3 seconds.
 - The **"no fresh data"** alert is time-based (90 minutes without a successful
-  read by default). The 10-minute upper bound keeps even a full debounce well
-  inside that window, so slow polling alone never looks like an outage.
+  read by default) and is checked right after each poll, so a relay that polls
+  slowly but successfully never looks stale. A slow cadence delays it instead:
+  an outage is noticed up to one poll interval after that window. If you set
+  the window **shorter than the poll interval**, a single failed poll is
+  enough to trigger it — keep the window longer than the interval.
 - Repeat reminders for a condition that persists (the cooldown, 6 hours by
   default) are time-based too and do not change with the poll interval.
 

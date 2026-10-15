@@ -35,11 +35,14 @@ var newDriver = driver.New
 // Bounds of the owner-set poll interval (PUT /v1/poll-interval,
 // poolpilot-relay#68): the app's own poll slider spans 3–99 s, and the relay
 // additionally allows slower cadences up to 10 min for sensitive controllers or
-// metered links. The upper bound also keeps a full entry debounce
-// (alert.DefaultDebouncePolls polls) well inside the default stale-data window
-// (alert.DefaultStaleAfterSeconds), so the stale watchdog cannot fire merely
-// because the relay polls slowly. The env POLL_INTERVAL is NOT clamped to these
-// bounds — it stays the operator's (and e2e's, POLL_INTERVAL=1s) escape hatch.
+// metered links. The upper bound is a product choice, not a stale-data
+// guarantee: alert.EvaluateStale runs right after the poll that refreshes
+// lastSuccess, so successful polls never look stale at any cadence. What the
+// cadence does change is detection time — an outage is noticed up to one
+// interval after stale_after_seconds — and a stale_after_seconds SHORTER than
+// the interval (the rule allows it) fires on a single failed poll. The env
+// POLL_INTERVAL is NOT clamped to these bounds — it stays the operator's (and
+// e2e's, POLL_INTERVAL=1s) escape hatch.
 const (
 	MinIntervalSeconds = 3
 	MaxIntervalSeconds = 600
