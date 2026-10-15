@@ -99,8 +99,9 @@ Bei 10 Minuten kann jedes davon bis zu 10 Minuten dauern.
 ### Für App-Entwickler: die LAN-API
 
 Über die LAN-API des Relays (und dieselben Routen durch den Fernzugriffs-Tunnel),
-mit dem Bearer-Token eines gekoppelten Geräts (den Wert zu ändern ist eine
-Einstellung für den Besitzer):
+mit dem Bearer-Token eines gekoppelten Geräts. `GET` steht jedem gekoppelten
+Gerät offen; `PUT` und `DELETE` sind dem Besitzer vorbehalten, ein Gerät eines
+Mitglieds erhält `403 {"error":"owner_required"}`:
 
 - `GET /v1/poll-interval` → `{"seconds":60,"default_seconds":60,"overridden":false,"min_seconds":3,"max_seconds":600}`
   — `seconds` ist der aktuell geltende Takt, `default_seconds` der

@@ -92,7 +92,9 @@ At 10 minutes, each of these can take up to 10 minutes.
 ### For app developers: the LAN API
 
 Over the relay's LAN API (and the same routes through the remote tunnel), with
-a paired device's bearer token (changing the value is an owner setting):
+a paired device's bearer token. `GET` is open to any paired device; `PUT` and
+`DELETE` are owner-only, and a member device gets
+`403 {"error":"owner_required"}`:
 
 - `GET /v1/poll-interval` → `{"seconds":60,"default_seconds":60,"overridden":false,"min_seconds":3,"max_seconds":600}`
   — `seconds` is the cadence in force, `default_seconds` the `POLL_INTERVAL`
