@@ -71,6 +71,19 @@ func TestInferLegacyRoles(t *testing.T) {
 			want: map[string]string{"a": RoleOwner, "b": RoleOwner},
 		},
 		{
+			// Joined after the P3 merge but before the first release: a
+			// pre-release build may still have used the role-less add-device
+			// ceremony, so the device stays owner.
+			name: "added between the flows' merge and the first release: owner",
+			devices: []Device{
+				{ID: "a", CreatedAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)},
+				{ID: "b", CreatedAt: time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC)},
+				{ID: "c", CreatedAt: rolesEra.Add(-time.Second)},
+				{ID: "d", CreatedAt: rolesEra},
+			},
+			want: map[string]string{"a": RoleOwner, "b": RoleOwner, "c": RoleOwner, "d": RoleMember},
+		},
+		{
 			// A recovery accepted in the window of at(60): b (before it) may
 			// have been an earlier recovery and c may be this one — both owner;
 			// d was added well after the last recovery, so it can only have
@@ -160,5 +173,37 @@ func TestV1MigrationYieldsAnOwner(t *testing.T) {
 	devs := st.Get().ActiveDevices()
 	if len(devs) != 1 || !devs[0].IsOwner() {
 		t.Fatalf("migrated devices = %+v, want one owner", devs)
+	}
+}
+
+// The recovery grace boundary: a code of window w is still accepted during
+// window w+1 (recovery.Verify's skew), and the owner voucher is brokered after
+// that, so a device created up to WindowEnd(w) + Window + 5 min may be the
+// recovering owner. Exactly at the end it is still owner; one second later it
+// can only have joined.
+func TestInferLegacyRolesRecoveryGraceBoundary(t *testing.T) {
+	w := recovery.WindowIndex(at(60))
+	end := recovery.WindowEnd(w).Add(recovery.Window + 5*time.Minute)
+	cases := []struct {
+		name    string
+		created time.Time
+		want    string
+	}{
+		{"in the following (skew) window", recovery.WindowEnd(w).Add(recovery.Window / 2), RoleOwner},
+		{"just inside the grace end", end.Add(-time.Second), RoleOwner},
+		{"exactly at the grace end", end, RoleOwner},
+		{"just past the grace end", end.Add(time.Second), RoleMember},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := State{
+				RecoveryWindowUsed: w,
+				Devices:            []Device{{ID: "founder", CreatedAt: at(0)}, {ID: "x", CreatedAt: tc.created}},
+			}
+			inferLegacyRoles(&s)
+			if got := rolesOf(s)["x"]; got != tc.want {
+				t.Errorf("device created %s: role %q, want %q", tc.created.Format(time.RFC3339), got, tc.want)
+			}
+		})
 	}
 }

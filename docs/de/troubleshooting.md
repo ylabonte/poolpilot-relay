@@ -121,6 +121,11 @@ umschalten sowie Haushalts- und Werksreset. Fragt ein Mitglieds-Telefon eines
 davon an, antwortet die lokale API des Relays mit `403` und dem Fehlercode
 `owner_required`, und nichts ändert sich.
 
+Den Pool bedienen dürfen alle Telefone des Haushalts: Auch Mitglieder nutzen die
+eigene Weboberfläche des Controllers samt der Einstellungen, die sie anbietet.
+Die Besitzer-Liste oben betrifft die haushaltsweite Konfiguration des Relays
+selbst, nicht die Einstellungen des Controllers.
+
 Telefone, die gekoppelt wurden, bevor das Relay Rollen gespeichert hat, bekommen
 ihre Rolle einmalig beim ersten Start mit dieser Version: Das Telefon, das das
 Relay eingerichtet hat, und jedes Telefon, dessen Herkunft das Relay nicht

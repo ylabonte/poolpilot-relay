@@ -6,12 +6,16 @@ import (
 	"github.com/ylabonte/poolpilot-relay/internal/agent/recovery"
 )
 
-// rolesEra is when the pairing flows that tell owners and members apart —
-// invite join (member voucher) and owner recovery — shipped (poolpilot-cloud
-// P3, merged 2026-07-30). Before it, the only way to add a phone to a paired
-// relay was the device-code ceremony, which carried no household role at all,
-// so a device created before this instant is never inferred to be a member.
-var rolesEra = time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC)
+// rolesEra is the first published relay release, v0.1.0 (tagged
+// 2026-08-14T22:07:46Z). Every published build carries the pairing flows that
+// tell owners and members apart — invite join (member voucher) and owner
+// recovery. Before them, the only way to add a phone to a paired relay was the
+// device-code ceremony, which carried no household role at all. Those flows
+// were merged a little earlier (poolpilot-cloud P3, 2026-07-30), but a
+// pre-release build could have kept adding phones the old way after that, so
+// the boundary is the first release rather than the merge: a device created
+// before this instant is never inferred to be a member.
+var rolesEra = time.Date(2026, time.August, 14, 22, 7, 46, 0, time.UTC)
 
 // recoveryGrace bounds how long after the end of the last accepted recovery
 // window the recovering device can have been created: recovery.Verify still

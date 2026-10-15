@@ -277,6 +277,13 @@ func (s *Server) mount(routes []route) *http.ServeMux {
 // software are owner-only (403 owner_required for a member): they act on the
 // whole household's relay. Reading, the controller UI session and the
 // controller data path stay open to every paired device.
+//
+// Decision: household members keep controller control — the web session for
+// the controller's own interface and the ctrl-vhost bearer — even though that
+// interface can change controller-side settings. Operating the pool is what a
+// household member is for. The owner boundary is household-wide RELAY
+// configuration: alert rules, the controller set, updates and resets. The
+// alert-rules gate is therefore not a boundary for controller settings.
 func (s *Server) sharedRoutes() []route {
 	return []route{
 		// /v1/info is intentionally reachable on BOTH legs. It returns only
@@ -784,8 +791,8 @@ func (s *Server) ownerOnly(next http.HandlerFunc) http.HandlerFunc {
 
 // selfOrOwner gates a handler on the {id} path value: a paired device may act
 // on its OWN id, and only an owner on any other. Like ownerOnly it runs inside
-// authed, and it answers before the handler looks the id up, so a member
-// learns nothing about other device ids.
+// authed, and it answers before the handler looks the id up, so a member's
+// refusal is the same whether or not the id exists.
 func (s *Server) selfOrOwner(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		caller := deviceFromContext(r)

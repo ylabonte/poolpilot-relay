@@ -113,6 +113,11 @@ installing updates or switching automatic updates, and the household and factory
 resets. A member phone that asks for one of these gets `403` with the error code
 `owner_required` from the relay's local API, and nothing changes.
 
+Operating the pool stays with every household phone: members can use the
+controller's own web interface, including the settings it offers. The owner-only
+list above covers the relay's own household-wide configuration, not the
+controller's settings.
+
 Phones paired before the relay stored roles get theirs assigned once, when the
 relay first starts with this version: the phone that set the relay up, and any
 phone whose origin the relay cannot tell for certain, become owners; a phone
