@@ -180,3 +180,25 @@ func TestPollIntervalWithoutPoller(t *testing.T) {
 		t.Fatalf("info = %d", got)
 	}
 }
+
+// A successful PUT must wake the poller — reading the store back would pass
+// even if it never did — and a rejected one must not.
+func TestPollIntervalPutWakesThePoller(t *testing.T) {
+	f := newFixture(t) // the fixture's poller is not running, so a signal stays pending
+	token := f.pair(t)
+	if f.srv.Poller.ReloadPending() {
+		t.Fatal("reload pending before any PUT")
+	}
+	if resp, raw := f.do(t, "PUT", "/v1/poll-interval", token, map[string]int{"seconds": 1}); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("PUT 1: %d %s", resp.StatusCode, raw)
+	}
+	if f.srv.Poller.ReloadPending() {
+		t.Fatal("a rejected PUT woke the poller")
+	}
+	if resp, raw := f.do(t, "PUT", "/v1/poll-interval", token, map[string]int{"seconds": 120}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("PUT 120: %d %s", resp.StatusCode, raw)
+	}
+	if !f.srv.Poller.ReloadPending() {
+		t.Fatal("a successful PUT did not wake the poller")
+	}
+}

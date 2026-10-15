@@ -168,6 +168,11 @@ func (p *Poller) Reload() {
 	}
 }
 
+// ReloadPending reports whether a Reload is waiting for Run to pick it up.
+// Lets the LAN API's tests prove a PUT actually wakes the poller (the store
+// alone would read back the new value without it).
+func (p *Poller) ReloadPending() bool { return len(p.reload) > 0 }
+
 // Run ticks until ctx is done. The first tick fires immediately so a freshly
 // configured agent shows data without waiting a full interval. A Reload
 // re-arms the ticker with the effective interval, measured from the change:
