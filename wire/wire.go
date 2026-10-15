@@ -38,6 +38,13 @@ type InfoResponse struct {
 	Enrolled      bool     `json:"enrolled"`
 	Fingerprint   string   `json:"fingerprint"` // "sha256/<base64 SPKI hash>"
 	PresetSupport []string `json:"preset_support"`
+	// PollIntervalSeconds is the relay's EFFECTIVE controller poll cadence
+	// (poolpilot-relay#68). Its presence is also the capability signal: a relay
+	// that serves GET/PUT /v1/poll-interval always reports it (> 0), an older
+	// relay omits it — so clients gate the poll-interval control on it being
+	// non-zero. Non-secret (a cadence grants nothing), hence fine on this
+	// unauthenticated probe.
+	PollIntervalSeconds int `json:"poll_interval_seconds,omitempty"`
 }
 
 // PairRequest is POST /v1/pair (D2), the one LAN-only ceremony. Exactly one of
@@ -1202,6 +1209,36 @@ type UpdateStatusResponse struct {
 // bad_json rather than silently meaning false.
 type UpdateSettingsRequest struct {
 	Auto *bool `json:"auto"`
+}
+
+// PollIntervalResponse is GET /v1/poll-interval and the 200 body of
+// PUT /v1/poll-interval (pairing bearer, both legs; poolpilot-relay#68).
+//
+//   - Seconds is the EFFECTIVE cadence the poller runs at right now: the
+//     persisted override when one is set, else DefaultSeconds.
+//   - DefaultSeconds is what the relay falls back to without an override —
+//     POLL_INTERVAL from the env file, else 60. It may lie OUTSIDE
+//     MinSeconds..MaxSeconds (an operator or e2e value such as 1 s).
+//   - Overridden reports whether an override from PUT is in force.
+//   - MinSeconds/MaxSeconds are the bounds PUT accepts (3..600), so clients
+//     never hard-code them.
+type PollIntervalResponse struct {
+	Seconds        int  `json:"seconds"`
+	DefaultSeconds int  `json:"default_seconds"`
+	Overridden     bool `json:"overridden"`
+	MinSeconds     int  `json:"min_seconds"`
+	MaxSeconds     int  `json:"max_seconds"`
+}
+
+// PollIntervalRequest is PUT /v1/poll-interval: set the controller poll
+// cadence in whole seconds, MinSeconds..MaxSeconds inclusive. It is persisted
+// in the relay's state, takes precedence over POLL_INTERVAL, survives restarts
+// and is applied live (the next poll is one new interval after the change).
+// Seconds is a pointer so an absent field is a 400 bad_json rather than
+// silently meaning 0. An out-of-range value is a 400
+// {"error":"poll_interval_out_of_range","min_seconds":3,"max_seconds":600}.
+type PollIntervalRequest struct {
+	Seconds *int `json:"seconds"`
 }
 
 // ---- Relay lifecycle (cloud POST /relay/status, relay-bearer) ----

@@ -240,6 +240,15 @@ type State struct {
 	// omitzero, so a pre-feature document simply lacks it and auto-update
 	// defaults ON (see UpdateSettings / AutoUpdate).
 	Update UpdateSettings `json:"update,omitzero"`
+	// PollIntervalSeconds is the controller poll cadence a paired device set
+	// over PUT /v1/poll-interval (poolpilot-relay#68). Zero means "no
+	// override": the poller runs at POLL_INTERVAL (or its built-in default).
+	// It takes precedence over the env value, is applied live (the poller
+	// re-reads it), and survives restarts. Like Update it is device-level, not
+	// household data, so ResetHousehold keeps it; a factory reset (Wipe) drops
+	// it with everything else. Additive with omitempty, so an older document
+	// simply lacks it.
+	PollIntervalSeconds int `json:"poll_interval_seconds,omitempty"`
 }
 
 // Paired reports whether at least one device is active (has never been revoked).
@@ -289,8 +298,8 @@ func (s State) TunnelParked() bool {
 // (no "stale pin" lockout), and the fingerprint/QR printed by show-pairing or
 // on a sticker keeps working for the re-setup. A fresh identity is what the
 // explicit on-device factory reset is for (Store.Wipe, e.g. before resale).
-// Also kept: the self-update settings/memory (device-level, not household
-// data), RecoveryWindowUsed (a monotonic replay guard; the recovery code is
+// Also kept: the self-update settings/memory and the poll-interval override
+// (device-level, not household data), RecoveryWindowUsed (a monotonic replay guard; the recovery code is
 // derived from the identity and is unusable while not enrolled anyway), and
 // CloudSyncSeeded (a one-shot migration marker).
 func (s *State) ResetHousehold() {

@@ -32,6 +32,28 @@ const DefaultInterval = 60 * time.Second
 // control-fetch → snapshot → Evaluate wiring without standing up a controller.
 var newDriver = driver.New
 
+// Bounds of the owner-set poll interval (PUT /v1/poll-interval,
+// poolpilot-relay#68): the app's own poll slider spans 3–99 s, and the relay
+// additionally allows slower cadences up to 10 min for sensitive controllers or
+// metered links. The upper bound also keeps a full entry debounce
+// (alert.DefaultDebouncePolls polls) well inside the default stale-data window
+// (alert.DefaultStaleAfterSeconds), so the stale watchdog cannot fire merely
+// because the relay polls slowly. The env POLL_INTERVAL is NOT clamped to these
+// bounds — it stays the operator's (and e2e's, POLL_INTERVAL=1s) escape hatch.
+const (
+	MinIntervalSeconds = 3
+	MaxIntervalSeconds = 600
+)
+
+// intervalUnit converts the persisted override (whole seconds) to a duration.
+// A package var only so the live-reload test can run in milliseconds.
+var intervalUnit = time.Second
+
+// ValidIntervalSeconds reports whether s is an acceptable owner-set interval.
+func ValidIntervalSeconds(s int) bool {
+	return s >= MinIntervalSeconds && s <= MaxIntervalSeconds
+}
+
 // Interval resolves POLL_INTERVAL (Go duration syntax, e.g. "60s").
 func Interval() (time.Duration, error) {
 	raw := os.Getenv("POLL_INTERVAL")
@@ -59,9 +81,14 @@ type Snapshot struct {
 
 // Poller owns the poll loop. Zero-value is not usable; use New.
 type Poller struct {
-	store    *state.Store
-	cloud    *cloud.Client
+	store *state.Store
+	cloud *cloud.Client
+	// interval is the env/built-in default cadence; the effective cadence is
+	// the persisted owner override when one is set (see Interval).
 	interval time.Duration
+	// reload wakes Run to re-read the effective interval after an owner
+	// change. Buffered (1) so Reload never blocks and coalesces bursts.
+	reload chan struct{}
 
 	mu    sync.Mutex
 	snaps map[string]Snapshot // keyed by controller GUID
@@ -76,7 +103,7 @@ func New(st *state.Store, cl *cloud.Client, interval time.Duration) *Poller {
 	if interval <= 0 {
 		interval = DefaultInterval
 	}
-	p := &Poller{store: st, cloud: cl, interval: interval, snaps: map[string]Snapshot{}}
+	p := &Poller{store: st, cloud: cl, interval: interval, reload: make(chan struct{}, 1), snaps: map[string]Snapshot{}}
 	for _, c := range st.Get().Controllers {
 		if c.GUID == "" {
 			continue
@@ -103,16 +130,62 @@ func (p *Poller) Snapshot(guid string) Snapshot {
 	return snap
 }
 
+// DefaultCadence is the env/built-in cadence the poller falls back to when no
+// owner override is persisted (POLL_INTERVAL, else DefaultInterval).
+func (p *Poller) DefaultCadence() time.Duration { return p.interval }
+
+// Interval is the effective poll cadence: the persisted owner override
+// (state.PollIntervalSeconds) when it is set and within bounds, else the
+// env/built-in default. An out-of-range persisted value (a hand-edited state
+// file) is ignored rather than trusted, so it can never make the relay hammer
+// the controller.
+func (p *Poller) Interval() time.Duration {
+	return EffectiveInterval(p.store.Get(), p.interval)
+}
+
+// EffectiveInterval resolves the cadence for a state document against the
+// env/built-in default def — the one rule Poller.Interval and the LAN API's
+// poll-interval read share.
+func EffectiveInterval(st state.State, def time.Duration) time.Duration {
+	if ValidIntervalSeconds(st.PollIntervalSeconds) {
+		return time.Duration(st.PollIntervalSeconds) * intervalUnit
+	}
+	if def <= 0 {
+		return DefaultInterval
+	}
+	return def
+}
+
+// Reload asks Run to re-read the effective interval now (after the owner
+// changed it). Non-blocking; safe to call before Run starts or after it ends.
+func (p *Poller) Reload() {
+	select {
+	case p.reload <- struct{}{}:
+	default:
+	}
+}
+
 // Run ticks until ctx is done. The first tick fires immediately so a freshly
-// configured agent shows data without waiting a full interval.
+// configured agent shows data without waiting a full interval. A Reload
+// re-arms the ticker with the effective interval, measured from the change:
+// the next poll is one NEW interval after it (no extra poll is fired, so
+// shortening the cadence never bursts the controller, and lengthening it takes
+// effect without waiting out the old period).
 func (p *Poller) Run(ctx context.Context) error {
-	ticker := time.NewTicker(p.interval)
+	current := p.Interval()
+	ticker := time.NewTicker(current)
 	defer ticker.Stop()
 	p.tick(ctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-p.reload:
+			if next := p.Interval(); next != current {
+				slog.Info("controller poll interval changed", "from", current, "to", next)
+				current = next
+				ticker.Reset(current)
+			}
 		case <-ticker.C:
 			p.tick(ctx)
 		}
