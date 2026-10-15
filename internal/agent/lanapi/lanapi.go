@@ -326,6 +326,13 @@ func (s *Server) sharedRoutes() []route {
 		{"POST /v1/update/check", accessPaired, s.checkUpdate},
 		{"POST /v1/update/apply", accessOwner, s.applyUpdate},
 		{"PUT /v1/update", accessOwner, s.putUpdate},
+		// Controller poll cadence (poolpilot-relay#68). On both legs, like the
+		// update toggle: a reversible setting, not a LAN-presence ceremony.
+		// Reading it is open; changing or clearing it is relay configuration,
+		// so owner-only.
+		{"GET /v1/poll-interval", accessPaired, s.getPollInterval},
+		{"PUT /v1/poll-interval", accessOwner, s.putPollInterval},
+		{"DELETE /v1/poll-interval", accessOwner, s.deletePollInterval},
 	}
 }
 
@@ -425,12 +432,13 @@ func (s *Server) RunTunnelListener(ctx context.Context) error {
 func (s *Server) info(w http.ResponseWriter, _ *http.Request) {
 	st := s.Store.Get()
 	writeJSON(w, http.StatusOK, wire.InfoResponse{
-		AgentID:       st.AgentID,
-		Version:       s.Version,
-		Paired:        st.Paired(),
-		Enrolled:      st.Enrolled(),
-		Fingerprint:   s.Fingerprint,
-		PresetSupport: preset.Supported(),
+		AgentID:             st.AgentID,
+		Version:             s.Version,
+		Paired:              st.Paired(),
+		Enrolled:            st.Enrolled(),
+		Fingerprint:         s.Fingerprint,
+		PresetSupport:       preset.Supported(),
+		PollIntervalSeconds: s.pollIntervalOf(st).Seconds,
 	})
 }
 
@@ -2179,6 +2187,85 @@ func (s *Server) putUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, u.Status())
+}
+
+// ---- controller poll interval (/v1/poll-interval, poolpilot-relay#68) ----
+
+// defaultPollInterval is the env/built-in cadence (POLL_INTERVAL, else 60 s).
+// Without a wired Poller (handler tests) it is the built-in default.
+func (s *Server) defaultPollInterval() time.Duration {
+	if s.Poller != nil {
+		return s.Poller.DefaultCadence()
+	}
+	return poller.DefaultInterval
+}
+
+// pollIntervalOf renders the poll-interval view of a state document. Seconds
+// never rounds to 0 (a sub-second e2e cadence reports 1), because a zero
+// poll_interval_seconds on /v1/info means "relay without the feature".
+func (s *Server) pollIntervalOf(st state.State) wire.PollIntervalResponse {
+	def := s.defaultPollInterval()
+	return wire.PollIntervalResponse{
+		Seconds:        max(1, int(poller.EffectiveInterval(st, def)/time.Second)),
+		DefaultSeconds: max(1, int(def/time.Second)),
+		Overridden:     poller.ValidIntervalSeconds(st.PollIntervalSeconds),
+		MinSeconds:     poller.MinIntervalSeconds,
+		MaxSeconds:     poller.MaxIntervalSeconds,
+	}
+}
+
+// getPollInterval is GET /v1/poll-interval.
+func (s *Server) getPollInterval(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.pollIntervalOf(s.Store.Get()))
+}
+
+// putPollInterval is PUT /v1/poll-interval: validate, persist, then wake the
+// poller, which re-reads the persisted value itself — so concurrent PUTs can
+// never leave the running cadence different from what is on disk.
+func (s *Server) putPollInterval(w http.ResponseWriter, r *http.Request) {
+	var req wire.PollIntervalRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Seconds == nil {
+		writeErr(w, http.StatusBadRequest, "bad_json")
+		return
+	}
+	if !poller.ValidIntervalSeconds(*req.Seconds) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error":       "poll_interval_out_of_range",
+			"min_seconds": poller.MinIntervalSeconds,
+			"max_seconds": poller.MaxIntervalSeconds,
+		})
+		return
+	}
+	if err := s.Store.Update(func(st *state.State) { st.PollIntervalSeconds = *req.Seconds }); err != nil {
+		slog.Error("persist poll interval", "err", err)
+		writeErr(w, http.StatusInternalServerError, "persist_failed")
+		return
+	}
+	s.reloadPoller()
+	slog.Info("controller poll interval set over the LAN API", "seconds", *req.Seconds)
+	writeJSON(w, http.StatusOK, s.pollIntervalOf(s.Store.Get()))
+}
+
+// deletePollInterval is DELETE /v1/poll-interval: clear the override, so the
+// relay falls back to POLL_INTERVAL (or the built-in default) — and later
+// edits to the env file take effect again. Idempotent: clearing an absent
+// override is a 200 too. Answers like GET.
+func (s *Server) deletePollInterval(w http.ResponseWriter, _ *http.Request) {
+	if err := s.Store.Update(func(st *state.State) { st.PollIntervalSeconds = 0 }); err != nil {
+		slog.Error("clear poll interval", "err", err)
+		writeErr(w, http.StatusInternalServerError, "persist_failed")
+		return
+	}
+	s.reloadPoller()
+	slog.Info("controller poll interval override cleared over the LAN API")
+	writeJSON(w, http.StatusOK, s.pollIntervalOf(s.Store.Get()))
+}
+
+// reloadPoller wakes the poller to re-read the persisted cadence.
+func (s *Server) reloadPoller() {
+	if s.Poller != nil {
+		s.Poller.Reload()
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

@@ -141,6 +141,8 @@ func gatedRoutes() []gatedRoute {
 		{"PUT", "/v1/controllers/{guid}/alert-rules", func(*ownerGateFixture) any { return rules }, http.StatusOK},
 		{"POST", "/v1/update/apply", nil, http.StatusAccepted},
 		{"PUT", "/v1/update", func(*ownerGateFixture) any { return map[string]any{"auto": false} }, http.StatusOK},
+		{"PUT", "/v1/poll-interval", func(*ownerGateFixture) any { return map[string]any{"seconds": 120} }, http.StatusOK},
+		{"DELETE", "/v1/poll-interval", nil, http.StatusOK},
 		{"DELETE", "/v1/devices/{member}", nil, http.StatusNoContent},
 		{"POST", "/v1/household-reset", nil, http.StatusNoContent},
 		{"POST", "/v1/factory-reset", nil, http.StatusNoContent},
@@ -327,6 +329,9 @@ func TestRouteAccessTable(t *testing.T) {
 		"POST /v1/update/check":                   accessPaired,
 		"POST /v1/update/apply":                   accessOwner,
 		"PUT /v1/update":                          accessOwner,
+		"GET /v1/poll-interval":                   accessPaired,
+		"PUT /v1/poll-interval":                   accessOwner,
+		"DELETE /v1/poll-interval":                accessOwner,
 	}
 	with := func(extra map[string]access) map[string]access {
 		out := maps.Clone(shared)

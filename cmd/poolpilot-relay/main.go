@@ -17,7 +17,8 @@
 //	                 to (default 127.0.0.1:8481) — the authenticated,
 //	                 credential-gated proxy (poolpilot-cloud#27) standing in front of
 //	                 every controller's real address
-//	POLL_INTERVAL    controller poll cadence, Go duration (default 60s; e2e: 1s)
+//	POLL_INTERVAL    default controller poll cadence, Go duration (default 60s; e2e: 1s);
+//	                 an app-set PUT /v1/poll-interval value (persisted) takes precedence
 //	MDNS_DISABLED    "1" disables the mDNS announcer (docker/e2e)
 //	MDNS_VERBOSE_LOGS "1" re-enables the dnssd library's own INFO logging (the
 //	                 RFC 6762 sanitize notices), which is suppressed by default;

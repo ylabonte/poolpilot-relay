@@ -55,3 +55,28 @@ func TestUpdateSettingsDefaultOnAndPersist(t *testing.T) {
 		t.Fatalf("last_advisory did not survive: %+v", got.Update)
 	}
 }
+
+// The owner-set poll interval is persisted and survives a reopen (a restart),
+// and a household reset keeps it (device-level, like the update settings).
+func TestPollIntervalPersistsAndSurvivesHouseholdReset(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Update(func(s *State) { s.PollIntervalSeconds = 180 }); err != nil {
+		t.Fatal(err)
+	}
+	re, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := re.Get().PollIntervalSeconds; got != 180 {
+		t.Fatalf("after reopen: %d, want 180", got)
+	}
+	s := re.Get()
+	s.ResetHousehold()
+	if s.PollIntervalSeconds != 180 {
+		t.Fatalf("ResetHousehold dropped the poll interval")
+	}
+}
