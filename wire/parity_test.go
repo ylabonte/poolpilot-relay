@@ -96,6 +96,8 @@ func TestFixtureRoundTrips(t *testing.T) {
 		{"tenant_status_request", func() any { return &TenantStatusRequest{} }},
 		{"tenant_status_response", func() any { return &TenantStatusResponse{} }},
 		{"update_status", func() any { return &UpdateStatusResponse{} }},
+		{"poll_interval_request", func() any { return &PollIntervalRequest{} }},
+		{"poll_interval_response", func() any { return &PollIntervalResponse{} }},
 	}
 
 	seen := map[string]bool{"_comment": true} // documentation-only key

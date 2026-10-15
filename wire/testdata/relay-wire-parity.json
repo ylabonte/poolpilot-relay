@@ -6,7 +6,8 @@
     "paired": true,
     "enrolled": true,
     "fingerprint": "sha256/aGVsbG8gd29ybGQgc3BraSBwaW4gZXhhbXBsZQ==",
-    "preset_support": ["procon-ip", "violet"]
+    "preset_support": ["procon-ip", "violet"],
+    "poll_interval_seconds": 120
   },
   "pair_request": {
     "enrollment_code": "ABCD-EFGH",
@@ -341,5 +342,15 @@
       "to": "v1.3.2",
       "finished_at": "2026-07-24T03:14:11Z"
     }
+  },
+  "poll_interval_request": {
+    "seconds": 120
+  },
+  "poll_interval_response": {
+    "seconds": 120,
+    "default_seconds": 60,
+    "overridden": true,
+    "min_seconds": 3,
+    "max_seconds": 600
   }
 }
