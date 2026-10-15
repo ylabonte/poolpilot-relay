@@ -5,8 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -300,5 +304,148 @@ func TestOwnerOnlyFailsClosedWithoutRole(t *testing.T) {
 		if rec.Code != http.StatusForbidden || called {
 			t.Errorf("device %+v: HTTP %d called=%v, want 403 and no call", dev, rec.Code, called)
 		}
+	}
+}
+
+// TestRouteAccessTable is the inventory of every LAN API route on BOTH legs and
+// the access each is mounted with. Adding, removing or re-gating a route on
+// either leg fails here until the table below is updated deliberately.
+func TestRouteAccessTable(t *testing.T) {
+	shared := map[string]access{
+		"GET /v1/info":                            accessPublic,
+		"PUT /v1/controllers":                     accessOwner,
+		"GET /v1/controllers":                     accessPaired,
+		"DELETE /v1/controllers/{guid}":           accessOwner,
+		"POST /v1/controllers/{guid}/rotate":      accessOwner,
+		"POST /v1/controllers/{guid}/web-session": accessPaired,
+		"GET /v1/controllers/{guid}/alert-rules":  accessPaired,
+		"PUT /v1/controllers/{guid}/alert-rules":  accessOwner,
+		"GET /v1/status":                          accessPaired,
+		"GET /v1/devices":                         accessPaired,
+		"DELETE /v1/devices/{id}":                 accessSelfOrOwner,
+		"GET /v1/update":                          accessPaired,
+		"POST /v1/update/check":                   accessPaired,
+		"POST /v1/update/apply":                   accessOwner,
+		"PUT /v1/update":                          accessOwner,
+	}
+	with := func(extra map[string]access) map[string]access {
+		out := maps.Clone(shared)
+		maps.Copy(out, extra)
+		return out
+	}
+	want := map[string]map[string]access{
+		"lan": with(map[string]access{
+			"POST /v1/pair":            accessPublic,
+			"POST /v1/factory-reset":   accessOwner,
+			"POST /v1/household-reset": accessOwner,
+		}),
+		"tunnel": with(map[string]access{
+			"POST /v1/pair":            accessLANOnly,
+			"POST /v1/factory-reset":   accessLANOnly,
+			"POST /v1/household-reset": accessLANOnly,
+		}),
+	}
+	f := newFixture(t)
+	for leg, routes := range map[string][]route{"lan": f.srv.lanRoutes(), "tunnel": f.srv.tunnelRoutes()} {
+		got := map[string]access{}
+		for _, rt := range routes {
+			if _, dup := got[rt.pattern]; dup {
+				t.Errorf("%s: %q registered twice", leg, rt.pattern)
+			}
+			got[rt.pattern] = rt.access
+		}
+		if !maps.Equal(got, want[leg]) {
+			t.Errorf("%s route table drifted:\n got  %v\n want %v", leg, got, want[leg])
+		}
+	}
+}
+
+// TestEveryRouteEnforcesItsAccess drives every declared route through the REAL
+// mux of each leg and checks the gate actually answers the way its access
+// says: no bearer → 401 on every bearer route, a member → 403 owner_required
+// on every owner route (and on another device's id), 403 lan_only where the
+// leg refuses the route. Owner success per route is TestOwnerOnlyRoutes.
+func TestEveryRouteEnforcesItsAccess(t *testing.T) {
+	for leg, pick := range map[string]func(*Server) ([]route, http.Handler){
+		"lan":    func(s *Server) ([]route, http.Handler) { return s.lanRoutes(), s.Handler() },
+		"tunnel": func(s *Server) ([]route, http.Handler) { return s.tunnelRoutes(), s.TunnelHandler() },
+	} {
+		g := newOwnerGateFixture(t)
+		routes, h := pick(g.srv)
+		for _, rt := range routes {
+			method, path, _ := strings.Cut(rt.pattern, " ")
+			path = strings.NewReplacer("{guid}", g.guid, "{id}", g.ownerID).Replace(path)
+			call := func(bearer string) (int, string) {
+				req := httptest.NewRequest(method, path, strings.NewReader("{}"))
+				if bearer != "" {
+					req.Header.Set("Authorization", "Bearer "+bearer)
+				}
+				rec := httptest.NewRecorder()
+				h.ServeHTTP(rec, req)
+				var e map[string]string
+				_ = json.Unmarshal(rec.Body.Bytes(), &e)
+				return rec.Code, e["error"]
+			}
+			name := leg + " " + rt.pattern
+			switch rt.access {
+			case accessPublic:
+				if code, _ := call(""); code == http.StatusUnauthorized || code == http.StatusForbidden {
+					t.Errorf("%s: public route answered %d without a bearer", name, code)
+				}
+			case accessPaired:
+				if code, _ := call(""); code != http.StatusUnauthorized {
+					t.Errorf("%s: no bearer → %d, want 401", name, code)
+				}
+				if code, e := call(g.memberTok); code == http.StatusUnauthorized || code == http.StatusForbidden {
+					t.Errorf("%s: member → %d %s, want it open", name, code, e)
+				}
+			case accessOwner, accessSelfOrOwner:
+				if code, _ := call(""); code != http.StatusUnauthorized {
+					t.Errorf("%s: no bearer → %d, want 401", name, code)
+				}
+				if code, e := call(g.memberTok); code != http.StatusForbidden || e != "owner_required" {
+					t.Errorf("%s: member → %d %s, want 403 owner_required", name, code, e)
+				}
+			case accessLANOnly:
+				for _, bearer := range []string{"", g.memberTok, g.ownerTok} {
+					if code, e := call(bearer); code != http.StatusForbidden || e != "lan_only" {
+						t.Errorf("%s: → %d %s, want 403 lan_only", name, code, e)
+					}
+				}
+			default:
+				t.Errorf("%s: unknown access %d", name, rt.access)
+			}
+		}
+	}
+}
+
+// Routes are registered in exactly one place — mount — so no handler can be
+// put on a mux without passing through the access table above.
+func TestRoutesAreOnlyRegisteredThroughMount(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`\.Handle(Func)?\(`)
+	n := 0
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, line := range strings.Split(string(src), "\n") {
+			if re.MatchString(line) && !strings.HasPrefix(strings.TrimSpace(line), "//") {
+				n++
+				if strings.TrimSpace(line) != "mux.Handle(rt.pattern, h)" {
+					t.Errorf("%s:%d registers a route outside mount: %s", name, i+1, strings.TrimSpace(line))
+				}
+			}
+		}
+	}
+	if n != 1 {
+		t.Errorf("found %d route registrations, want exactly the one in mount", n)
 	}
 }

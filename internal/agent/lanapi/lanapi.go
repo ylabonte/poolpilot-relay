@@ -211,95 +211,155 @@ func (s *Server) checkLanAddress(addr string, useHTTPS bool) error {
 	return state.ValidateLanAddress(addr, useHTTPS)
 }
 
-// baseMux holds the routes reachable over BOTH the LAN (HTTPS) and the tunnel
+// access is the authorization a route is mounted with. Every route of both
+// listeners is declared with one (sharedRoutes, lanRoutes, tunnelRoutes) and
+// mounted through mount, the only place that wraps handlers in their gates, so
+// the same route can never end up with different gates on different legs by
+// accident. TestRouteAccessTable pins the full table for both legs.
+type access int
+
+const (
+	// accessPublic needs no pairing bearer.
+	accessPublic access = iota
+	// accessPaired is open to every paired device (authed).
+	accessPaired
+	// accessSelfOrOwner is open to every paired device when the {id} path
+	// value is the caller's own device id, and owner-only otherwise.
+	accessSelfOrOwner
+	// accessOwner is owner-only (authed + ownerOnly → 403 owner_required).
+	accessOwner
+	// accessLANOnly is refused on this leg with 403 lan_only.
+	accessLANOnly
+)
+
+// route is one registration: a ServeMux pattern, its access, its handler.
+type route struct {
+	pattern string
+	access  access
+	handler http.HandlerFunc
+}
+
+// mount registers routes on a fresh mux, wrapping each handler in exactly the
+// gate its access names.
+func (s *Server) mount(routes []route) *http.ServeMux {
+	mux := http.NewServeMux()
+	for _, rt := range routes {
+		var h http.Handler
+		switch rt.access {
+		case accessPublic:
+			h = rt.handler
+		case accessPaired:
+			h = s.authed(rt.handler)
+		case accessSelfOrOwner:
+			h = s.authed(s.selfOrOwner(rt.handler))
+		case accessOwner:
+			h = s.authed(s.ownerOnly(rt.handler))
+		case accessLANOnly:
+			h = http.HandlerFunc(lanOnly)
+		default:
+			panic(fmt.Sprintf("lanapi: route %q has no access", rt.pattern))
+		}
+		mux.Handle(rt.pattern, h)
+	}
+	return mux
+}
+
+// sharedRoutes are reachable over BOTH the LAN (HTTPS) and the tunnel
 // (loopback HTTP behind frp) listeners. The LAN-only ceremonies — pairing,
 // factory-reset and household-reset — are deliberately NOT here: pairing
 // proves physical LAN presence, factory-reset is destructive + irreversible
 // (wipes state and exits the process), and household-reset unpairs every
 // device and drops every controller, so both resets demand the same LAN
-// presence. Handler() mounts the real handlers; TunnelHandler() answers 403
+// presence. lanRoutes mounts the real handlers; tunnelRoutes answers 403
 // lan_only for all three.
-func (s *Server) baseMux() *http.ServeMux {
-	mux := http.NewServeMux()
-	// /v1/info is intentionally reachable on BOTH legs. It returns only
-	// non-secret metadata (agent id, version, paired/enrolled, the SPKI
-	// fingerprint — a public-key hash that grants nothing) and, on the tunnel,
-	// sits behind a 32-hex-GUID subdomain that is itself the capability, so it
-	// adds no oracle the controller vhost doesn't already provide. Keeping it
-	// uniform lets the app address both legs through one client interface.
-	mux.HandleFunc("GET /v1/info", s.info)
-	// Canonical multi-controller surface (D4).
-	//
-	// Routes that change the relay's configuration, its controller set or its
-	// software are owner-only (ownerOnly → 403 owner_required for a member):
-	// they act on the whole household's relay. Reading, the controller UI
-	// session and the controller data path stay open to every paired device.
-	mux.Handle("PUT /v1/controllers", s.authed(s.ownerOnly(s.putControllers)))
-	mux.Handle("GET /v1/controllers", s.authed(s.getControllers))
-	mux.Handle("DELETE /v1/controllers/{guid}", s.authed(s.ownerOnly(s.deleteControllerHandler)))
-	mux.Handle("POST /v1/controllers/{guid}/rotate", s.authed(s.ownerOnly(s.rotateControllerHandler)))
-	// Mints a web session for the controller's native UI (issue poolpilot-cloud#27). On
-	// baseMux deliberately, so it is reachable on BOTH legs: a device away from
-	// home has no other way to open that UI, and the tunnel leg already proves
-	// possession of the pairing bearer.
-	mux.Handle("POST /v1/controllers/{guid}/web-session", s.authed(s.webSessionHandler))
-	mux.Handle("GET /v1/controllers/{guid}/alert-rules", s.authed(s.getControllerRules))
-	mux.Handle("PUT /v1/controllers/{guid}/alert-rules", s.authed(s.ownerOnly(s.putControllerRules)))
-	// The guid-less GET/PUT /v1/alert-rules compat aliases (thin wrappers over
-	// controller[0], for pre-multi apps) are gone: apps now speak the guid-scoped
-	// route above. The PUT /v1/controller sibling alias was removed earlier, in
-	// issue poolpilot-cloud#113.
-	mux.Handle("GET /v1/status", s.authed(s.status))
-	// Listing devices is identical on both legs; deleting differs (the last-
-	// device guard is LAN-only, D9), so DELETE is mounted per-leg by the callers.
-	// Deleting is not behind ownerOnly: any device may revoke ITSELF (leaving
-	// the relay); revoking another device is owner-only, checked in deleteDevice.
-	mux.Handle("GET /v1/devices", s.authed(s.getDevices))
-	// Self-update management. Deliberately on BOTH legs: triggering a signed,
-	// health-checked update remotely is the feature, and none of these is a
-	// LAN-presence ceremony. The worst a stolen owner bearer can do here is install
-	// the newest official release — recoverable, unlike pair/factory-reset.
-	mux.Handle("GET /v1/update", s.authed(s.getUpdate))
-	mux.Handle("POST /v1/update/check", s.authed(s.checkUpdate))
-	// Reading the status and asking for a fresh check are open; installing an
-	// update and switching auto-update are owner-only.
-	mux.Handle("POST /v1/update/apply", s.authed(s.ownerOnly(s.applyUpdate)))
-	mux.Handle("PUT /v1/update", s.authed(s.ownerOnly(s.putUpdate)))
-	return mux
+//
+// Routes that change the relay's configuration, its controller set or its
+// software are owner-only (403 owner_required for a member): they act on the
+// whole household's relay. Reading, the controller UI session and the
+// controller data path stay open to every paired device.
+func (s *Server) sharedRoutes() []route {
+	return []route{
+		// /v1/info is intentionally reachable on BOTH legs. It returns only
+		// non-secret metadata (agent id, version, paired/enrolled, the SPKI
+		// fingerprint — a public-key hash that grants nothing) and, on the
+		// tunnel, sits behind a 32-hex-GUID subdomain that is itself the
+		// capability, so it adds no oracle the controller vhost doesn't already
+		// provide. Keeping it uniform lets the app address both legs through one
+		// client interface.
+		{"GET /v1/info", accessPublic, s.info},
+		// Canonical multi-controller surface (D4).
+		{"PUT /v1/controllers", accessOwner, s.putControllers},
+		{"GET /v1/controllers", accessPaired, s.getControllers},
+		{"DELETE /v1/controllers/{guid}", accessOwner, s.deleteControllerHandler},
+		{"POST /v1/controllers/{guid}/rotate", accessOwner, s.rotateControllerHandler},
+		// Mints a web session for the controller's native UI (issue
+		// poolpilot-cloud#27). On both legs deliberately: a device away from
+		// home has no other way to open that UI, and the tunnel leg already
+		// proves possession of the pairing bearer.
+		{"POST /v1/controllers/{guid}/web-session", accessPaired, s.webSessionHandler},
+		// The guid-less GET/PUT /v1/alert-rules compat aliases (thin wrappers
+		// over controller[0], for pre-multi apps) are gone: apps now speak the
+		// guid-scoped route. The PUT /v1/controller sibling alias was removed
+		// earlier, in issue poolpilot-cloud#113.
+		{"GET /v1/controllers/{guid}/alert-rules", accessPaired, s.getControllerRules},
+		{"PUT /v1/controllers/{guid}/alert-rules", accessOwner, s.putControllerRules},
+		{"GET /v1/status", accessPaired, s.status},
+		// Listing devices is identical on both legs; deleting differs (the
+		// last-device guard is LAN-only, D9), so DELETE is declared per leg —
+		// with the same access on both.
+		{"GET /v1/devices", accessPaired, s.getDevices},
+		// Self-update management. Deliberately on BOTH legs: triggering a
+		// signed, health-checked update remotely is the feature, and none of
+		// these is a LAN-presence ceremony. The worst a stolen owner bearer can
+		// do here is install the newest official release — recoverable, unlike
+		// pair/factory-reset. Reading the status and asking for a fresh check
+		// are open; installing an update and switching auto-update are
+		// owner-only.
+		{"GET /v1/update", accessPaired, s.getUpdate},
+		{"POST /v1/update/check", accessPaired, s.checkUpdate},
+		{"POST /v1/update/apply", accessOwner, s.applyUpdate},
+		{"PUT /v1/update", accessOwner, s.putUpdate},
+	}
 }
 
-// Handler builds the LAN-facing mux (pairing, factory-reset and
-// household-reset allowed; exported for httptest-based tests).
-func (s *Server) Handler() http.Handler {
-	mux := s.baseMux()
-	mux.HandleFunc("POST /v1/pair", s.pair)
-	mux.Handle("POST /v1/factory-reset", s.authed(s.ownerOnly(s.factoryReset)))
-	mux.Handle("POST /v1/household-reset", s.authed(s.ownerOnly(s.householdReset)))
-	// On the LAN leg, revoking the last active device is allowed (that is how
-	// "remove this phone" unpairs the agent).
-	mux.Handle("DELETE /v1/devices/{id}", s.authed(s.deleteDevice(false)))
-	return mux
+// lanRoutes is the LAN-facing route set: the shared routes plus pairing,
+// factory-reset and household-reset. Revoking the last active device is
+// allowed here (that is how "remove this phone" unpairs the agent).
+func (s *Server) lanRoutes() []route {
+	return append(s.sharedRoutes(),
+		route{"POST /v1/pair", accessPublic, s.pair},
+		route{"POST /v1/factory-reset", accessOwner, s.factoryReset},
+		route{"POST /v1/household-reset", accessOwner, s.householdReset},
+		route{"DELETE /v1/devices/{id}", accessSelfOrOwner, s.deleteDevice(false)},
+	)
 }
 
-// TunnelHandler is the remote-facing mux: the shared routes, but the LAN-only
-// ceremonies are refused with 403 lan_only. A stolen pairing bearer must not
-// let an attacker re-pair, remotely brick the agent, OR remotely strip it of
-// its household from the internet — remote decommissioning is an operator
-// action via the cloud /admin/revoke, and a household erased in the cloud
-// reaches the relay through the lifecycle watcher, not a destructive call
-// over the tunnel.
-func (s *Server) TunnelHandler() http.Handler {
-	mux := s.baseMux()
-	mux.HandleFunc("POST /v1/pair", lanOnly)
-	mux.HandleFunc("POST /v1/factory-reset", lanOnly)
-	mux.HandleFunc("POST /v1/household-reset", lanOnly)
-	// Device revocation is allowed remotely (a lost phone is revoked from another
-	// device that is away, D9) EXCEPT revoking the last device — that unpairs the
-	// agent, so a stolen bearer must not do it over the tunnel. deleteDevice(true)
-	// enforces that guard.
-	mux.Handle("DELETE /v1/devices/{id}", s.authed(s.deleteDevice(true)))
-	return mux
+// tunnelRoutes is the remote-facing route set: the shared routes, but the
+// LAN-only ceremonies are refused with 403 lan_only. A stolen pairing bearer
+// must not let an attacker re-pair, remotely brick the agent, OR remotely strip
+// it of its household from the internet — remote decommissioning is an
+// operator action via the cloud /admin/revoke, and a household erased in the
+// cloud reaches the relay through the lifecycle watcher, not a destructive
+// call over the tunnel.
+//
+// Device revocation is allowed remotely (an owner revokes a lost phone while
+// away, D9) EXCEPT revoking the last device — that unpairs the agent, so a
+// stolen bearer must not do it over the tunnel. deleteDevice(true) enforces
+// that guard.
+func (s *Server) tunnelRoutes() []route {
+	return append(s.sharedRoutes(),
+		route{"POST /v1/pair", accessLANOnly, nil},
+		route{"POST /v1/factory-reset", accessLANOnly, nil},
+		route{"POST /v1/household-reset", accessLANOnly, nil},
+		route{"DELETE /v1/devices/{id}", accessSelfOrOwner, s.deleteDevice(true)},
+	)
 }
+
+// Handler builds the LAN-facing mux (exported for httptest-based tests).
+func (s *Server) Handler() http.Handler { return s.mount(s.lanRoutes()) }
+
+// TunnelHandler builds the remote-facing mux.
+func (s *Server) TunnelHandler() http.Handler { return s.mount(s.tunnelRoutes()) }
 
 // lanOnly rejects a route that must never be reachable through the public tunnel.
 func lanOnly(w http.ResponseWriter, _ *http.Request) {
@@ -722,6 +782,21 @@ func (s *Server) ownerOnly(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// selfOrOwner gates a handler on the {id} path value: a paired device may act
+// on its OWN id, and only an owner on any other. Like ownerOnly it runs inside
+// authed, and it answers before the handler looks the id up, so a member
+// learns nothing about other device ids.
+func (s *Server) selfOrOwner(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		caller := deviceFromContext(r)
+		if caller.ID == "" || (r.PathValue("id") != caller.ID && !caller.IsOwner()) {
+			writeErr(w, http.StatusForbidden, "owner_required")
+			return
+		}
+		next(w, r)
+	}
+}
+
 // deviceForBearer resolves a pairing bearer to the ACTIVE device that owns
 // it. n is small (the device cap) and each compare is constant-time over
 // equal-length digests. Shared by authed and AuthorizeCtrlBearer so the LAN API
@@ -787,8 +862,8 @@ func (s *Server) getDevices(w http.ResponseWriter, r *http.Request) {
 // (last_device_lan_only) so a stolen bearer cannot remotely unpair the agent;
 // on the LAN it is allowed and unpairs. Self-revoke (leaving) is open to every
 // paired device; revoking ANOTHER device — the lost-phone flow — is owner-only
-// (403 owner_required for a member, checked before the target is looked up, so
-// a member learns nothing about other device ids).
+// (403 owner_required for a member; enforced by the selfOrOwner gate both legs
+// mount this handler behind).
 //
 // The found check and the last-device guard both run INSIDE the serialized
 // Update closure (signalled back via the found/blocked sentinels): evaluating
@@ -801,10 +876,6 @@ func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 		id := r.PathValue("id")
 		if id == "" {
 			writeErr(w, http.StatusBadRequest, "bad_id")
-			return
-		}
-		if caller := deviceFromContext(r); id != caller.ID && !caller.IsOwner() {
-			writeErr(w, http.StatusForbidden, "owner_required")
 			return
 		}
 
