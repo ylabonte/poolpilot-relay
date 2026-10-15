@@ -82,7 +82,8 @@ also direkt, wie schnell sie reagieren:
 ### Für App-Entwickler: die LAN-API
 
 Über die LAN-API des Relays (und dieselben Routen durch den Fernzugriffs-Tunnel),
-mit dem Bearer-Token eines gekoppelten Geräts:
+mit dem Bearer-Token eines gekoppelten Geräts (den Wert zu ändern ist eine
+Einstellung für den Besitzer):
 
 - `GET /v1/poll-interval` → `{"seconds":60,"default_seconds":60,"overridden":false,"min_seconds":3,"max_seconds":600}`
   — `seconds` ist der aktuell geltende Takt, `default_seconds` der
@@ -95,9 +96,6 @@ mit dem Bearer-Token eines gekoppelten Geräts:
   `poll_interval_seconds`. Ein Relay, das die Einstellung noch nicht kennt, lässt
   das Feld weg (und antwortet auf `/v1/poll-interval` mit `404`) — das ist das
   Fähigkeitssignal.
-
-Das Relay selbst kennt keine Besitzer-/Mitglieder-Rollen; die Einschränkung auf
-den Besitzer des Haushalts übernimmt die App.
 
 ## Erweiterte Einstellungen
 

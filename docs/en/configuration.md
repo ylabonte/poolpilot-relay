@@ -77,7 +77,7 @@ quickly they react:
 ### For app developers: the LAN API
 
 Over the relay's LAN API (and the same routes through the remote tunnel), with
-a paired device's bearer token:
+a paired device's bearer token (changing the value is an owner setting):
 
 - `GET /v1/poll-interval` → `{"seconds":60,"default_seconds":60,"overridden":false,"min_seconds":3,"max_seconds":600}`
   — `seconds` is the cadence in force, `default_seconds` the `POLL_INTERVAL`
@@ -89,9 +89,6 @@ a paired device's bearer token:
 - The unauthenticated `GET /v1/info` reports the cadence in force as
   `poll_interval_seconds`. A relay that predates the setting omits the field
   (and answers `404` on `/v1/poll-interval`) — that is the capability signal.
-
-The relay itself has no owner/member roles; restricting the control to the
-household owner is done by the app.
 
 ## Advanced settings
 

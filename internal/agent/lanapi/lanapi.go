@@ -253,11 +253,10 @@ func (s *Server) baseMux() *http.ServeMux {
 	mux.Handle("PUT /v1/update", s.authed(s.putUpdate))
 	// Controller poll cadence (poolpilot-relay#68). On BOTH legs, like the
 	// update toggle: it is a reversible setting, not a LAN-presence ceremony.
-	// The relay has no owner/member roles — any paired device's bearer is
-	// accepted, as for every other setting here; restricting the control to the
-	// household owner is the app's UI gate.
+	// Reading it is open to every paired device; changing it is an owner
+	// setting, routed through the ownerOnly seam.
 	mux.Handle("GET /v1/poll-interval", s.authed(s.getPollInterval))
-	mux.Handle("PUT /v1/poll-interval", s.authed(s.putPollInterval))
+	mux.Handle("PUT /v1/poll-interval", s.authed(s.ownerOnly(s.putPollInterval)))
 	return mux
 }
 
@@ -2056,6 +2055,17 @@ func (s *Server) putUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---- controller poll interval (/v1/poll-interval, poolpilot-relay#68) ----
+
+// ownerOnly marks a handler as an owner-only setting. It runs inside authed,
+// so the caller is already a paired device.
+//
+// TODO(owner-gate): the planned relay owner-role check plugs in here — once a
+// device's household role is known to the relay, refuse non-owners with 403
+// before next runs. Until then it is a pass-through, so the routes behind it
+// behave like every other authed route.
+func (s *Server) ownerOnly(next http.HandlerFunc) http.HandlerFunc {
+	return next
+}
 
 // defaultPollInterval is the env/built-in cadence (POLL_INTERVAL, else 60 s).
 // Without a wired Poller (handler tests) it is the built-in default.
