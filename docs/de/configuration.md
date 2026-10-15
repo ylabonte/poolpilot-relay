@@ -82,6 +82,18 @@ also direkt, wie schnell sie reagieren:
   6 Stunden) sind ebenfalls zeitbasiert und ändern sich nicht mit dem
   Abfrageintervall.
 
+Auch einige Hintergrundaufgaben laufen einmal pro Abfrage und warten daher auf
+die nächste:
+
+- ein Alarm, der nicht an die PoolPilot-Cloud zugestellt werden konnte, wird bei
+  der nächsten Abfrage erneut versucht;
+- eine Steuerungsänderung, über die die Cloud nicht informiert werden konnte,
+  wird bei der nächsten Abfrage erneut versucht;
+- eine neu hinzugefügte Steuerung zeigt ihre ersten Messwerte nach der nächsten
+  Abfrage.
+
+Bei 10 Minuten kann jedes davon bis zu 10 Minuten dauern.
+
 ### Für App-Entwickler: die LAN-API
 
 Über die LAN-API des Relays (und dieselben Routen durch den Fernzugriffs-Tunnel),

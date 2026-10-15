@@ -77,6 +77,16 @@ quickly they react:
 - Repeat reminders for a condition that persists (the cooldown, 6 hours by
   default) are time-based too and do not change with the poll interval.
 
+Some background work also runs once per poll, so it waits for the next one too:
+
+- an alert that could not be delivered to the PoolPilot cloud is retried at
+  the next poll;
+- a controller change the cloud could not be told about is retried at the
+  next poll;
+- a newly added controller shows its first readings after the next poll.
+
+At 10 minutes, each of these can take up to 10 minutes.
+
 ### For app developers: the LAN API
 
 Over the relay's LAN API (and the same routes through the remote tunnel), with
