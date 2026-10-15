@@ -93,9 +93,10 @@ Einstellung für den Besitzer):
   `400 {"error":"poll_interval_out_of_range","min_seconds":3,"max_seconds":600}`,
   ein fehlender oder nicht ganzzahliger Wert `400 {"error":"bad_json"}`.
 - Das nicht authentifizierte `GET /v1/info` meldet den geltenden Takt als
-  `poll_interval_seconds`. Ein Relay, das die Einstellung noch nicht kennt, lässt
-  das Feld weg (und antwortet auf `/v1/poll-interval` mit `404`) — das ist das
-  Fähigkeitssignal.
+  `poll_interval_seconds`. Dieses Feld ist das **einzige** Fähigkeitssignal: Ein
+  Relay, das die Einstellung noch nicht kennt, lässt es weg. Werte ein `404` auf
+  `/v1/poll-interval` nicht als „älteres Relay" — über den Fernzugriffs-Tunnel
+  kann ein `404` auch heißen, dass das Relay gerade nicht erreichbar ist.
 
 ## Erweiterte Einstellungen
 

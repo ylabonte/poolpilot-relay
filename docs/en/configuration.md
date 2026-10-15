@@ -87,8 +87,10 @@ a paired device's bearer token (changing the value is an owner setting):
   `400 {"error":"poll_interval_out_of_range","min_seconds":3,"max_seconds":600}`,
   a missing or non-integer value `400 {"error":"bad_json"}`.
 - The unauthenticated `GET /v1/info` reports the cadence in force as
-  `poll_interval_seconds`. A relay that predates the setting omits the field
-  (and answers `404` on `/v1/poll-interval`) — that is the capability signal.
+  `poll_interval_seconds`. This field is the **only** capability signal: a
+  relay that predates the setting omits it. Do not read a `404` on
+  `/v1/poll-interval` as "older relay" — through the remote tunnel, a `404` can
+  also mean the relay is not reachable right now.
 
 ## Advanced settings
 
