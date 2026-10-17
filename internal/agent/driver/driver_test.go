@@ -288,15 +288,16 @@ func TestConfigTimeoutZeroUsesDriverDefault(t *testing.T) {
 // only the request headers are asserted.
 func TestDriversSendTheRelayUserAgent(t *testing.T) {
 	want := useragent.String()
+	type hit struct{ path, ua string }
 	for _, p := range preset.Supported() {
 		t.Run(p, func(t *testing.T) {
 			var (
 				mu   sync.Mutex
-				seen = map[string]string{} // path → User-Agent
+				hits []hit // every request, in order — never keyed by path
 			)
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				mu.Lock()
-				seen[r.URL.Path] = r.Header.Get("User-Agent")
+				hits = append(hits, hit{r.URL.Path, r.Header.Get("User-Agent")})
 				mu.Unlock()
 				w.WriteHeader(http.StatusOK)
 			}))
@@ -306,23 +307,36 @@ func TestDriversSendTheRelayUserAgent(t *testing.T) {
 			if err != nil {
 				t.Fatalf("New(%q): %v", p, err)
 			}
-			ctx := context.Background()
-			_, _ = d.Readings(ctx)
-			_ = d.Probe(ctx)
 			cr, ok := d.(ControlConfigReader)
 			if !ok {
 				t.Fatalf("%q driver is not a ControlConfigReader", p)
 			}
-			_, _ = cr.ControlConfig(ctx)
-
-			mu.Lock()
-			defer mu.Unlock()
-			if len(seen) < 2 {
-				t.Fatalf("expected readings + config requests, saw %v", seen)
+			ctx := context.Background()
+			// Each call is asserted on its own: Probe hits the same path as
+			// Readings, so a per-path record would let one mask the other.
+			calls := []struct {
+				name string
+				do   func()
+			}{
+				{"Readings", func() { _, _ = d.Readings(ctx) }},
+				{"Probe", func() { _ = d.Probe(ctx) }},
+				{"ControlConfig", func() { _, _ = cr.ControlConfig(ctx) }},
 			}
-			for path, ua := range seen {
-				if ua != want {
-					t.Errorf("%s %s: User-Agent = %q, want %q", p, path, ua, want)
+			for _, c := range calls {
+				mu.Lock()
+				hits = nil
+				mu.Unlock()
+				c.do()
+				mu.Lock()
+				got := append([]hit(nil), hits...)
+				mu.Unlock()
+				if len(got) == 0 {
+					t.Errorf("%s %s: made no request to the controller", p, c.name)
+				}
+				for _, h := range got {
+					if h.ua != want {
+						t.Errorf("%s %s %s: User-Agent = %q, want %q", p, c.name, h.path, h.ua, want)
+					}
 				}
 			}
 		})
