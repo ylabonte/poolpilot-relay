@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ylabonte/poolpilot-relay/internal/agent/state"
+	"github.com/ylabonte/poolpilot-relay/internal/useragent"
 	"github.com/ylabonte/poolpilot-relay/wire"
 )
 
@@ -1335,5 +1336,25 @@ func TestSyncControllersBoundsRoundsWhenTheConfigKeepsChanging(t *testing.T) {
 	}
 	if !controller0(st.Get()).CloudSyncPending {
 		t.Error("the still-changing controller must stay flagged for the next tick")
+	}
+}
+
+// TestRequestsSendTheRelayUserAgent (issue #72): control-plane requests
+// identify the relay instead of sending Go's default "Go-http-client/1.1".
+func TestRequestsSendTheRelayUserAgent(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("User-Agent")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"frpc_token": "tok123",
+			"frps":       map[string]any{"server_addr": "frps", "server_port": 7000},
+		})
+	}))
+	defer srv.Close()
+	if _, err := New(newStore(t, "")).Redeem(context.Background(), srv.URL, "AAAA-BBBB"); err != nil {
+		t.Fatalf("Redeem: %v", err)
+	}
+	if want := useragent.String(); got != want {
+		t.Errorf("User-Agent = %q, want %q", got, want)
 	}
 }

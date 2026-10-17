@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+
+	"github.com/ylabonte/poolpilot-relay/internal/useragent"
 )
 
 // TestControllerConnectionsAreNotReused pins the write-over-relay fix.
@@ -92,5 +94,51 @@ func TestForwardingHeadersNeverReachTheController(t *testing.T) {
 	if got := got.Get("Authorization"); got != "Basic Zm9vOmJhcg==" {
 		t.Errorf("controller did not receive the caller's Authorization (got %q); only "+
 			"proxy-forwarding headers may be stripped", got)
+	}
+}
+
+// TestProxyUserAgentDecision pins the ctrlfilter half of issue #72. A real
+// caller UA (the in-app browser's WebView, the native app's HTTP stack) reaches
+// the controller unchanged, so a proxied request looks like the LAN client it
+// stands in for. A request with no UA — which ReverseProxy would forward with
+// NO User-Agent at all — or Go's bot-flagged default gets the relay's own UA
+// instead, the shape a WAF in front of a vendor-hosted controller accepts.
+func TestProxyUserAgentDecision(t *testing.T) {
+	relayUA := useragent.String()
+	cases := []struct {
+		name    string
+		present bool
+		in      string
+		want    string
+	}{
+		{"webview UA is kept", true, "Mozilla/5.0 (iPhone; CPU iPhone OS 27_0 like Mac OS X)", "Mozilla/5.0 (iPhone; CPU iPhone OS 27_0 like Mac OS X)"},
+		{"native app UA is kept", true, "okhttp/5.1.0", "okhttp/5.1.0"},
+		{"missing UA gets the relay's", false, "", relayUA},
+		{"empty UA gets the relay's", true, "", relayUA},
+		{"Go default gets the relay's", true, "Go-http-client/1.1", relayUA},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var got string
+			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got = r.Header.Get("User-Agent")
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer backend.Close()
+
+			req := httptest.NewRequest(http.MethodGet, "/GetState.csv", nil)
+			delete(req.Header, "User-Agent")
+			if c.present {
+				req.Header["User-Agent"] = []string{c.in}
+			}
+			rec := httptest.NewRecorder()
+			newFilter(t, backend).ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET /GetState.csv: got %d, want 200", rec.Code)
+			}
+			if got != c.want {
+				t.Errorf("controller saw User-Agent %q, want %q", got, c.want)
+			}
+		})
 	}
 }

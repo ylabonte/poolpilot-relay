@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ylabonte/poolpilot-relay/internal/useragent"
 )
 
 // DefaultListen is the loopback plain-HTTP bind every configured
@@ -394,7 +396,11 @@ var forwardingHeaders = []string{
 // deliberate exception is the proxy-forwarding headers (forwardingHeaders): the
 // Rewrite strips them and adds none of its own, so the controller sees a
 // request the size a LAN client sends — a write bloated past its small header
-// buffer is rejected outright.
+// buffer is rejected outright. The only header the proxy may ADD is a
+// User-Agent, and only when the caller sent none (or Go's default): the
+// caller's own UA is kept, so a browser request is byte-for-byte what a LAN
+// browser sends, and a UA-less one gains the one header every LAN client
+// carries anyway (internal/useragent.SetDefault).
 //
 // Streaming and WebSocket upgrades get no special handling here and need
 // none: net/http/httputil.ReverseProxy has copied response bodies
@@ -422,6 +428,14 @@ func New(target *url.URL) http.Handler {
 				pr.Out.Header.Del(h)
 			}
 			pr.SetURL(target)
+			// Keep the caller's own User-Agent (the in-app browser's WebView, the
+			// native app's HTTP stack) so a proxied request looks like the LAN
+			// client it stands in for; fill in the relay's only when there is none or
+			// Go's bot-flagged default (see internal/useragent). Without this a
+			// UA-less request would reach the controller with no UA at all
+			// (ReverseProxy suppresses Go's default) — the shape a WAF in front of a
+			// vendor-hosted controller flags.
+			useragent.SetDefault(pr.Out.Header)
 		},
 		Transport:     controllerTransport,
 		FlushInterval: -1,

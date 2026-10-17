@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ylabonte/poolpilot-relay/internal/update"
+	"github.com/ylabonte/poolpilot-relay/internal/useragent"
 )
 
 // Apply stages the currently known candidate for the privileged helper. It is
@@ -164,6 +165,7 @@ func (u *Updater) download(ctx context.Context, url, dest string, limit int64) e
 	if err != nil {
 		return err
 	}
+	useragent.Set(req.Header)
 	res, err := u.httpc.Do(req)
 	if err != nil {
 		return err

@@ -59,6 +59,8 @@ coordinating a new tagged release (see *Cross-repo* below).
   `pairing`-adjacent `tlscert` + `recovery`, `state`, `alert`, `ctrlfilter`.
 - `internal/proconip/`, `internal/violet/` — per-controller integration.
 - `internal/measure/`, `internal/paritysrc/` — measurement + parity-source helpers behind `wire`/`bands`.
+- `internal/useragent/` — the one outbound `User-Agent` (`PoolPilot-Relay/<version> (+https://poolpilot.eu)`);
+  every request the relay originates must stamp it (Go's default `Go-http-client/1.1` gets WAF-banned).
 - `deploy/relay/` — `install.sh`, the systemd unit, and `minisign.pub` (release-signature public key).
 
 ## Conventions

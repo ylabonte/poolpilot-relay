@@ -6,11 +6,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/ylabonte/poolpilot-relay/bands"
 	"github.com/ylabonte/poolpilot-relay/internal/measure"
+	"github.com/ylabonte/poolpilot-relay/internal/useragent"
 	"github.com/ylabonte/poolpilot-relay/preset"
 )
 
@@ -272,5 +274,57 @@ func TestConfigTimeoutZeroUsesDriverDefault(t *testing.T) {
 	}
 	if err := d.Probe(context.Background()); err != nil {
 		t.Errorf("Probe with Timeout=0 against a 50ms-slow server: got %v, want nil (default timeout is seconds, not ms)", err)
+	}
+}
+
+// ---- outbound User-Agent (issue #72) ----
+
+// TestDriversSendTheRelayUserAgent pins issue #72: every controller request a
+// driver makes — readings, the pairing live-probe, the dosing-config reads —
+// carries the relay's explicit User-Agent, never Go's default
+// "Go-http-client/1.1", which hosters' WAFs ban on sight (vendor-hosted demo
+// controllers banned the relay's IP the moment it was paired). The fake
+// controller answers 200 with an empty body; parse errors are irrelevant here,
+// only the request headers are asserted.
+func TestDriversSendTheRelayUserAgent(t *testing.T) {
+	want := useragent.String()
+	for _, p := range preset.Supported() {
+		t.Run(p, func(t *testing.T) {
+			var (
+				mu   sync.Mutex
+				seen = map[string]string{} // path → User-Agent
+			)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				seen[r.URL.Path] = r.Header.Get("User-Agent")
+				mu.Unlock()
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer srv.Close()
+
+			d, err := New(p, Config{BaseURL: srv.URL, Username: "u", Password: "p", Timeout: 2 * time.Second})
+			if err != nil {
+				t.Fatalf("New(%q): %v", p, err)
+			}
+			ctx := context.Background()
+			_, _ = d.Readings(ctx)
+			_ = d.Probe(ctx)
+			cr, ok := d.(ControlConfigReader)
+			if !ok {
+				t.Fatalf("%q driver is not a ControlConfigReader", p)
+			}
+			_, _ = cr.ControlConfig(ctx)
+
+			mu.Lock()
+			defer mu.Unlock()
+			if len(seen) < 2 {
+				t.Fatalf("expected readings + config requests, saw %v", seen)
+			}
+			for path, ua := range seen {
+				if ua != want {
+					t.Errorf("%s %s: User-Agent = %q, want %q", p, path, ua, want)
+				}
+			}
+		})
 	}
 }

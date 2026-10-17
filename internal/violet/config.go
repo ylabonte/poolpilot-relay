@@ -13,6 +13,7 @@ import (
 
 	"github.com/ylabonte/poolpilot-relay/bands"
 	"github.com/ylabonte/poolpilot-relay/internal/measure"
+	"github.com/ylabonte/poolpilot-relay/internal/useragent"
 )
 
 // controlField is one VIOLET dosing channel's regulation keys in /getConfig:
@@ -220,6 +221,7 @@ func (c *Client) FetchControlConfig(ctx context.Context) (map[string]measure.Con
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", measure.ErrUnreachable, err)
 	}
+	useragent.Set(req.Header)
 	if c.Username != "" || c.Password != "" {
 		req.SetBasicAuth(c.Username, c.Password)
 	}
