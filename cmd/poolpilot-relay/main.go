@@ -75,13 +75,17 @@ import (
 	"github.com/ylabonte/poolpilot-relay/internal/agent/tunnel"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/updater"
 	"github.com/ylabonte/poolpilot-relay/internal/update"
+	"github.com/ylabonte/poolpilot-relay/internal/useragent"
 )
 
 // version is stamped via -ldflags "-X main.version=v1.2.3"; it feeds
-// InfoResponse.Version.
+// InfoResponse.Version and the outbound User-Agent (internal/useragent).
 var version = "dev"
 
 func main() {
+	// Stamp the build version into the outbound User-Agent before anything can
+	// send a request (internal/useragent; issue #72).
+	useragent.SetVersion(version)
 	// Argument-driven modes (show-*, version, help, and usage errors) are handled
 	// here and exit; only a bare invocation with no arguments falls through to
 	// running the agent — that is the systemd ExecStart path.

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/ylabonte/poolpilot-relay/internal/agent/state"
+	"github.com/ylabonte/poolpilot-relay/internal/useragent"
 	"github.com/ylabonte/poolpilot-relay/wire"
 )
 
@@ -802,6 +803,7 @@ func (c *Client) doJSON(ctx context.Context, method, url, bearer string, in, out
 	if err != nil {
 		return 0, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
+	useragent.Set(req.Header)
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

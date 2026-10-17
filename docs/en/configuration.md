@@ -59,6 +59,26 @@ poll on, and keeps it across restarts and updates.
 - **When to go slower:** some controllers, and some hosting setups in front of
   them, react badly to frequent requests; a metered connection is another
   reason. A slower cadence is gentler on both.
+- **When the controller is unreachable:** a failed read (connection refused,
+  timeout) is simply retried at the next scheduled poll — never sooner — so a
+  controller that is down, or a host that is blocking the relay, sees at most one
+  attempt per interval.
+
+### How the relay identifies itself
+
+Every request the relay sends to your controller — the regular reads, the
+check during pairing, the dosing-limit reads — carries the header
+`User-Agent: PoolPilot-Relay/<version> (+https://poolpilot.eu)`, and so do its
+requests to the PoolPilot cloud and its update downloads. Without it, Go's
+default `Go-http-client/1.1` would go out, a string that hosting firewalls
+(WAFs such as ModSecurity or Imunify360) commonly treat as a bot and block on
+sight. That matters for controllers on the internet, like the vendors' public
+demo boxes; a controller on your own LAN does not care.
+
+When you open the controller's web interface remotely, the relay passes it
+through unchanged: the controller sees your app's or browser's own
+`User-Agent`. Only a request that arrives without one (or with Go's default)
+gets the relay's.
 
 ### How it affects alerts
 

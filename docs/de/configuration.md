@@ -62,6 +62,27 @@ Updates hinweg.
 - **Wann langsamer sinnvoll ist:** Manche Steuerungen und manche Hosting-Setups
   davor reagieren empfindlich auf häufige Anfragen; eine volumenbegrenzte
   Verbindung ist ein weiterer Grund. Ein langsamerer Takt schont beides.
+- **Wenn die Steuerung nicht erreichbar ist:** Eine fehlgeschlagene Abfrage
+  (Verbindung abgelehnt, Zeitüberschreitung) wird einfach bei der nächsten
+  planmäßigen Abfrage wiederholt — nie früher. Eine ausgefallene Steuerung oder
+  ein Host, der das Relay blockiert, sieht also höchstens einen Versuch pro
+  Intervall.
+
+### Wie sich das Relay ausweist
+
+Jede Anfrage des Relays an deine Steuerung — die regelmäßigen Abfragen, die
+Prüfung beim Koppeln, das Lesen der Dosiergrenzen — trägt den Header
+`User-Agent: PoolPilot-Relay/<Version> (+https://poolpilot.eu)`, ebenso seine
+Anfragen an die PoolPilot-Cloud und seine Update-Downloads. Ohne ihn ginge Gos
+Standard `Go-http-client/1.1` hinaus — eine Kennung, die Hosting-Firewalls
+(WAFs wie ModSecurity oder Imunify360) oft als Bot einstufen und sofort
+sperren. Das betrifft Steuerungen im Internet, etwa die öffentlichen
+Demo-Geräte der Hersteller; einer Steuerung in deinem eigenen LAN ist das egal.
+
+Öffnest du die Weboberfläche der Steuerung aus der Ferne, reicht das Relay sie
+unverändert durch: Die Steuerung sieht den `User-Agent` deiner App bzw. deines
+Browsers. Nur eine Anfrage, die ohne einen (oder mit Gos Standard) ankommt,
+bekommt den des Relays.
 
 ### Auswirkung auf Alarme
 

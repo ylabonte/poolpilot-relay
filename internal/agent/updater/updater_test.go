@@ -17,6 +17,7 @@ import (
 	"github.com/ylabonte/poolpilot-relay/internal/agent/cloud"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/state"
 	"github.com/ylabonte/poolpilot-relay/internal/update"
+	"github.com/ylabonte/poolpilot-relay/internal/useragent"
 )
 
 // fakeChecker stands in for *cloud.Client so tests need no real control plane.
@@ -425,5 +426,23 @@ func TestCheckUnknownTokenFiresTheHook(t *testing.T) {
 				t.Fatalf("OnUnknownToken fired %d times, want %d", fired, tc.want)
 			}
 		})
+	}
+}
+
+// TestDownloadSendsTheRelayUserAgent (issue #72): release downloads identify
+// the relay instead of sending Go's default "Go-http-client/1.1".
+func TestDownloadSendsTheRelayUserAgent(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("User-Agent")
+		w.Write([]byte("asset"))
+	}))
+	defer srv.Close()
+	u := &Updater{httpc: srv.Client()}
+	if err := u.download(context.Background(), srv.URL+"/asset", filepath.Join(t.TempDir(), "asset"), 1<<10); err != nil {
+		t.Fatalf("download: %v", err)
+	}
+	if want := useragent.String(); got != want {
+		t.Errorf("User-Agent = %q, want %q", got, want)
 	}
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/ylabonte/poolpilot-relay/bands"
 	"github.com/ylabonte/poolpilot-relay/internal/measure"
+	"github.com/ylabonte/poolpilot-relay/internal/useragent"
 )
 
 // controlConfigSpacing paces the per-channel INI reads. The ProCon.IP's weak
@@ -80,6 +81,7 @@ func (c *Client) fetchChannelControl(ctx context.Context, httpClient *http.Clien
 		slog.Warn("control config channel skipped", "base_url", c.BaseURL, "path", path, "reason", "build request", "err", err)
 		return measure.ControlConfig{}, false
 	}
+	useragent.Set(req.Header)
 	if c.Username != "" || c.Password != "" {
 		req.SetBasicAuth(c.Username, c.Password)
 	}

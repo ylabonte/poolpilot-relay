@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/ylabonte/poolpilot-relay/internal/measure"
+	"github.com/ylabonte/poolpilot-relay/internal/useragent"
 )
 
 // DefaultTimeout matches the apps' request timeout for controller calls.
@@ -34,6 +35,7 @@ func (c *Client) FetchState(ctx context.Context) (Data, error) {
 	if err != nil {
 		return Data{}, fmt.Errorf("%w: %v", measure.ErrUnreachable, err)
 	}
+	useragent.Set(req.Header)
 	if c.Username != "" || c.Password != "" {
 		req.SetBasicAuth(c.Username, c.Password)
 	}
