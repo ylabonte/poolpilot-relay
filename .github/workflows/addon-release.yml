@@ -160,6 +160,11 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           VERSION: ${{ needs.image.outputs.version }}
           APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          # Ignore any ambient git config; the step sets its own identity below. The push
+          # authenticates via actions/checkout's credentials, which the repo-local config
+          # includes; a global helper (e.g. `gh auth setup-git`) would be hidden here.
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_NOSYSTEM: "1"
         run: |
           if git diff --quiet -- poolpilot_relay/config.yaml; then
             echo "config.yaml already at ${VERSION}; nothing to do."
