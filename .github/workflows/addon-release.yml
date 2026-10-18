@@ -160,6 +160,9 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           VERSION: ${{ needs.image.outputs.version }}
           APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          # Ignore any ambient git config; the step sets its own identity below.
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_NOSYSTEM: "1"
         run: |
           if git diff --quiet -- poolpilot_relay/config.yaml; then
             echo "config.yaml already at ${VERSION}; nothing to do."
