@@ -94,8 +94,8 @@ PoolPilot cloud and keeps open.
   of forwarding — they are neither stored nor analysed. The tunnel's web
   front end keeps no access log, so there is no per-request trail of what you
   did with your pool. The tunnel server only tells the cloud *that* a Relay
-  connected or went offline, never what passes through; the cloud keeps just
-  the latest of those times, for the online status in the app. Only warnings
+  connected, is still online or went offline, never what passes through; the
+  cloud keeps just the latest time of each, for the online status in the app. Only warnings
   and errors are logged — routine logins and traffic are not. A warning about a
   rejected or malformed connection can contain the internet address it came
   from; the logs are size-capped and rotate.

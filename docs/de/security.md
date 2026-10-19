@@ -98,9 +98,9 @@ aufbaut und offen hält.
   Moment des Weiterleitens sichtbar — sie werden weder gespeichert noch
   ausgewertet. Der Web-Eingang des Tunnels führt kein Zugriffsprotokoll, es
   entsteht also keine Spur, was du wann mit deinem Pool gemacht hast. Der
-  Tunnel-Server meldet der Cloud nur, *dass* sich ein Relay verbunden hat oder
-  offline gegangen ist, nie, was hindurchgeht; die Cloud behält davon nur den
-  jeweils letzten Zeitpunkt, für die Online-Anzeige in der App. Protokolliert
+  Tunnel-Server meldet der Cloud nur, *dass* sich ein Relay verbunden hat, noch
+  online ist oder offline gegangen ist, nie, was hindurchgeht; die Cloud behält
+  davon nur jeweils den letzten Zeitpunkt, für die Online-Anzeige in der App. Protokolliert
   werden nur Warnungen und Fehler — normale Anmeldungen und der Verkehr selbst
   nicht. Eine Warnung zu einer abgelehnten oder fehlerhaften Verbindung kann
   die Internetadresse enthalten, von der sie kam; die Logs sind in der Größe
