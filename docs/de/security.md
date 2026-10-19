@@ -29,9 +29,10 @@ ihren Typ, ihre lokale Adresse und ihren Namen.
 
 Die Datei ist nicht verschlüsselt. Bei einer Linux-Installation können sie nur
 der Dienst des Relays und root lesen: Der Dienst läuft als eigener,
-unprivilegierter Systembenutzer, und die Datei hat `0600` in einem
-`0700`-Verzeichnis. In Home Assistant liegt sie auf dem eigenen `/data`-Volume
-der App. Behandle ein Backup des Geräts oder ein Home-Assistant-Backup, das die
+unprivilegierter Systembenutzer, die Datei hat `0600`, und sie liegt hinter
+einem Verzeichnis, das nur root betreten kann (`/var/lib/private`, wo systemd
+die Daten des Dienstes ablegt). In Home Assistant liegt sie auf dem eigenen
+`/data`-Volume der App. Behandle ein Backup des Geräts oder ein Home-Assistant-Backup, das die
 App enthält, so wie das Gerät selbst.
 
 **In der PoolPilot-Cloud.** Die Cloud kennt das Relay und den Haushalt, zu dem
