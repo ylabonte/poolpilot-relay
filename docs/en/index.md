@@ -31,8 +31,8 @@ on a device in your home — typically a Raspberry Pi or a similar small compute
 It talks to your **ProCon.IP**, **VIOLET** or **BADU Blue** pool controller over
 your local network and bridges it to the PoolPilot apps:
 
-- **at home**, the app reaches the relay directly over your Wi‑Fi/LAN, and
-- **when you're away**, through a secure tunnel to the PoolPilot cloud.
+- **at home** over your Wi‑Fi, and
+- **when you're away** through the secure tunnel to the PoolPilot cloud.
 
 Once it's installed and paired, the relay looks after itself: it keeps your
 controller connected, sends the alerts you configured in the app, and

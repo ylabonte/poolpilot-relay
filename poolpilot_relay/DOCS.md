@@ -2,9 +2,9 @@
 
 Run the PoolPilot edge agent as a Home Assistant app. It bridges your
 **ProCon.IP**, **VIOLET** or **BADU Blue** pool controller to the PoolPilot
-phone apps — directly over your LAN at home, and through a secure tunnel to the
-PoolPilot cloud when you are away — so you do not need a separate
-Raspberry Pi for it.
+phone apps — at home over your Wi-Fi, and when you are away through the secure
+tunnel to the PoolPilot cloud — so you do not need a separate Raspberry Pi for
+it.
 
 ## Requirements
 

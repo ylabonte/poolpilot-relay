@@ -32,8 +32,8 @@ oder einem ähnlichen kleinen Computer. Es spricht über dein lokales Netzwerk m
 deiner **ProCon.IP**-, **VIOLET**- oder **BADU-Blue**-Poolsteuerung und
 verbindet sie mit den PoolPilot-Apps:
 
-- **zu Hause** erreicht die App das Relay direkt über dein WLAN/LAN, und
-- **unterwegs** über einen sicheren Tunnel zur PoolPilot-Cloud.
+- **zu Hause** über dein WLAN und
+- **unterwegs** über den sicheren Tunnel zur PoolPilot-Cloud.
 
 Einmal installiert und gekoppelt, kümmert sich das Relay um sich selbst: Es hält
 deine Steuerung verbunden, verschickt die in der App eingestellten Alarme und
