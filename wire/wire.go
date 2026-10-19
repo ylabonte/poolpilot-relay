@@ -22,6 +22,32 @@ const APISubdomainSuffix = "-api"
 // controller row.
 const CtrlProxyPrefix = "ctrl-"
 
+// E2ESubdomainSuffix and APIE2ESubdomainSuffix build the end-to-end encrypted
+// remote vhosts (poolpilot-relay#80): "<guid>-e2e.<subdomain host>" for the
+// controller plane and "<guid>-api-e2e.<subdomain host>" for the tunneled LAN
+// API. On these names TLS is terminated by the relay itself, with its pinned
+// LAN certificate; the cloud routes them by SNI (frps vhostHTTPSPort) and
+// never decrypts. Like "-api", neither suffix can collide with a 32-hex GUID,
+// and "<guid>-api-e2e" stays a single DNS label (40 chars).
+//
+// The relay never builds an E2E URL from these: the control plane is
+// authoritative for the URLs (remote_e2e_url / remote_api_e2e_url below), and
+// the relay registers whatever label those URLs carry. The constants document
+// the grammar both sides accept during the migration window.
+const (
+	E2ESubdomainSuffix    = "-e2e"
+	APIE2ESubdomainSuffix = APISubdomainSuffix + E2ESubdomainSuffix
+)
+
+// E2ECtrlProxyPrefix and E2EAPIProxyPrefix name a controller's two frp https
+// proxies: "e2e-<GUID>" (controller plane) and "e2eapi-<GUID>" (LAN API). What
+// the cloud's frps plugin authorizes is the subdomain; the names have to be
+// unique per relay and distinct from "ctrl-<GUID>" / "api-<GUID>".
+const (
+	E2ECtrlProxyPrefix = "e2e-"
+	E2EAPIProxyPrefix  = "e2eapi-"
+)
+
 // RelayTokenMetaKey is the frp connection-metadata key that carries the
 // per-relay credential (metadatas.token on the wire): internal/agent/tunnel
 // sets it when it builds the frpc's ClientCommonConfig, internal/frpplugin
@@ -131,6 +157,14 @@ type ControllerConfigResponse struct {
 	// stays LAN-only). Empty from pre-R5 control-planes — the agent then derives
 	// it locally from the GUID + subdomain host.
 	RemoteAPIURL string `json:"remote_api_url,omitempty"`
+	// RemoteE2EURL and RemoteAPIE2EURL are the end-to-end encrypted twins of
+	// RemoteURL and RemoteAPIURL (poolpilot-relay#80): TLS on them terminates
+	// at the relay with the pinned LAN certificate. Set only by a control
+	// plane that has the E2E plane enabled — empty means "not available yet",
+	// and a client must then not fall back to anything; the relay never
+	// derives them locally.
+	RemoteE2EURL    string `json:"remote_e2e_url,omitempty"`
+	RemoteAPIE2EURL string `json:"remote_api_e2e_url,omitempty"`
 }
 
 // ControllerInfo is one configured controller in GET /v1/controllers. It NEVER
@@ -142,6 +176,9 @@ type ControllerInfo struct {
 	LanAddress   string `json:"lan_address"`
 	RemoteURL    string `json:"remote_url,omitempty"`
 	RemoteAPIURL string `json:"remote_api_url,omitempty"`
+	// RemoteE2EURL / RemoteAPIE2EURL — see ControllerConfigResponse.
+	RemoteE2EURL    string `json:"remote_e2e_url,omitempty"`
+	RemoteAPIE2EURL string `json:"remote_api_e2e_url,omitempty"`
 	// Preset is the controller type the agent DRIVES this controller as — one
 	// of preset.Supported() ("procon-ip" | "violet"), the same vocabulary the
 	// app submitted in ControllerConfig.Preset (issue poolpilot-cloud#100). It
@@ -187,6 +224,10 @@ type CloudControllerInfo struct {
 	RemoteURL    string `json:"remote_url,omitempty"`
 	RemoteAPIURL string `json:"remote_api_url,omitempty"`
 	RelayID      string `json:"relay_id,omitempty"`
+	// RemoteE2EURL / RemoteAPIE2EURL — see ControllerConfigResponse. Same JSON
+	// names as ControllerInfo's, for the same single-matcher reason.
+	RemoteE2EURL    string `json:"remote_e2e_url,omitempty"`
+	RemoteAPIE2EURL string `json:"remote_api_e2e_url,omitempty"`
 	// Preset mirrors ControllerInfo.Preset from the control plane's own
 	// controller row. That row is kept current by the agent's relay-authed
 	// PUT /controllers/{guid} (issue poolpilot-cloud#99), so an app resolving
@@ -199,6 +240,10 @@ type CloudControllerInfo struct {
 // ControllerListResponse is the POST /controllers/list body. An object rather
 // than a bare array (unlike ControllersResponse) so the response can grow
 // fields without breaking clients.
+//
+// The relay also reads this shape from the relay-authed GET /controllers (the
+// relay's own controllers, bearer = its frpc token), to backfill the E2E URLs
+// of controllers registered before the control plane emitted them.
 type ControllerListResponse struct {
 	Controllers []CloudControllerInfo `json:"controllers"`
 }
@@ -213,9 +258,15 @@ type ControllerListResponse struct {
 // The relay builds the whole URL — the client must not assemble it. ExpiresIn
 // is how many seconds the embedded token stays redeemable, NOT the lifetime of
 // the resulting session.
+//
+// SessionE2EURL is the same bootstrap on the controller's end-to-end encrypted
+// host (RemoteE2EURL + "/__session?t=<token>"), present only when the
+// controller has one. The token binds the controller, not a hostname, so it
+// redeems on either host — but only once.
 type WebSessionResponse struct {
-	SessionURL string `json:"session_url"`
-	ExpiresIn  int    `json:"expires_in"`
+	SessionURL    string `json:"session_url"`
+	SessionE2EURL string `json:"session_e2e_url,omitempty"`
+	ExpiresIn     int    `json:"expires_in"`
 }
 
 // StatusResponse is GET /v1/status.
@@ -251,6 +302,9 @@ type ControllerStatus struct {
 	// RemoteAPIURL is surfaced so the app can reach the tunneled LAN API while
 	// away (same value returned at controller registration).
 	RemoteAPIURL string `json:"remote_api_url,omitempty"`
+	// RemoteE2EURL / RemoteAPIE2EURL — see ControllerConfigResponse.
+	RemoteE2EURL    string `json:"remote_e2e_url,omitempty"`
+	RemoteAPIE2EURL string `json:"remote_api_e2e_url,omitempty"`
 	// Tunnel is THIS controller's own tunnel state (its ctrl + api proxy), so a
 	// single dead controller proxy is attributable rather than hidden behind the
 	// headline worst-of-all Tunnel. Additive — apps that ignore it are unaffected.
