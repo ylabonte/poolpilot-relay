@@ -17,7 +17,8 @@ same things apply:
   nothing else.
 - A **ProCon.IP**, **VIOLET** or **BADU Blue** controller reachable on your
   local network.
-- Home Assistant OS or Supervised (apps require the Supervisor).
+- Home Assistant OS or Supervised (apps require the Supervisor) on a **64-bit**
+  system (`aarch64` or `amd64`). 32-bit installs are not supported.
 
 ## Install
 
