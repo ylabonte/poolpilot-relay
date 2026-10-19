@@ -11,6 +11,18 @@ verbindet sie mit den PoolPilot-Apps:
 - **zu Hause** erreicht die App das Relay direkt über dein WLAN/LAN, und
 - **unterwegs** über einen sicheren Tunnel zur PoolPilot-Cloud.
 
+## Was das Relay für deine Poolsteuerung leistet
+
+| Poolsteuerung | Was das Relay nachrüstet |
+| --- | --- |
+| **ProCon.IP** | **Sicheren Fernzugriff** und **Push-Benachrichtigungen** — beides fehlt der Steuerung von Haus aus. |
+| **BADU Blue** | **Push-Benachrichtigungen** in der PoolPilot-App — Fernzugriff bringt sie schon selbst mit. |
+| **VIOLET** | Fernzugriff und Push kann sie von Haus aus — hier geht es ums **Teilen** (siehe unten). |
+
+**Für jede Steuerung:** Teile deinen Pool — inklusive Fernzugriff und
+Pro-Funktionen — auf bis zu **10 Geräten**, plattformübergreifend zwischen
+iPhone und Android. Das Relay ist Teil von **PoolPilot Pro**.
+
 Einmal installiert und gekoppelt, kümmert sich das Relay um sich selbst: Es hält
 deine Steuerung verbunden, verschickt die in der App eingestellten Alarme und
 **aktualisiert sich automatisch**. Am Gerät selbst gibt es normalerweise nichts
