@@ -38,7 +38,8 @@ verbindet sie mit den PoolPilot-Apps:
 Einmal installiert und gekoppelt, kümmert sich das Relay um sich selbst: Es hält
 deine Steuerung verbunden, verschickt die in der App eingestellten Alarme und
 **aktualisiert sich automatisch**. Am Gerät selbst gibt es normalerweise nichts
-zu tun.
+zu tun. Die einzige Ausnahme ist die [Home-Assistant-App](home-assistant.md):
+Dort kommen Updates stattdessen über den Add-on-Store von Home Assistant.
 
 ## Installation
 

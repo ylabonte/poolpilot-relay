@@ -6,6 +6,10 @@ Dein Relay **hält sich selbst aktuell**. Du musst dich nicht einloggen und
 irgendetwas ausführen — neue Versionen kommen von allein, und zwar sicher. Diese
 Seite erklärt, was passiert und wie du es steuerst.
 
+> **Läuft dein Relay als [Home-Assistant-App](home-assistant.md)?** Dann gilt
+> das alles nicht: Dort aktualisiert sich das Relay nicht selbst. Neue Versionen
+> kommen über den Add-on-Store von Home Assistant, wie bei jeder anderen App.
+
 ## Wie es funktioniert
 
 Das Relay meldet sich regelmäßig bei der PoolPilot-Cloud, um zu prüfen, ob eine

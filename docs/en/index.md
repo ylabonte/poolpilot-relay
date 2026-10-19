@@ -37,7 +37,8 @@ your local network and bridges it to the PoolPilot apps:
 Once it's installed and paired, the relay looks after itself: it keeps your
 controller connected, sends the alerts you configured in the app, and
 **updates itself automatically**. There is normally nothing to manage on the
-device.
+device. The one exception is the [Home Assistant app](home-assistant.md):
+there, updates arrive through the Home Assistant app store instead.
 
 ## Install
 
