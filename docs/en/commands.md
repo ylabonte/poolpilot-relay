@@ -20,9 +20,14 @@ Both come with systemd units in `/etc/systemd/system/`:
 
 ## `poolpilot-relay show-pairing`
 
-Prints this relay's **pairing code**: a QR code (a link the app opens), the same
-link in text so you can paste it into the app, and a fingerprint for manual
-entry. Use it when the app doesn't discover the relay automatically.
+Prints this relay's **pairing code** in three forms — use whichever suits you
+when the app doesn't discover the relay automatically:
+
+1. a **QR code** for a pairing link. Scan it with the PoolPilot app, or with
+   your phone's camera, which then opens the app;
+2. the **same link as text**, to paste into the app;
+3. the relay's **fingerprint**, for manual entry if you can neither scan nor
+   paste.
 
 ```bash
 sudo poolpilot-relay show-pairing

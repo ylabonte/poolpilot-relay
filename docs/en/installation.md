@@ -76,9 +76,10 @@ and scan it:
 sudo poolpilot-relay show-pairing
 ```
 
-This prints a QR code (and a link you can paste into the app) plus a fingerprint
-for manual entry. It is read‑only — it never changes anything. See
-[Commands](commands.md) for details.
+This prints three things: a QR code to scan with the PoolPilot app or your
+phone's camera, the same link as text to paste into the app, and the relay's
+fingerprint for manual entry. It is read‑only — it never changes anything. See
+[Commands](commands.md#poolpilot-relay-show-pairing) for details.
 
 ## Check that it's running
 

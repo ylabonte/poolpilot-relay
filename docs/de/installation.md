@@ -81,9 +81,11 @@ scanne ihn:
 sudo poolpilot-relay show-pairing
 ```
 
-Das zeigt einen QR-Code (und einen Link, den du in die App einfügen kannst) sowie
-einen Fingerprint zur manuellen Eingabe. Der Befehl ist schreibgeschützt — er
-ändert nie etwas. Details unter [Befehle](commands.md).
+Das zeigt drei Dinge: einen QR-Code zum Scannen mit der PoolPilot-App oder der
+Kamera deines Handys, denselben Link als Text zum Einfügen in die App und den
+Fingerabdruck des Relays zur manuellen Eingabe. Der Befehl ist schreibgeschützt
+— er ändert nie etwas. Details unter
+[Befehle](commands.md#poolpilot-relay-show-pairing).
 
 ## Prüfen, dass es läuft
 
