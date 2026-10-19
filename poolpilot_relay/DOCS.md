@@ -1,20 +1,22 @@
 # PoolPilot Relay
 
 Run the PoolPilot edge agent as a Home Assistant app. It bridges your
-**ProCon.IP** or **VIOLET** pool controller to the PoolPilot phone apps —
-directly over your LAN at home, and through a secure tunnel to the PoolPilot
-cloud when you are away — so you do not need a separate Raspberry Pi for it.
+**ProCon.IP**, **VIOLET** or **BADU Blue** pool controller to the PoolPilot
+phone apps — directly over your LAN at home, and through a secure tunnel to the
+PoolPilot cloud when you are away — so you do not need a separate
+Raspberry Pi for it.
 
 ## Requirements
 
 This app runs the **same agent** as a standalone PoolPilot Relay install, so the
 same things apply:
 
-- A **PoolPilot account** and the iOS or Android app. The relay is paired to
-  your household from the app; until it is paired it serves only an
+- A **PoolPilot account with Pro** and the iOS or Android app. The relay is
+  paired to your household from the app; until it is paired it serves only an
   unauthenticated info endpoint (`/v1/info`) plus the LAN-only pairing endpoint —
   nothing else.
-- A **ProCon.IP** or **VIOLET** controller reachable on your local network.
+- A **ProCon.IP**, **VIOLET** or **BADU Blue** controller reachable on your
+  local network.
 - Home Assistant OS or Supervised (apps require the Supervisor).
 
 ## Install

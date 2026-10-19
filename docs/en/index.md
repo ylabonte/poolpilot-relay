@@ -2,10 +2,34 @@
 
 *🇬🇧 English · [🇩🇪 Deutsch](../de/index.md)*
 
-The PoolPilot Relay is a small background program (the **edge agent**) that runs
+The PoolPilot Relay is a small program for your home that connects your pool
+controller to the PoolPilot app — even while you're away. What it does for you
+depends on your controller:
+
+| What you get | ProCon.IP | BADU Blue | VIOLET |
+| --- | --- | --- | --- |
+| Control your pool at home over Wi‑Fi | works without the relay | works without the relay | works without the relay |
+| Control your pool while you're away | ✓ with the relay | built in | built in |
+| Push to your phone when something's off | ✓ with the relay | ✓ with the relay | built in\* |
+| Share your pool with your family — Pro features included, up to 10 devices, iPhone and Android mixed | ✓ with the relay | ✓ with the relay | ✓ with the relay |
+
+\* Free in PoolPilot — the relay can optionally take it over.
+
+**In short:**
+
+- **ProCon.IP:** the relay gets it ready for when you're away.
+- **BADU Blue:** the relay brings push to PoolPilot.
+- **VIOLET:** you only need the relay for sharing.
+
+**What do you need?** A device that's always on at home (e.g. a Raspberry Pi
+or your [Home Assistant](home-assistant.md)) and PoolPilot Pro.
+
+## How it works
+
+The relay is a small background program (the **edge agent**) that runs
 on a device in your home — typically a Raspberry Pi or a similar small computer.
-It talks to your **ProCon.IP** or **VIOLET** pool controller over your local
-network and bridges it to the PoolPilot apps:
+It talks to your **ProCon.IP**, **VIOLET** or **BADU Blue** pool controller over
+your local network and bridges it to the PoolPilot apps:
 
 - **at home**, the app reaches the relay directly over your Wi‑Fi/LAN, and
 - **when you're away**, through a secure tunnel to the PoolPilot cloud.

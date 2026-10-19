@@ -7,9 +7,11 @@
 - Einen kleinen, dauerhaft laufenden Computer mit **Linux und systemd** — ein
   Raspberry Pi ist die typische Wahl, aber jedes SBC oder jeder x86-Rechner
   funktioniert.
-- Er muss im **selben lokalen Netzwerk** wie deine ProCon.IP- oder
-  VIOLET-Steuerung sein.
+- Er muss im **selben lokalen Netzwerk** wie deine ProCon.IP-, VIOLET- oder
+  BADU-Blue-Steuerung sein.
 - `curl` **oder** `wget` (Raspberry Pi OS bringt beides mit).
+- **PoolPilot Pro** in der iOS- oder Android-App — ohne Pro lässt sich das Relay
+  nicht koppeln.
 
 **Unterstützte CPU-Architekturen:** 64-Bit-ARM (`arm64`, z. B. Raspberry Pi
 3/4/5), 32-Bit-ARM (`armv7`), 64-Bit-x86 (`amd64`), 32-Bit-x86 (`386`) und
