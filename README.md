@@ -41,8 +41,9 @@ Raspberry Pi oder dein Home Assistant) und PoolPilot Pro.
 curl -fsSL https://get.poolpilot.eu/install.sh | bash
 ```
 
-Danach öffnest du die PoolPilot-App im selben WLAN und koppelst das Relay. Lieber
-erst lesen, was du ausführst? Der Installer liegt offen in diesem Repo:
+Danach öffnest du die PoolPilot-App im selben WLAN und koppelst das Relay. Ab
+dann aktualisiert es sich [von selbst](docs/de/self-update.md). Lieber erst
+lesen, was du ausführst? Der Installer liegt offen in diesem Repo:
 [`deploy/relay/install.sh`](deploy/relay/install.sh).
 
 **Mit Home Assistant:** Füge dieses Repo unter **Einstellungen → Add-ons →
@@ -52,7 +53,8 @@ Add-on-Store → ⋮ → Repositories** hinzu und installiere **PoolPilot Relay*
 https://github.com/ylabonte/poolpilot-relay
 ```
 
-Danach aktualisiert sich das Relay [von selbst](docs/de/self-update.md).
+Danach koppelst du es aus der App. Updates kommen wie bei jeder anderen
+Home-Assistant-App über den Store.
 
 ## Dokumentation
 
@@ -115,8 +117,8 @@ your Home Assistant) and PoolPilot Pro.
 curl -fsSL https://get.poolpilot.eu/install.sh | bash
 ```
 
-Then open the PoolPilot app on the same Wi‑Fi and pair the relay. Prefer to read
-what you run first? The installer is right here in this repo:
+Then open the PoolPilot app on the same Wi‑Fi and pair the relay. From then on it
+[updates itself](docs/en/self-update.md). Prefer to read what you run first? The installer is right here in this repo:
 [`deploy/relay/install.sh`](deploy/relay/install.sh).
 
 **With Home Assistant:** add this repo under **Settings → Add-ons → Add-on store
@@ -126,7 +128,8 @@ what you run first? The installer is right here in this repo:
 https://github.com/ylabonte/poolpilot-relay
 ```
 
-From then on the relay [updates itself](docs/en/self-update.md).
+Then pair it from the app. Updates arrive through the store, like for any other
+Home Assistant app.
 
 ## Documentation
 
