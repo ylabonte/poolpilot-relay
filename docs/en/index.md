@@ -60,6 +60,7 @@ installer does, and how to scan the pairing code by hand.
 | [Self-update](self-update.md) | How automatic updates work and how to control them |
 | [Troubleshooting](troubleshooting.md) | Logs, re-pairing, recovery, reinstalling, removing |
 | [Home Assistant app](home-assistant.md) | Running the relay as a Home Assistant app instead of on a Pi |
+| [Security & privacy](security.md) | What is stored where, network and ports, the tunnel, signed releases |
 
 > 🇩🇪 Diese Dokumentation gibt es auch **[auf Deutsch](../de/index.md)**.
 

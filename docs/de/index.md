@@ -61,6 +61,7 @@ Installer macht und wie du den Kopplungscode von Hand anzeigst.
 | [Selbst-Update](self-update.md) | Wie automatische Updates funktionieren und wie du sie steuerst |
 | [Fehlerbehebung](troubleshooting.md) | Logs, neu koppeln, Wiederherstellung, neu installieren, entfernen |
 | [Home-Assistant-App](home-assistant.md) | Das Relay als Home-Assistant-App statt auf einem Pi betreiben |
+| [Sicherheit & Datenschutz](security.md) | Was wo gespeichert ist, Netzwerk und Ports, der Tunnel, signierte Versionen |
 
 > 🇬🇧 This documentation is also available **[in English](../en/index.md)**.
 

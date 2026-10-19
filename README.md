@@ -66,6 +66,7 @@ Home-Assistant-App über den Store.
 | [Konfiguration](docs/de/configuration.md) | Die Datei `/etc/poolpilot-relay/config` |
 | [Selbst-Update](docs/de/self-update.md) | Wie automatische Updates funktionieren und wie du sie steuerst |
 | [Fehlerbehebung](docs/de/troubleshooting.md) | Logs, neu koppeln, Wiederherstellung, neu installieren, entfernen |
+| [Sicherheit & Datenschutz](docs/de/security.md) | Was wo gespeichert ist, Netzwerk und Ports, der Tunnel, signierte Versionen |
 
 Fragen oder ein Problem? [Issue anlegen](https://github.com/ylabonte/poolpilot-relay/issues)
 · Website: [poolpilot.eu](https://poolpilot.eu)
@@ -142,6 +143,7 @@ Home Assistant app.
 | [Configuration](docs/en/configuration.md) | The `/etc/poolpilot-relay/config` file |
 | [Self-update](docs/en/self-update.md) | How automatic updates work and how to control them |
 | [Troubleshooting](docs/en/troubleshooting.md) | Logs, re-pairing, recovery, reinstalling, removing |
+| [Security & privacy](docs/en/security.md) | What is stored where, network and ports, the tunnel, signed releases |
 
 Questions or a problem? [Open an issue](https://github.com/ylabonte/poolpilot-relay/issues)
 · Website: [poolpilot.eu](https://poolpilot.eu)
