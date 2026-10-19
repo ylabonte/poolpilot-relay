@@ -89,9 +89,9 @@ erscheinen im Add-on-Store wie bei jeder anderen App.
 
 Die App läuft im **Host-Netzwerk**, damit sie sich per mDNS ankündigen, deine
 Poolsteuerung im LAN erreichen und ihre gepinnte Kopplungs-API für die
-Handy-Apps bereitstellen kann. Standardmäßig lauscht sie auf Port **8443**; belegt eine
-andere App diesen Port bereits, setze im Reiter **Konfiguration** einen anderen
-**`lan_port`** (siehe oben).
+Handy-Apps bereitstellen kann. Standardmäßig lauscht sie auf Port **8443**;
+belegt eine andere App diesen Port bereits, setze im Reiter **Konfiguration**
+einen anderen **`lan_port`** (siehe oben).
 
 ## Wiederherstellung / Fortgeschritten
 

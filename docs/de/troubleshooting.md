@@ -72,10 +72,10 @@ danach. Jede Änderung steht als eine `relay lifecycle:`-Zeile im Log:
   das Relay monatelang offline war). Neu koppeln funktioniert nicht, solange
   die alten Telefone noch gekoppelt sind. Mach deshalb einen
   [Werksreset](#werksreset) und richte das Relay danach erneut aus der App ein.
-- **„household deleted in the cloud; dropped household data“**: Der
-  Haushalt wurde gelöscht (z. B. über „Alle meine Daten löschen“ in der App).
-  Das Relay vergisst alles, was dazugehörte (gekoppelte Telefone,
-  Steuerungen, Cloud-Zugangsdaten), und ist bereit für eine neue Einrichtung. Seine eigene
+- **„household deleted in the cloud; dropped household data“**: Der Haushalt
+  wurde gelöscht (z. B. über „Alle meine Daten löschen“ in der App). Das Relay
+  vergisst alles, was dazugehörte (gekoppelte Telefone, Steuerungen,
+  Cloud-Zugangsdaten), und ist bereit für eine neue Einrichtung. Seine eigene
   Identität behält es, Kopplungs-QR-Code und Fingerabdruck bleiben also gleich.
   Richte es einfach erneut aus der App ein (siehe unten). Eine neue Identität
   (z. B. bevor du das Gerät weitergibst) bekommst du nur per
@@ -100,8 +100,8 @@ sudo poolpilot-relay show-pairing
 ```
 
 Scanne den QR-Code mit der PoolPilot-App oder der Kamera deines Telefons, füge
-den ausgegebenen Link in die App ein oder tippe den Fingerabdruck ein. Der Befehl
-ist schreibgeschützt und jederzeit gefahrlos aufrufbar.
+den ausgegebenen Link in die App ein oder tippe den Fingerabdruck ein. Der
+Befehl ist schreibgeschützt und jederzeit gefahrlos aufrufbar.
 
 ## Besitzer- und Mitglieds-Telefone
 
@@ -118,8 +118,8 @@ der Steuerung, und beide können **sich selbst** vom Relay entfernen. Das Relay
 selbst ändern dürfen nur Besitzer: Steuerungen hinzufügen, ändern oder
 entfernen, den Fernzugriffs-Link einer Steuerung erneuern, Warnregeln ändern,
 ein **anderes** Telefon entfernen, Updates installieren oder automatische
-Updates umschalten sowie Haushalts- und Werksreset. Fragt ein Mitglieds-Telefon eines
-davon an, antwortet die lokale API des Relays mit `403` und dem Fehlercode
+Updates umschalten sowie Haushalts- und Werksreset. Fragt ein Mitglieds-Telefon
+eines davon an, antwortet die lokale API des Relays mit `403` und dem Fehlercode
 `owner_required`, und nichts ändert sich.
 
 Den Pool bedienen dürfen alle Telefone des Haushalts: Auch Mitglieder nutzen die
@@ -177,10 +177,10 @@ Du kannst ein Relay aus der PoolPilot-App auf Werkseinstellungen zurücksetzen �
 **nur vom Telefon des Besitzers und nur zu Hause im selben Netzwerk wie das
 Relay**. Über den Fernzugriffs-Tunnel und von einem Mitglieds-Telefon lehnt das
 Relay einen Werksreset ab. Das löscht Kopplung und Identität, und der Agent
-startet mit einer frischen neu (systemd fährt ihn sofort wieder hoch). Danach ist das Relay entkoppelt —
-[koppel es neu](#relay-neu-koppeln), als wäre es neu. Weil sich die Identität
-geändert hat, entferne zuerst den alten Relay-Eintrag in der App, falls er noch
-gelistet ist.
+startet mit einer frischen neu (systemd fährt ihn sofort wieder hoch). Danach
+ist das Relay entkoppelt — [koppel es neu](#relay-neu-koppeln), als wäre es neu.
+Weil sich die Identität geändert hat, entferne zuerst den alten Relay-Eintrag in
+der App, falls er noch gelistet ist.
 
 ## Aktualisieren oder neu installieren
 

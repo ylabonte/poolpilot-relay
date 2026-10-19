@@ -164,9 +164,9 @@ You can factory‑reset a Relay from the PoolPilot app — **only from the owner
 phone, and only at home on the same network as the Relay**. The Relay refuses a
 factory reset through the remote tunnel, and from a member phone. This wipes its
 pairing and identity and the agent restarts with a fresh one (systemd brings it
-straight back up). Afterwards the Relay is unpaired — [re‑pair](#re-pair-the-relay) it as if it
-were new. Because the identity changed, remove the old Relay entry in the app
-first if it's still listed.
+straight back up). Afterwards the Relay is unpaired —
+[re‑pair](#re-pair-the-relay) it as if it were new. Because the identity
+changed, remove the old Relay entry in the app first if it's still listed.
 
 ## Update or reinstall
 
