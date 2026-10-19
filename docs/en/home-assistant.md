@@ -13,7 +13,7 @@ features — just running in a container the Home Assistant Supervisor manages.
 
 ## Requirements
 
-- A **PoolPilot account** and the iOS or Android app — the relay is paired to
+- A **PoolPilot account with Pro** and the iOS or Android app — the relay is paired to
   your household from the app.
 - A **ProCon.IP**, **VIOLET** or **BADU Blue** controller reachable on your
   local network.

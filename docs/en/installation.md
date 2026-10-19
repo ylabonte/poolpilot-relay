@@ -9,6 +9,7 @@
 - It must be on the **same local network** as your ProCon.IP, VIOLET or
   BADU Blue controller.
 - `curl` **or** `wget` (Raspberry Pi OS ships both).
+- **PoolPilot Pro** in the iOS or Android app — pairing the relay needs it.
 
 **Supported CPU architectures:** 64‑bit ARM (`arm64`, e.g. Raspberry Pi 3/4/5),
 32‑bit ARM (`armv7`), 64‑bit x86 (`amd64`), 32‑bit x86 (`386`), and `riscv64`.

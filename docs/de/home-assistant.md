@@ -15,7 +15,7 @@ für dich verwaltet.
 
 ## Voraussetzungen
 
-- Ein **PoolPilot-Konto** und die iOS- oder Android-App — das Relay wird aus der
+- Ein **PoolPilot-Konto mit Pro** und die iOS- oder Android-App — das Relay wird aus der
   App mit deinem Haushalt gekoppelt.
 - Eine **ProCon.IP**-, **VIOLET**- oder **BADU-Blue**-Steuerung, erreichbar in
   deinem lokalen Netzwerk.
