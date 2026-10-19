@@ -162,6 +162,14 @@ type Controller struct {
 	GUID         string `json:"guid,omitempty"`
 	RemoteURL    string `json:"remote_url,omitempty"`
 	RemoteAPIURL string `json:"remote_api_url,omitempty"` // tunneled LAN API (<guid>-api.<host>)
+	// RemoteE2EURL / RemoteAPIE2EURL are the end-to-end encrypted remote URLs
+	// (poolpilot-relay#80): relay-terminated TLS with the LAN cert, routed by
+	// SNI through the cloud. Only ever set from a control-plane response —
+	// registration, rotation, or the GET /controllers backfill — never derived
+	// locally: an empty pair means the cloud has not enabled the E2E plane for
+	// this controller (yet), and then no https proxy is registered for it.
+	RemoteE2EURL    string `json:"remote_e2e_url,omitempty"`
+	RemoteAPIE2EURL string `json:"remote_api_e2e_url,omitempty"`
 	// CloudSyncPending marks a controller whose preset/lan_address/label
 	// changed locally (PUT /v1/controllers dedup HIT) while the control plane
 	// could not be told (unreachable, throttled, or subscription inactive).
