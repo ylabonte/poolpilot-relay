@@ -3,7 +3,7 @@
 *🇬🇧 English · [🇩🇪 Deutsch](../de/commands.md)*
 
 The installer places a few programs on your device. In everyday use you don't
-run any of them by hand — systemd runs the relay for you, and you manage it from
+run any of them by hand — systemd runs the Relay for you, and you manage it from
 the PoolPilot app. This page is here for the occasions when you want to look
 under the hood.
 
@@ -11,7 +11,7 @@ under the hood.
 
 | Path | What it is |
 | --- | --- |
-| `/usr/local/bin/poolpilot-relay` | The **agent** — the relay itself. Run by the `poolpilot-relay` systemd service. Also provides the `show-pairing` and `show-recovery` helper commands below. |
+| `/usr/local/bin/poolpilot-relay` | The **agent** — the Relay itself. Run by the `poolpilot-relay` systemd service. Also provides the `show-pairing` and `show-recovery` helper commands below. |
 | `/usr/local/bin/poolpilot-relay-updater` | The privileged **self-update helper**. Installed on update‑capable releases and started automatically by systemd when an update has been staged — **you never run it by hand.** See [Self-update](self-update.md). |
 
 Both come with systemd units in `/etc/systemd/system/`:
@@ -20,38 +20,46 @@ Both come with systemd units in `/etc/systemd/system/`:
 
 ## `poolpilot-relay show-pairing`
 
-Prints this relay's **pairing code**: a QR code (a link the app opens), the same
-link in text so you can paste it into the app, and a fingerprint for manual
-entry. Use it when the app doesn't discover the relay automatically.
+Prints this Relay's **pairing code** in three forms — use whichever suits you
+when the app doesn't discover the Relay automatically:
+
+1. a **QR code** for a pairing link. Scan it with the PoolPilot app, or with
+   your phone's camera, which then opens the app;
+2. the **same link as text**. Open it on your phone — tap it in a message
+   you sent yourself, or open it in the phone's browser — and it opens the
+   PoolPilot app, just like the camera does;
+3. the Relay's **fingerprint**, to type into the app's manual entry if you can
+   neither scan nor open the link. Manual entry accepts only the fingerprint
+   (`sha256/…`), not the link.
 
 ```bash
 sudo poolpilot-relay show-pairing
 ```
 
 `sudo` is needed because the command reads the agent's private files. It is
-**strictly read‑only** — it never starts, configures, or changes the relay — so
+**strictly read‑only** — it never starts, configures, or changes the Relay — so
 it's always safe to run. Run it again any time to show the code again.
 
 ## `poolpilot-relay show-recovery`
 
 Prints a **one‑time recovery code** that lets a phone re‑take the *owner* role
-for this relay's household — for example after you've lost access from every
+for this Relay's household — for example after you've lost access from every
 paired device. Anyone who can run this command already has physical/root access
-to the relay, which is exactly the trust this recovery rests on.
+to the Relay, which is exactly the trust this recovery rests on.
 
 ```bash
 sudo poolpilot-relay show-recovery
 ```
 
 It prints a QR code / link and the code, tells you when the code expires (a few
-minutes), and reminds you it's single use. It only works once the relay is
+minutes), and reminds you it's single use. It only works once the Relay is
 **enrolled** with the cloud (i.e. it has been paired before); on a brand‑new
-relay, pair normally with `show-pairing` instead. Like `show-pairing`, it is
+Relay, pair normally with `show-pairing` instead. Like `show-pairing`, it is
 read‑only.
 
 ## Managing the service
 
-The relay is an ordinary systemd service:
+The Relay is an ordinary systemd service:
 
 ```bash
 systemctl status poolpilot-relay           # running? since when? recent log lines

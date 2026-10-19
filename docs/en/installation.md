@@ -9,11 +9,13 @@
 - It must be on the **same local network** as your ProCon.IP, VIOLET or
   BADU Blue controller.
 - `curl` **or** `wget` (Raspberry Pi OS ships both).
-- **PoolPilot Pro** in the iOS or Android app — pairing the relay needs it.
+- **PoolPilot Pro** in the iOS or Android app — pairing the Relay needs it.
 
 **Supported CPU architectures:** 64‑bit ARM (`arm64`, e.g. Raspberry Pi 3/4/5),
 32‑bit ARM (`armv7`), 64‑bit x86 (`amd64`), 32‑bit x86 (`386`), and `riscv64`.
-32‑bit ARMv6 (the original Pi / Pi Zero) is **not** supported.
+32‑bit ARMv6 — the Raspberry Pi 1, Pi Zero and Pi Zero W — is **not**
+supported; the installer stops on it. The **Pi Zero 2 W** is a 64‑bit ARM board
+and works.
 
 ## Install
 
@@ -48,7 +50,7 @@ asks for your password. In short, it:
 3. installs the agent to `/usr/local/bin/poolpilot-relay`, writes a default
    config to `/etc/poolpilot-relay/config` (only if none exists), and installs
    and starts the `poolpilot-relay` systemd service;
-4. makes the systemd journal persistent (if it isn't already) so the relay's
+4. makes the systemd journal persistent (if it isn't already) so the Relay's
    logs survive reboots;
 5. on update‑capable releases, also installs the [self‑update](self-update.md)
    helper so the device can keep itself current; and
@@ -58,14 +60,14 @@ It adds no telemetry, no cron jobs, and no shell‑profile changes. Re‑running
 is safe (idempotent) — that's also how you [update or repair](troubleshooting.md)
 a device.
 
-## Pair the app with your relay
+## Pair the app with your Relay
 
-When the install finishes, the relay is already running. To connect it to your
+When the install finishes, the Relay is already running. To connect it to your
 account:
 
 1. Open the **PoolPilot app** on a phone that is on the **same network** as the
-   relay.
-2. The app discovers the relay automatically. Follow the prompts to pair.
+   Relay.
+2. The app discovers the Relay automatically. Follow the prompts to pair.
 
 If the app doesn't find it automatically, show the pairing code on the device
 and scan it:
@@ -74,9 +76,11 @@ and scan it:
 sudo poolpilot-relay show-pairing
 ```
 
-This prints a QR code (and a link you can paste into the app) plus a fingerprint
-for manual entry. It is read‑only — it never changes anything. See
-[Commands](commands.md) for details.
+This prints three things: a QR code to scan with the PoolPilot app or your
+phone's camera, the same link as text to open on your phone (which then opens
+the app), and the Relay's fingerprint for the app's manual entry. It is
+read‑only — it never changes anything. See
+[Commands](commands.md#poolpilot-relay-show-pairing) for details.
 
 ## Check that it's running
 
@@ -90,5 +94,5 @@ You should see a line like `agent starting version=…` shortly after boot.
 ## Next steps
 
 - [Configuration](configuration.md) — the settings file, if you ever need it.
-- [Self-update](self-update.md) — how the relay keeps itself current.
+- [Self-update](self-update.md) — how the Relay keeps itself current.
 - [Troubleshooting](troubleshooting.md) — if something looks wrong.

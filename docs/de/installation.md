@@ -15,8 +15,9 @@
 
 **Unterstützte CPU-Architekturen:** 64-Bit-ARM (`arm64`, z. B. Raspberry Pi
 3/4/5), 32-Bit-ARM (`armv7`), 64-Bit-x86 (`amd64`), 32-Bit-x86 (`386`) und
-`riscv64`. 32-Bit-ARMv6 (der ursprüngliche Pi / Pi Zero) wird **nicht**
-unterstützt.
+`riscv64`. 32-Bit-ARMv6 — Raspberry Pi 1, Pi Zero und Pi Zero W — wird
+**nicht** unterstützt; der Installer bricht dort ab. Der **Pi Zero 2 W** ist ein
+64-Bit-ARM-Board und funktioniert.
 
 ## Installieren
 
@@ -80,9 +81,12 @@ scanne ihn:
 sudo poolpilot-relay show-pairing
 ```
 
-Das zeigt einen QR-Code (und einen Link, den du in die App einfügen kannst) sowie
-einen Fingerprint zur manuellen Eingabe. Der Befehl ist schreibgeschützt — er
-ändert nie etwas. Details unter [Befehle](commands.md).
+Das zeigt drei Dinge: einen QR-Code zum Scannen mit der PoolPilot-App oder der
+Kamera deines Handys, denselben Link als Text zum Öffnen auf dem Handy (der dann
+die App öffnet) und den Fingerabdruck des Relays für die manuelle Eingabe in
+der App. Der Befehl ist schreibgeschützt
+— er ändert nie etwas. Details unter
+[Befehle](commands.md#poolpilot-relay-show-pairing).
 
 ## Prüfen, dass es läuft
 

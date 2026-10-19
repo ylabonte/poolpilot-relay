@@ -2,7 +2,7 @@
 
 *🇬🇧 English · [🇩🇪 Deutsch](../de/home-assistant.md)*
 
-If you already run **Home Assistant** on your pool network, you can run the relay
+If you already run **Home Assistant** on your pool network, you can run the Relay
 **as a Home Assistant app** (until 2026.2 these were called "add-ons") instead of
 on a separate Raspberry Pi. It is the same edge agent — same pairing, same
 features — just running in a container the Home Assistant Supervisor manages.
@@ -13,7 +13,7 @@ features — just running in a container the Home Assistant Supervisor manages.
 
 ## Requirements
 
-- A **PoolPilot account with Pro** and the iOS or Android app — the relay is
+- A **PoolPilot account with Pro** and the iOS or Android app — the Relay is
   paired to your household from the app.
 - A **ProCon.IP**, **VIOLET** or **BADU Blue** controller reachable on your
   local network.
@@ -29,37 +29,43 @@ features — just running in a container the Home Assistant Supervisor manages.
    ```
 
 3. Find **PoolPilot Relay** in the store, open it, and select **Install**.
-4. **Start** the app, then open the PoolPilot phone app and pair this relay. The
-   relay announces itself on your LAN over mDNS, so the app discovers it
+4. **Start** the app, then open the PoolPilot phone app and pair this Relay. The
+   Relay announces itself on your LAN over mDNS, so the app discovers it
    automatically and guides you through pairing — you don't need to touch the
    app's console.
 
 ## Configuration
 
-One setting, on the app's **Configuration** tab: **`lan_port`** (default
-**8443**) — the port the pinned pairing API binds on the host network. Change it
-only if another app already uses 8443 (the log then shows `bind: address already
-in use`). **Set it before pairing.** A phone that pairs afterwards picks the
-advertised port up over mDNS automatically; an already-paired phone keeps the
-port it paired on and does not re-resolve it, so changing the port on an
-already-paired relay drops the direct LAN path — the app falls back to the cloud
-tunnel until you re-pair. Re-pairing an already-paired relay goes through
-recovery/invite, not a fresh pairing: the **owner** re-pairs with the one-time
-recovery code (see **Recovery / advanced** below), other phones via a new
-**invite**.
+Two settings, on the app's **Configuration** tab:
+
+- **`lan_port`** (default **8443**) — the port the pinned pairing API binds on
+  the host network. Change it only if another app already uses 8443 (the log
+  then shows `bind: address already in use`). **Set it before pairing.** A
+  phone that pairs afterwards picks the advertised port up over mDNS
+  automatically; an already-paired phone keeps the port it paired on and does
+  not re-resolve it, so changing the port on an already-paired Relay drops the
+  direct LAN path — the app falls back to the cloud tunnel until you re-pair.
+  Re-pairing an already-paired Relay goes through recovery/invite, not a fresh
+  pairing: the **owner** re-pairs with the one-time recovery code (see
+  **Recovery / advanced** below), other phones via a new **invite**.
+- **Additional mDNS logs** (`mdns_verbose_logs`, default **off**) — the
+  discovery library prints harmless RFC 6762 notices on every announcement;
+  they are hidden by default so the log stays readable. Turn this on only to
+  debug discovery (see
+  [Troubleshooting](troubleshooting.md#repeated-mdns-rfc6762-log-lines)).
 
 Everything else is fixed: the app talks to the PoolPilot cloud and stores its
 identity on its own persistent volume; pairing happens from the phone app.
 
 ## Data & backups
 
-Your pairing, controller registration, and the relay's TLS identity live on the
+Your pairing, controller registration, and the Relay's TLS identity live on the
 app's persistent `/data` volume:
 
 - It survives **restarts and app updates** automatically.
 - It is included in **Home Assistant backups**.
 - **Uninstalling the app deletes `/data`.** A reinstall then comes back as a
-  *new* relay identity and every paired phone has to pair again — take a backup
+  *new* Relay identity and every paired phone has to pair again — take a backup
   first, or be ready to re-pair.
 
 The TLS identity in `/data` is the pin your paired phones trust; losing it (an
@@ -67,8 +73,8 @@ uninstall, or a reinstall without restoring a backup) is what forces re-pairing.
 
 ## Updating
 
-The Home Assistant Supervisor owns the update lifecycle here, so the relay does
-**not** update itself in the app. New relay versions appear in the app store like
+The Home Assistant Supervisor owns the update lifecycle here, so the Relay does
+**not** update itself in the app. New Relay versions appear in the app store like
 any other app.
 
 ## Networking
@@ -93,12 +99,12 @@ docker exec "$(docker ps --filter name=poolpilot_relay --format '{{.Names}}')" \
 
 ## Troubleshooting
 
-- **The phone app can't find the relay** — confirm the app is *started*, that
+- **The phone app can't find the Relay** — confirm the app is *started*, that
   Home Assistant and your phone are on the same LAN, and that the app's port
   (default 8443) is free.
 - **Log shows `bind: address already in use`** — another app holds the port. Set
   a different **`lan_port`** on the Configuration tab and restart the app. If the
-  relay was **already paired**, mind the re-pairing note under **Configuration**
+  Relay was **already paired**, mind the re-pairing note under **Configuration**
   — your phones keep the port they paired on.
 - **Logs** — open the app's **Log** tab.
 
