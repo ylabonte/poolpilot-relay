@@ -2,7 +2,9 @@
 // controller through the cloud frps. It reproduces poolpilot-cloud's
 // test/e2e/frpc.toml.tmpl programmatically: token transport auth, the
 // per-relay token in metadatas.token, loginFailExit=false, and one http
-// proxy with subdomain=<controller GUID>.
+// proxy with subdomain=<controller GUID> — plus, per controller, the api http
+// proxy and (once the cloud delivers E2E URLs) two https proxies for the
+// end-to-end plane; see translate.
 //
 // The frp dependency is deliberately quarantined here — no other agent package
 // may import github.com/fatedier/frp.
@@ -26,9 +28,18 @@ import (
 // and the public subdomain, LocalAddr is the host:port the proxy forwards to
 // (the controller itself, or — once poolpilot-cloud#27's authenticated proxy is wired
 // in — the loopback ctrlfilter.Server that stands in front of it).
+//
+// E2ECtrlLabel and E2EAPILabel are the subdomains of the controller's two
+// end-to-end encrypted https proxies (poolpilot-relay#80), taken verbatim from
+// the leading label of the cloud-delivered remote_e2e_url / remote_api_e2e_url
+// — the cloud is authoritative for the label grammar, so a later rename
+// ("-e2e" → plain) needs no relay logic. Both must be set for either proxy to
+// be registered (see translate).
 type ProxySpec struct {
-	GUID      string
-	LocalAddr string
+	GUID         string
+	LocalAddr    string
+	E2ECtrlLabel string
+	E2EAPILabel  string
 }
 
 // Config is everything needed to (re)build the frpc service. It carries N
@@ -59,6 +70,11 @@ type Config struct {
 	// "api-<GUID>" proxy (subdomain "<GUID>-api") is registered per controller,
 	// all forwarding here.
 	APILocalAddr string
+	// E2ELocalAddr is the agent's loopback TLS listener (internal/agent/e2e)
+	// every end-to-end https proxy forwards to; it terminates TLS with the LAN
+	// certificate and demuxes on the Host label. Empty disables the E2E
+	// proxies regardless of the labels.
+	E2ELocalAddr string
 	// FrpsCAFile is the path to the trusted CA PEM the frpc verifies frps
 	// against (poolpilot-cloud#31). Empty → no server pinning (legacy relays / an
 	// unconfigured control-plane) — frp's own TLS stays on (TLSClientConfig.
@@ -71,12 +87,13 @@ type Config struct {
 }
 
 // Status is the coarse tunnel state surfaced via GET /v1/status. State/LastErr
-// are the headline — the WORST ctrl-proxy phase across all controllers.
+// are the headline — the WORST ctrl-plane proxy phase across all controllers
+// (the legacy ctrl proxy and, when registered, the E2E ctrl proxy).
 type Status struct {
 	State   string // "disabled" | "connecting" | "connected" | "error"
 	LastErr string
-	// APIState is the worst api-proxy phase across controllers; "" when no api
-	// proxy is registered (APILocalAddr unset).
+	// APIState is the worst api-plane proxy phase across controllers (legacy
+	// and E2E api proxies); "" when none is registered.
 	APIState string
 	// Controllers is the per-GUID tunnel state (both the ctrl and api proxy of
 	// each controller). Empty when the tunnel is unconfigured.
@@ -84,6 +101,8 @@ type Status struct {
 }
 
 // ProxyStatus is one controller's tunnel state, keyed by GUID in Status.
+// When the controller has end-to-end proxies, State folds in the E2E ctrl
+// proxy and APIState the E2E api proxy (worst of each pair).
 type ProxyStatus struct {
 	State    string // ctrl proxy phase
 	LastErr  string
@@ -338,24 +357,49 @@ func (t *frpTunnel) Status() Status {
 		return Status{State: "error", LastErr: t.lastErr}
 	}
 
-	perGUID := make(map[string]ProxyStatus, len(t.cfg.Controllers))
-	headline := ""    // worst ctrl-proxy phase across controllers
+	return statusOf(t.cfg, t.proxyState)
+}
+
+// statusOf folds every registered proxy's phase (looked up by proxy name) into
+// the headline and per-controller Status. Pure, so the folding is testable
+// without a live frp service. A controller's E2E proxies (when registered, see
+// hasE2E) fold into the same two slots as its legacy pair: the E2E ctrl proxy
+// into State, the E2E api proxy into APIState.
+func statusOf(cfg *Config, lookup func(name string) Status) Status {
+	perGUID := make(map[string]ProxyStatus, len(cfg.Controllers))
+	headline := ""    // worst ctrl-plane phase across controllers
 	headlineErr := "" // the error of that worst proxy
-	apiHeadline := "" // worst api-proxy phase
-	hasAPI := t.cfg.APILocalAddr != ""
-	for _, spec := range t.cfg.Controllers {
-		ctrlSt := t.proxyState(wire.CtrlProxyPrefix + spec.GUID)
-		ps := ProxyStatus{State: ctrlSt.State, LastErr: ctrlSt.LastErr}
+	apiHeadline := "" // worst api-plane phase
+	hasAPI := cfg.APILocalAddr != ""
+	for _, spec := range cfg.Controllers {
+		ctrlSt := lookup(wire.CtrlProxyPrefix + spec.GUID)
+		apiState := ""
 		if hasAPI {
-			ps.APIState = t.proxyState("api-" + spec.GUID).State
-			apiHeadline = worse(apiHeadline, ps.APIState)
+			apiState = lookup("api-" + spec.GUID).State
 		}
+		if hasE2E(cfg, spec) {
+			if e := lookup(wire.E2ECtrlProxyPrefix + spec.GUID); worse(ctrlSt.State, e.State) != ctrlSt.State {
+				ctrlSt = e
+			}
+			apiState = worse(apiState, lookup(wire.E2EAPIProxyPrefix+spec.GUID).State)
+		}
+		ps := ProxyStatus{State: ctrlSt.State, LastErr: ctrlSt.LastErr, APIState: apiState}
+		apiHeadline = worse(apiHeadline, apiState)
 		perGUID[spec.GUID] = ps
 		if next := worse(headline, ctrlSt.State); next != headline {
 			headline, headlineErr = next, ctrlSt.LastErr
 		}
 	}
 	return Status{State: headline, LastErr: headlineErr, APIState: apiHeadline, Controllers: perGUID}
+}
+
+// hasE2E reports whether spec gets the two end-to-end https proxies: only when
+// the cloud delivered BOTH labels and the E2E listener is configured. An older
+// cloud (or one with the E2E plane disabled) delivers none, and its frps would
+// refuse an https proxy at NewProxy anyway ("type [https] not supported when
+// vhost https port is not set") — so nothing changes until the cloud opts in.
+func hasE2E(cfg *Config, spec ProxySpec) bool {
+	return cfg.E2ELocalAddr != "" && spec.E2ECtrlLabel != "" && spec.E2EAPILabel != ""
 }
 
 // idle reports whether cfg leaves the tunnel nothing to serve: unconfigured, or
@@ -403,10 +447,15 @@ func (t *frpTunnel) proxyState(name string) Status {
 //	transport.tls.trustedCaFile/serverName → Transport.TLS.{TrustedCaFile,ServerName}
 //	                          (poolpilot-cloud#31 pinning; set only when FrpsCAFile != "")
 //	[[proxies]] http        → HTTPProxyConfig{name, subdomain, localIP, localPort}
+//	[[proxies]] https       → HTTPSProxyConfig{name, subdomain, localIP, localPort}
 //
 // For each controller it emits a "ctrl-<GUID>" proxy (subdomain <GUID>) and,
 // when APILocalAddr is set, an "api-<GUID>" proxy (subdomain <GUID>-api) — all
-// api proxies forwarding to the SAME loopback LAN-API listener. An empty
+// api proxies forwarding to the SAME loopback LAN-API listener. When the
+// controller carries both cloud-delivered E2E labels (and E2ELocalAddr is
+// set — see hasE2E) it additionally gets "e2e-<GUID>" (subdomain
+// E2ECtrlLabel) and "e2eapi-<GUID>" (subdomain E2EAPILabel), both type https
+// and both forwarding to the one loopback E2E TLS listener. An empty
 // controller list is valid (zero proxies).
 func translate(cfg Config) (*v1.ClientCommonConfig, []v1.ProxyConfigurer, error) {
 	if cfg.ServerAddr == "" {
@@ -460,19 +509,27 @@ func translate(cfg Config) (*v1.ClientCommonConfig, []v1.ProxyConfigurer, error)
 			}
 			proxies = append(proxies, api)
 		}
+
+		if hasE2E(&cfg, spec) {
+			e2eCtrl, err := httpsProxy(wire.E2ECtrlProxyPrefix+spec.GUID, spec.E2ECtrlLabel, cfg.E2ELocalAddr)
+			if err != nil {
+				return nil, nil, err
+			}
+			e2eAPI, err := httpsProxy(wire.E2EAPIProxyPrefix+spec.GUID, spec.E2EAPILabel, cfg.E2ELocalAddr)
+			if err != nil {
+				return nil, nil, err
+			}
+			proxies = append(proxies, e2eCtrl, e2eAPI)
+		}
 	}
 	return common, proxies, nil
 }
 
 // httpProxy builds one frp http proxy forwarding subdomain → localAddr.
 func httpProxy(name, subdomain, localAddr string) (*v1.HTTPProxyConfig, error) {
-	host, portStr, err := net.SplitHostPort(localAddr)
+	host, port, err := splitLocalAddr(localAddr)
 	if err != nil {
-		return nil, fmt.Errorf("tunnel: local address %q must be host:port: %w", localAddr, err)
-	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil || port <= 0 || port > 65535 {
-		return nil, fmt.Errorf("tunnel: local address %q has invalid port", localAddr)
+		return nil, err
 	}
 	proxy := &v1.HTTPProxyConfig{}
 	proxy.Name = name
@@ -481,6 +538,37 @@ func httpProxy(name, subdomain, localAddr string) (*v1.HTTPProxyConfig, error) {
 	proxy.LocalPort = port
 	proxy.SubDomain = subdomain
 	return proxy, nil
+}
+
+// httpsProxy builds one frp https proxy forwarding subdomain → localAddr. frps
+// routes it by the ClientHello's SNI and replays the raw bytes, so the TLS
+// session is terminated by whatever listens on localAddr — the relay's E2E
+// listener — and never by the cloud.
+func httpsProxy(name, subdomain, localAddr string) (*v1.HTTPSProxyConfig, error) {
+	host, port, err := splitLocalAddr(localAddr)
+	if err != nil {
+		return nil, err
+	}
+	proxy := &v1.HTTPSProxyConfig{}
+	proxy.Name = name
+	proxy.Type = "https"
+	proxy.LocalIP = host
+	proxy.LocalPort = port
+	proxy.SubDomain = subdomain
+	return proxy, nil
+}
+
+// splitLocalAddr validates a proxy backend "host:port".
+func splitLocalAddr(localAddr string) (string, int, error) {
+	host, portStr, err := net.SplitHostPort(localAddr)
+	if err != nil {
+		return "", 0, fmt.Errorf("tunnel: local address %q must be host:port: %w", localAddr, err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port <= 0 || port > 65535 {
+		return "", 0, fmt.Errorf("tunnel: local address %q has invalid port", localAddr)
+	}
+	return host, port, nil
 }
 
 // buildService assembles a ready-to-Run frp client service. NewService only
