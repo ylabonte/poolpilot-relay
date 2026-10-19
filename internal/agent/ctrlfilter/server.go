@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ylabonte/poolpilot-relay/internal/useragent"
+	"github.com/ylabonte/poolpilot-relay/wire"
 )
 
 // DefaultListen is the loopback plain-HTTP bind every configured
@@ -299,17 +300,19 @@ func (s *Server) Handler() http.Handler {
 	})
 }
 
-// guidFromHost extracts the leading label of a Host header
+// guidFromHost extracts the controller GUID from a Host header's leading label
 // ("<guid>.remote.poolpilot.eu[:port]" -> "<guid>"), stripping a port first
-// when present.
+// when present. The end-to-end plane's label "<guid>-e2e" (poolpilot-relay#80)
+// names the same controller, so a trailing wire.E2ESubdomainSuffix is
+// stripped too; GUIDs are 32 hex and can never end in it themselves.
 func guidFromHost(host string) string {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
 	if i := strings.IndexByte(host, '.'); i >= 0 {
-		return host[:i]
+		host = host[:i]
 	}
-	return host
+	return strings.TrimSuffix(host, wire.E2ESubdomainSuffix)
 }
 
 // Run serves the shared filter listener until ctx is done; a no-op (just

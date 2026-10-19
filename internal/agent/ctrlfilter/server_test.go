@@ -41,6 +41,35 @@ func TestServerRoutesByHostGUID(t *testing.T) {
 	}
 }
 
+// A request on the end-to-end host "<guid>-e2e.<host>" reaches the same
+// controller under the same credential rules: the session cookie minted for
+// the guid is accepted, and a request without any credential is refused.
+func TestServerRoutesE2EHostToSameController(t *testing.T) {
+	backend := newFakeController()
+	defer backend.Close()
+
+	srv := &Server{}
+	srv.SetTargets(map[string]Target{"guid1": {BaseURL: backend.URL}})
+	srv.SetSessionKey(testKey)
+
+	req := httptest.NewRequest(http.MethodGet, "/GetState.csv", nil)
+	req.Host = "guid1-e2e.remote.poolpilot.eu"
+	req.AddCookie(sessionCookie(t, "guid1"))
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("e2e host with a valid session = %d, want 200", rec.Code)
+	}
+
+	bare := httptest.NewRequest(http.MethodGet, "/GetState.csv", nil)
+	bare.Host = "guid1-e2e.remote.poolpilot.eu"
+	rec2 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec2, bare)
+	if rec2.Code != http.StatusForbidden {
+		t.Fatalf("e2e host without a credential = %d, want 403", rec2.Code)
+	}
+}
+
 func TestServerUnknownGUIDIs404(t *testing.T) {
 	srv := &Server{}
 	srv.SetTargets(map[string]Target{})
@@ -59,6 +88,11 @@ func TestGuidFromHost(t *testing.T) {
 		"abc123.remote.poolpilot.eu":      "abc123",
 		"abc123.remote.poolpilot.eu:8443": "abc123",
 		"abc123":                          "abc123",
+		// The end-to-end plane's label (poolpilot-relay#80) names the same
+		// controller: the -e2e suffix is stripped.
+		"abc123-e2e.remote.poolpilot.eu":     "abc123",
+		"abc123-e2e.remote.poolpilot.eu:443": "abc123",
+		"abc123-e2e":                         "abc123",
 	}
 	for host, want := range cases {
 		if got := guidFromHost(host); got != want {
