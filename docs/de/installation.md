@@ -15,8 +15,9 @@
 
 **Unterstützte CPU-Architekturen:** 64-Bit-ARM (`arm64`, z. B. Raspberry Pi
 3/4/5), 32-Bit-ARM (`armv7`), 64-Bit-x86 (`amd64`), 32-Bit-x86 (`386`) und
-`riscv64`. 32-Bit-ARMv6 (der ursprüngliche Pi / Pi Zero) wird **nicht**
-unterstützt.
+`riscv64`. 32-Bit-ARMv6 — Raspberry Pi 1, Pi Zero und Pi Zero W — wird
+**nicht** unterstützt; der Installer bricht dort ab. Der **Pi Zero 2 W** ist ein
+64-Bit-ARM-Board und funktioniert.
 
 ## Installieren
 
