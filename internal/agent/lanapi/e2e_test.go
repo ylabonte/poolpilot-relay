@@ -271,9 +271,8 @@ func TestReconfigureTunnelE2ELabels(t *testing.T) {
 }
 
 // The backfill: controllers registered before the cloud emitted E2E URLs
-// learn them from GET /controllers, the tunnel is reconfigured, and once
-// every controller has them the relay stops asking.
-func TestBackfillE2EPersistsReconfiguresAndStops(t *testing.T) {
+// learn them from GET /controllers, and the tunnel is reconfigured.
+func TestBackfillE2EPersistsAndReconfigures(t *testing.T) {
 	f, ft, token := e2eFixture(t)
 	g1 := putControllerOK(t, f, token, wire.ControllerConfig{Preset: "procon-ip", LanAddress: f.controllerAddr()})
 
@@ -299,14 +298,66 @@ func TestBackfillE2EPersistsReconfiguresAndStops(t *testing.T) {
 	if s := specFor(t, ft.last(), g1); s.E2ECtrlLabel != g1+"-e2e" || s.E2EAPILabel != g1+"-api-e2e" {
 		t.Errorf("backfill did not reconfigure the tunnel: %+v", s)
 	}
+}
 
-	// Complete: no further cloud call.
-	calls := f.listCalls.Load()
-	if err := f.srv.BackfillE2E(context.Background()); err != nil {
-		t.Fatal(err)
+// The off-switch: a guid the cloud lists with BOTH E2E fields empty is the
+// cloud withdrawing the E2E plane for it — the stored pair is cleared and only
+// the two https proxies go away (the legacy proxy spec stays as it was).
+func TestBackfillE2EClearsOnExplicitEmptyPair(t *testing.T) {
+	f, ft, token := e2eFixture(t)
+	f.e2eEnabled.Store(true)
+	g1 := putControllerOK(t, f, token, wire.ControllerConfig{Preset: "procon-ip", LanAddress: f.controllerAddr()})
+	before := specFor(t, ft.last(), g1)
+	if before.E2ECtrlLabel == "" {
+		t.Fatalf("setup: no E2E labels: %+v", before)
 	}
-	if f.listCalls.Load() != calls {
-		t.Errorf("backfill asked the cloud although every controller has its URLs")
+
+	f.e2eEnabled.Store(false) // the list now carries g1 with no E2E fields
+	if err := f.srv.BackfillE2E(context.Background()); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	if c, _ := f.store.Get().FindController(g1); c.RemoteE2EURL != "" || c.RemoteAPIE2EURL != "" {
+		t.Fatalf("explicit empty pair did not clear: %+v", c)
+	}
+	after := specFor(t, ft.last(), g1)
+	if after.E2ECtrlLabel != "" || after.E2EAPILabel != "" {
+		t.Errorf("E2E labels survived the clear: %+v", after)
+	}
+	if after.GUID != before.GUID || after.LocalAddr != before.LocalAddr {
+		t.Errorf("the legacy proxy spec changed: %+v → %+v", before, after)
+	}
+	if info := getControllersInfo(t, f, token, g1); info.RemoteE2EURL != "" {
+		t.Errorf("cleared URL still surfaced: %+v", info)
+	}
+}
+
+// Only an explicit empty pair clears: a guid absent from the answer, a half
+// pair, or any error leaves the stored pair alone.
+func TestBackfillE2EKeepsThePairOtherwise(t *testing.T) {
+	cases := map[string]func(f *fixture) error{
+		"guid absent": func(f *fixture) error { f.listOmitAll.Store(true); return nil },
+		"half pair":   func(f *fixture) error { f.listHalfPair.Store(true); return nil },
+		"error 502":   func(f *fixture) error { f.listStatus.Store(http.StatusBadGateway); return cloud.ErrUnavailable },
+		"error 404":   func(f *fixture) error { f.listStatus.Store(http.StatusNotFound); return cloud.ErrNotSupported },
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			f, ft, token := e2eFixture(t)
+			f.e2eEnabled.Store(true)
+			g1 := putControllerOK(t, f, token, wire.ControllerConfig{Preset: "procon-ip", LanAddress: f.controllerAddr()})
+			f.e2eEnabled.Store(false) // were g1 listed, it would read as a clear
+			wantErr := setup(f)
+			err := f.srv.BackfillE2E(context.Background())
+			if (wantErr == nil && err != nil) || (wantErr != nil && !errors.Is(err, wantErr)) {
+				t.Fatalf("backfill = %v, want %v", err, wantErr)
+			}
+			if c, _ := f.store.Get().FindController(g1); c.RemoteE2EURL != e2eURL(g1) || c.RemoteAPIE2EURL != e2eAPIURL(g1) {
+				t.Errorf("pair changed: %+v", c)
+			}
+			if s := specFor(t, ft.last(), g1); s.E2ECtrlLabel != g1+"-e2e" {
+				t.Errorf("tunnel lost the E2E labels: %+v", s)
+			}
+		})
 	}
 }
 
@@ -332,7 +383,7 @@ func TestBackfillE2EToleratesAnOldCloud(t *testing.T) {
 		t.Errorf("502 → %v, want ErrUnavailable", err)
 	}
 	if f.listCalls.Load() != 2 {
-		t.Errorf("list calls = %d, want 2 (every tick asks again while incomplete)", f.listCalls.Load())
+		t.Errorf("list calls = %d, want 2 (every tick asks again)", f.listCalls.Load())
 	}
 }
 
@@ -347,36 +398,52 @@ func TestBackfillE2ESkipsWithoutRegisteredControllers(t *testing.T) {
 	}
 }
 
-// RunE2EBackfill asks right away at boot, then every interval while
-// incomplete, and keeps quiet once complete.
-func TestRunE2EBackfillLoop(t *testing.T) {
-	f, _, token := e2eFixture(t)
-	g1 := putControllerOK(t, f, token, wire.ControllerConfig{Preset: "procon-ip", LanAddress: f.controllerAddr()})
-	f.e2eEnabled.Store(true)
-	f.srv.E2EBackfillInterval = 10 * time.Millisecond
-
+func runBackfillLoop(t *testing.T, f *fixture) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- f.srv.RunE2EBackfill(ctx) }()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if c, _ := f.store.Get().FindController(g1); c.RemoteE2EURL != "" {
-			break
+	t.Cleanup(func() {
+		cancel()
+		if err := <-done; !errors.Is(err, context.Canceled) {
+			t.Errorf("RunE2EBackfill = %v, want context.Canceled", err)
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("the loop never backfilled")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	})
+}
+
+// RunE2EBackfill asks right away at boot and at the fast cadence while a pair
+// is missing; once complete it switches to the slow re-check cadence.
+func TestRunE2EBackfillSwitchesToTheSlowCadence(t *testing.T) {
+	f, _, token := e2eFixture(t)
+	g1 := putControllerOK(t, f, token, wire.ControllerConfig{Preset: "procon-ip", LanAddress: f.controllerAddr()})
+	f.srv.E2EBackfillInterval = 10 * time.Millisecond
+	f.srv.E2ERecheckInterval = time.Hour
+
+	runBackfillLoop(t, f)
+	waitFor(t, "a few fast ticks while incomplete", func() bool { return f.listCalls.Load() >= 3 })
+	f.e2eEnabled.Store(true)
+	waitFor(t, "the backfill", func() bool { c, _ := f.store.Get().FindController(g1); return c.RemoteE2EURL != "" })
 	calls := f.listCalls.Load()
-	time.Sleep(100 * time.Millisecond) // ~10 intervals
-	if got := f.listCalls.Load(); got != calls {
-		t.Errorf("loop kept asking after completion: %d → %d", calls, got)
+	time.Sleep(100 * time.Millisecond) // ~10 fast intervals
+	if got := f.listCalls.Load(); got > calls+1 {
+		t.Errorf("still on the fast cadence after completion: %d → %d", calls, got)
 	}
-	cancel()
-	if err := <-done; !errors.Is(err, context.Canceled) {
-		t.Errorf("RunE2EBackfill = %v, want context.Canceled", err)
-	}
+}
+
+// Once complete the relay keeps re-checking at the slow cadence, which is how
+// a complete relay hears the cloud's clear.
+func TestRunE2EBackfillSlowRecheckHearsTheClear(t *testing.T) {
+	f, ft, token := e2eFixture(t)
+	f.e2eEnabled.Store(true)
+	g1 := putControllerOK(t, f, token, wire.ControllerConfig{Preset: "procon-ip", LanAddress: f.controllerAddr()})
+	f.srv.E2EBackfillInterval = time.Hour
+	f.srv.E2ERecheckInterval = 10 * time.Millisecond
+
+	runBackfillLoop(t, f)
+	waitFor(t, "slow re-checks of a complete relay", func() bool { return f.listCalls.Load() >= 3 })
+	f.e2eEnabled.Store(false)
+	waitFor(t, "the clear", func() bool { c, _ := f.store.Get().FindController(g1); return c.RemoteE2EURL == "" })
+	waitFor(t, "the tunnel reconfigure", func() bool { return !hasLabels(specFor(t, ft.last(), g1)) })
 }
 
 // The relay advertises only E2E URLs it actually serves: the app reads their

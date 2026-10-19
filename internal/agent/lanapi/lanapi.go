@@ -114,6 +114,10 @@ type Server struct {
 	// E2EBackfillInterval is how often RunE2EBackfill re-asks the cloud while
 	// a controller still lacks its E2E URLs; zero means DefaultE2EBackfillInterval.
 	E2EBackfillInterval time.Duration
+	// E2ERecheckInterval is RunE2EBackfill's slow cadence once every
+	// registered controller has its E2E URLs — how a complete relay hears the
+	// cloud withdraw them; zero means DefaultE2ERecheckInterval.
+	E2ERecheckInterval time.Duration
 	// CtrlFilter is the shared issue poolpilot-cloud#27 authenticated tunnel gate every
 	// controller's ctrl-<GUID> proxy forwards to instead of the
 	// controller itself. Nil disables the gate — the ctrl-<GUID> proxy's
@@ -1804,22 +1808,30 @@ func e2eLabel(raw, guid string) (string, bool) {
 	return label, true
 }
 
-// DefaultE2EBackfillInterval is how often RunE2EBackfill re-asks the cloud
-// while any registered controller still lacks its E2E URLs.
+// DefaultE2EBackfillInterval is RunE2EBackfill's fast cadence: how often it
+// re-asks the cloud while any registered controller still lacks its E2E URLs.
 const DefaultE2EBackfillInterval = time.Hour
 
-// RunE2EBackfill keeps every registered controller's E2E URLs filled in
-// (poolpilot-relay#80): it runs BackfillE2E at once — main starts it after the
-// boot-time tunnel resume — and then every E2EBackfillInterval until ctx is
-// done. A tick with nothing missing makes no request, so once every controller
-// has its URLs the relay stops asking; a controller registered later without
-// them (the cloud's E2E plane still off) makes it ask again. Every error just
-// waits for the next tick: an older cloud without the route (ErrNotSupported)
-// is the normal state during the rollout.
+// DefaultE2ERecheckInterval is RunE2EBackfill's slow cadence once every
+// registered controller has its E2E URLs. It bounds how long a complete relay
+// keeps advertising and registering an E2E plane the cloud has withdrawn.
+const DefaultE2ERecheckInterval = 12 * time.Hour
+
+// RunE2EBackfill keeps every registered controller's E2E URLs in step with the
+// control plane (poolpilot-relay#80): it runs BackfillE2E at once — main starts
+// it after the boot-time tunnel resume — then every E2EBackfillInterval while
+// any registered controller lacks its pair, and every E2ERecheckInterval once
+// none does. The slow re-check never stops, because it is how a complete relay
+// hears the cloud withdraw the E2E plane (BackfillE2E's clear). Every error
+// just waits for the next tick: an older cloud without the route
+// (ErrNotSupported) is the normal state during the rollout.
 func (s *Server) RunE2EBackfill(ctx context.Context) error {
-	interval := s.E2EBackfillInterval
-	if interval <= 0 {
-		interval = DefaultE2EBackfillInterval
+	fast, slow := s.E2EBackfillInterval, s.E2ERecheckInterval
+	if fast <= 0 {
+		fast = DefaultE2EBackfillInterval
+	}
+	if slow <= 0 {
+		slow = DefaultE2ERecheckInterval
 	}
 	for {
 		if err := s.BackfillE2E(ctx); err != nil {
@@ -1829,6 +1841,10 @@ func (s *Server) RunE2EBackfill(ctx context.Context) error {
 				slog.Info("E2E URL backfill deferred to the next tick", "err", err)
 			}
 		}
+		interval := slow
+		if e2eMissing(s.Store.Get()) {
+			interval = fast
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -1837,27 +1853,48 @@ func (s *Server) RunE2EBackfill(ctx context.Context) error {
 	}
 }
 
-// BackfillE2E asks the control plane (relay-authed GET /controllers) for the
-// E2E URLs of registered controllers that lack them, persists what it learns,
-// and reconfigures the tunnel when anything changed. It makes no request when
-// nothing is missing, or when the relay is not enrolled or its tunnel is
-// parked. Only entries carrying BOTH URLs are taken, matched by GUID, so a
-// controller rotated or deleted while the request was in flight is never
-// written (its old GUID no longer matches); the persist is also bound to the
-// household the read started under, like the controller handlers'.
+// e2eMissing reports whether any registered controller lacks its E2E pair.
+func e2eMissing(st state.State) bool {
+	for _, c := range st.Controllers {
+		if c.LanAddress != "" && c.GUID != "" && (c.RemoteE2EURL == "" || c.RemoteAPIE2EURL == "") {
+			return true
+		}
+	}
+	return false
+}
+
+// BackfillE2E reads the E2E URLs of this relay's controllers from the control
+// plane (relay-authed GET /controllers), persists any change, and reconfigures
+// the tunnel when something changed. Per GUID present in a 200 answer:
+//
+//   - both URLs set: stored (the cloud is authoritative, so a differing pair
+//     is overwritten);
+//   - both URLs empty: the stored pair is CLEARED — the cloud's off-switch
+//     for the E2E plane, which takes the https proxies down and stops every
+//     surface advertising them;
+//   - exactly one set: malformed, the stored pair is left alone.
+//
+// A GUID absent from the answer, and any error (old cloud, outage, refusal),
+// change nothing. No request is made when the relay is not enrolled, its
+// tunnel is parked, or it has no registered controller.
+//
+// Entries are matched by GUID, so a controller rotated or deleted while the
+// request was in flight is never written (its old GUID no longer matches a
+// row); the persist is also bound to the household the read started under,
+// like the controller handlers'.
 func (s *Server) BackfillE2E(ctx context.Context) error {
 	st := s.Store.Get()
 	if !st.Enrolled() || st.TunnelParked() {
 		return nil
 	}
-	missing := false
+	registered := false
 	for _, c := range st.Controllers {
-		if c.LanAddress != "" && c.GUID != "" && (c.RemoteE2EURL == "" || c.RemoteAPIE2EURL == "") {
-			missing = true
+		if c.LanAddress != "" && c.GUID != "" {
+			registered = true
 			break
 		}
 	}
-	if !missing {
+	if !registered {
 		return nil
 	}
 	res, err := s.Cloud.ListControllers(ctx)
@@ -1866,7 +1903,8 @@ func (s *Server) BackfillE2E(ctx context.Context) error {
 	}
 	byGUID := make(map[string]wire.CloudControllerInfo, len(res.Controllers))
 	for _, c := range res.Controllers {
-		if c.GUID != "" && c.RemoteE2EURL != "" && c.RemoteAPIE2EURL != "" {
+		// Both set or both empty; a half pair is malformed and ignored.
+		if c.GUID != "" && (c.RemoteE2EURL == "") == (c.RemoteAPIE2EURL == "") {
 			byGUID[c.GUID] = c
 		}
 	}

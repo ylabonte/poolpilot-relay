@@ -149,6 +149,10 @@ type fixture struct {
 	// label that is not the controller's own — a pair e2eLabels rejects, so
 	// the relay registers no E2E proxies for it.
 	e2eMalformed atomic.Bool
+	// listOmitAll makes GET /controllers answer an empty list (every guid
+	// absent); listHalfPair makes each entry carry only remote_e2e_url.
+	listOmitAll  atomic.Bool
+	listHalfPair atomic.Bool
 }
 
 // controllerURLs is the stub cloud's register/rotate/list answer for guid.
@@ -322,8 +326,13 @@ func newFixture(t *testing.T) *fixture {
 				return
 			}
 			list := []map[string]string{}
-			for i := int64(1); i <= f.guidSeq.Load(); i++ {
-				list = append(list, f.controllerURLs("guid"+strconv.FormatInt(i, 10)))
+			for i := int64(1); i <= f.guidSeq.Load() && !f.listOmitAll.Load(); i++ {
+				entry := f.controllerURLs("guid" + strconv.FormatInt(i, 10))
+				if f.listHalfPair.Load() {
+					entry["remote_e2e_url"] = "https://guid" + strconv.FormatInt(i, 10) + "-e2e.remote.example"
+					delete(entry, "remote_api_e2e_url")
+				}
+				list = append(list, entry)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"controllers": list})
 			return
