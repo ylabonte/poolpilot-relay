@@ -98,8 +98,7 @@ PoolPilot cloud and keeps open.
   the latest of those times, for the online status in the app. Only warnings
   and errors are logged — routine logins and traffic are not. A warning about a
   rejected or malformed connection can contain the internet address it came
-  from, but the logs are small and rotating, so they overwrite it after a
-  short time.
+  from; the logs are size-capped and rotate.
 
 On your local network, the app talks HTTPS to the Relay and pins its
 certificate: at pairing the app learns the Relay's fingerprint and from then on

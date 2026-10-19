@@ -103,8 +103,8 @@ aufbaut und offen hält.
   jeweils letzten Zeitpunkt, für die Online-Anzeige in der App. Protokolliert
   werden nur Warnungen und Fehler — normale Anmeldungen und der Verkehr selbst
   nicht. Eine Warnung zu einer abgelehnten oder fehlerhaften Verbindung kann
-  die Internetadresse enthalten, von der sie kam, aber die Logs sind klein und
-  rotieren, sodass sie nach kurzer Zeit überschrieben wird.
+  die Internetadresse enthalten, von der sie kam; die Logs sind in der Größe
+  begrenzt und rotieren.
 
 Im lokalen Netzwerk spricht die App HTTPS mit dem Relay und pinnt sein
 Zertifikat: Beim Koppeln lernt die App den Fingerabdruck des Relays und vertraut
