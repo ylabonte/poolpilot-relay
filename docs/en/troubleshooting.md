@@ -160,9 +160,11 @@ curl -fsSL https://get.poolpilot.eu/install.sh | bash
 
 ## Factory reset
 
-You can factory‑reset a relay from the PoolPilot app. This wipes its pairing and
-identity and the agent restarts with a fresh one (systemd brings it straight back
-up). Afterwards the relay is unpaired — [re‑pair](#re-pair-the-relay) it as if it
+You can factory‑reset a relay from the PoolPilot app — **only from the owner's
+phone, and only at home on the same network as the relay**. The relay refuses a
+factory reset through the remote tunnel, and from a member phone. This wipes its
+pairing and identity and the agent restarts with a fresh one (systemd brings it
+straight back up). Afterwards the relay is unpaired — [re‑pair](#re-pair-the-relay) it as if it
 were new. Because the identity changed, remove the old relay entry in the app
 first if it's still listed.
 

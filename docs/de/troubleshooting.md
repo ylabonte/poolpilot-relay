@@ -173,9 +173,11 @@ curl -fsSL https://get.poolpilot.eu/install.sh | bash
 
 ## Werksreset
 
-Du kannst ein Relay aus der PoolPilot-App auf Werkseinstellungen zurücksetzen.
-Das löscht Kopplung und Identität, und der Agent startet mit einer frischen neu
-(systemd fährt ihn sofort wieder hoch). Danach ist das Relay entkoppelt —
+Du kannst ein Relay aus der PoolPilot-App auf Werkseinstellungen zurücksetzen —
+**nur vom Telefon des Besitzers und nur zu Hause im selben Netzwerk wie das
+Relay**. Über den Fernzugriffs-Tunnel und von einem Mitglieds-Telefon lehnt das
+Relay einen Werksreset ab. Das löscht Kopplung und Identität, und der Agent
+startet mit einer frischen neu (systemd fährt ihn sofort wieder hoch). Danach ist das Relay entkoppelt —
 [koppel es neu](#relay-neu-koppeln), als wäre es neu. Weil sich die Identität
 geändert hat, entferne zuerst den alten Relay-Eintrag in der App, falls er noch
 gelistet ist.
