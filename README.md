@@ -5,26 +5,36 @@
 <h1 align="center">PoolPilot Relay</h1>
 
 <p align="center">
-  The edge agent (Go) that bridges your <b>ProCon.IP</b>, <b>VIOLET</b> or <b>BADU Blue</b> pool
-  controller to the <a href="https://poolpilot.eu">PoolPilot</a> apps.
+  A small program for your home that connects your pool controller to the
+  <a href="https://poolpilot.eu">PoolPilot</a> apps — even while you're away.
 </p>
+
+## What it does for your pool
+
+| What you get | ProCon.IP | BADU Blue | VIOLET |
+| --- | --- | --- | --- |
+| Control your pool at home over Wi‑Fi | works without the relay | works without the relay | works without the relay |
+| Control your pool while you're away | ✓ with the relay | built in | built in |
+| Push to your phone when something's off | ✓ with the relay | ✓ with the relay | built in\* |
+| Share your pool with your family — Pro features included, up to 10 devices, iPhone and Android mixed | ✓ with the relay | ✓ with the relay | ✓ with the relay |
+
+\* Free in PoolPilot — the relay can optionally take it over.
+
+**In short:**
+
+- **ProCon.IP:** the relay gets it ready for when you're away.
+- **BADU Blue:** the relay brings push to PoolPilot.
+- **VIOLET:** you only need the relay for sharing.
+
+**What do you need?** A device that's always on at home (e.g. a Raspberry Pi,
+or your [Home Assistant](docs/en/home-assistant.md)) and PoolPilot Pro.
+
+## How it works
 
 The edge agent (Go) talks to your **ProCon.IP**, **VIOLET** or **BADU Blue**
 pool controller on the local network and bridges it to the PoolPilot apps —
 directly over your LAN at home, and through a secure tunnel to the PoolPilot
 cloud when you're away.
-
-## What the relay does for your controller
-
-| Controller | What the relay adds |
-| --- | --- |
-| **ProCon.IP** | **Secure remote access** and **push notifications** — the controller has neither built in. |
-| **BADU Blue** | **Push notifications** in the PoolPilot app — remote access is already built in. |
-| **VIOLET** | Remote access and push are built in — here the relay is all about **sharing** (below). |
-
-**For every controller:** share your pool — including remote access and the Pro
-features — across up to **10 devices**, cross-platform between iPhone and
-Android. The relay is part of **PoolPilot Pro**.
 
 📖 **Documentation:** [English](docs/en/index.md) · **[🇩🇪 Deutsch](docs/de/index.md)**
 &nbsp;— installation, pairing, commands, configuration, self-update, troubleshooting.
