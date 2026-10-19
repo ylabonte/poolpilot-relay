@@ -27,12 +27,12 @@ never sends them to the PoolPilot cloud and never returns them over its own
 API. When the Relay registers a controller with the cloud, it sends only its
 type, its local address and its name.
 
-The file is not encrypted. On a Linux install only the Relay's service and
-root can read it: the service runs as its own unprivileged system user, the
-file is `0600`, and it sits behind a directory only root can enter
-(`/var/lib/private`, where systemd keeps the service's data). In Home
-Assistant it sits on the app's own `/data` volume. Treat a backup of the device, or a Home Assistant
-backup that includes the app, as you would the device itself.
+The file is not encrypted. On a Linux install only the Relay's service and root
+can read it: the service runs as its own unprivileged system user, the file is
+`0600`, and it sits behind a directory only root can enter (`/var/lib/private`,
+where systemd keeps the service's data). In Home Assistant it sits on the app's
+own `/data` volume. Treat a backup of the device, or a Home Assistant backup
+that includes the app, as you would the device itself.
 
 **In the PoolPilot cloud.** The cloud knows the Relay and the household it
 belongs to, the controllers' type, address and name, and the tunnel
