@@ -31,7 +31,7 @@ that carry a valid signature.
   device normally picks up a new release within about a day.
 - **On demand, from the app.** Don't want to wait for the night? Open the relay
   in the PoolPilot app and tap **Update now** — a waiting update installs
-  immediately.
+  immediately. Only the household **owner** can do this (see below).
 
 ## Controlling updates
 
@@ -49,10 +49,11 @@ The relay's page in the PoolPilot app has an **automatic updates** on/off toggle
 This is the setting most people want, because it never leaves the device unable
 to update.
 
-The toggle and **Update now** belong to the household **owner**. Any paired
-phone can see the update status and ask the relay to check for an update; a
-member phone that tries to change the toggle or install an update is refused
-(see [Owner and member phones](troubleshooting.md#owner-and-member-phones)).
+**Only the household owner** can switch the toggle and tap **Update now**.
+Every paired phone, members included, can see the update status and ask the
+relay to check for an update; a member phone that tries to change the toggle
+or install an update is refused (see
+[Owner and member phones](troubleshooting.md#owner-and-member-phones)).
 
 ### On the device — full opt‑out
 
