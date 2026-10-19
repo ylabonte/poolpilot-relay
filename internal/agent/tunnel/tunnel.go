@@ -87,26 +87,36 @@ type Config struct {
 }
 
 // Status is the coarse tunnel state surfaced via GET /v1/status. State/LastErr
-// are the headline — the WORST ctrl-plane proxy phase across all controllers
-// (the legacy ctrl proxy and, when registered, the E2E ctrl proxy).
+// are the headline — the WORST legacy ctrl-proxy phase across all controllers.
+// The end-to-end proxies report in their own E2E* fields, so an E2E failure
+// never turns the plane today's apps use red.
 type Status struct {
 	State   string // "disabled" | "connecting" | "connected" | "error"
 	LastErr string
-	// APIState is the worst api-plane proxy phase across controllers (legacy
-	// and E2E api proxies); "" when none is registered.
+	// APIState is the worst legacy api-proxy phase across controllers; "" when
+	// no api proxy is registered (APILocalAddr unset).
 	APIState string
+	// E2EState / E2ELastErr / E2EAPIState are the worst E2E ctrl-proxy phase
+	// (with its error) and the worst E2E api-proxy phase across the
+	// controllers that have E2E proxies; all "" when none has.
+	E2EState    string
+	E2ELastErr  string
+	E2EAPIState string
 	// Controllers is the per-GUID tunnel state (both the ctrl and api proxy of
 	// each controller). Empty when the tunnel is unconfigured.
 	Controllers map[string]ProxyStatus
 }
 
 // ProxyStatus is one controller's tunnel state, keyed by GUID in Status.
-// When the controller has end-to-end proxies, State folds in the E2E ctrl
-// proxy and APIState the E2E api proxy (worst of each pair).
 type ProxyStatus struct {
-	State    string // ctrl proxy phase
+	State    string // legacy ctrl proxy phase
 	LastErr  string
-	APIState string // api proxy phase ("" when no api proxy)
+	APIState string // legacy api proxy phase ("" when no api proxy)
+	// E2E ctrl / api proxy phases; all "" when the controller has no E2E
+	// proxies.
+	E2EState    string
+	E2ELastErr  string
+	E2EAPIState string
 }
 
 // Tunnel supervises one embedded frpc service.
@@ -362,35 +372,33 @@ func (t *frpTunnel) Status() Status {
 
 // statusOf folds every registered proxy's phase (looked up by proxy name) into
 // the headline and per-controller Status. Pure, so the folding is testable
-// without a live frp service. A controller's E2E proxies (when registered, see
-// hasE2E) fold into the same two slots as its legacy pair: the E2E ctrl proxy
-// into State, the E2E api proxy into APIState.
+// without a live frp service. The legacy pair and the E2E pair (when
+// registered, see hasE2E) are reported in separate slots.
 func statusOf(cfg *Config, lookup func(name string) Status) Status {
-	perGUID := make(map[string]ProxyStatus, len(cfg.Controllers))
-	headline := ""    // worst ctrl-plane phase across controllers
-	headlineErr := "" // the error of that worst proxy
-	apiHeadline := "" // worst api-plane phase
+	out := Status{Controllers: make(map[string]ProxyStatus, len(cfg.Controllers))}
 	hasAPI := cfg.APILocalAddr != ""
 	for _, spec := range cfg.Controllers {
 		ctrlSt := lookup(wire.CtrlProxyPrefix + spec.GUID)
-		apiState := ""
+		ps := ProxyStatus{State: ctrlSt.State, LastErr: ctrlSt.LastErr}
 		if hasAPI {
-			apiState = lookup("api-" + spec.GUID).State
+			ps.APIState = lookup("api-" + spec.GUID).State
 		}
 		if hasE2E(cfg, spec) {
-			if e := lookup(wire.E2ECtrlProxyPrefix + spec.GUID); worse(ctrlSt.State, e.State) != ctrlSt.State {
-				ctrlSt = e
-			}
-			apiState = worse(apiState, lookup(wire.E2EAPIProxyPrefix+spec.GUID).State)
+			e := lookup(wire.E2ECtrlProxyPrefix + spec.GUID)
+			ps.E2EState, ps.E2ELastErr = e.State, e.LastErr
+			ps.E2EAPIState = lookup(wire.E2EAPIProxyPrefix + spec.GUID).State
 		}
-		ps := ProxyStatus{State: ctrlSt.State, LastErr: ctrlSt.LastErr, APIState: apiState}
-		apiHeadline = worse(apiHeadline, apiState)
-		perGUID[spec.GUID] = ps
-		if next := worse(headline, ctrlSt.State); next != headline {
-			headline, headlineErr = next, ctrlSt.LastErr
+		out.Controllers[spec.GUID] = ps
+		if next := worse(out.State, ps.State); next != out.State {
+			out.State, out.LastErr = next, ps.LastErr
 		}
+		out.APIState = worse(out.APIState, ps.APIState)
+		if next := worse(out.E2EState, ps.E2EState); next != out.E2EState {
+			out.E2EState, out.E2ELastErr = next, ps.E2ELastErr
+		}
+		out.E2EAPIState = worse(out.E2EAPIState, ps.E2EAPIState)
 	}
-	return Status{State: headline, LastErr: headlineErr, APIState: apiHeadline, Controllers: perGUID}
+	return out
 }
 
 // hasE2E reports whether spec gets the two end-to-end https proxies: only when

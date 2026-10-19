@@ -503,3 +503,27 @@ func TestUnservedE2EURLsAreNotSurfaced(t *testing.T) {
 }
 
 func hasLabels(s tunnel.ProxySpec) bool { return s.E2ECtrlLabel != "" || s.E2EAPILabel != "" }
+
+// /v1/status carries the E2E proxies' phases in their own fields, headline
+// and per controller, next to the untouched legacy state.
+func TestStatusSurfacesE2EStateSeparately(t *testing.T) {
+	f, ft, token := e2eFixture(t)
+	f.e2eEnabled.Store(true)
+	g1 := putControllerOK(t, f, token, wire.ControllerConfig{Preset: "procon-ip", LanAddress: f.controllerAddr()})
+	ft.setStatus(tunnel.Status{
+		State: "connected", APIState: "connected",
+		E2EState: "error", E2ELastErr: "boom", E2EAPIState: "connecting",
+		Controllers: map[string]tunnel.ProxyStatus{g1: {
+			State: "connected", APIState: "connected",
+			E2EState: "error", E2ELastErr: "boom", E2EAPIState: "connecting",
+		}},
+	})
+	st := f.status(t, token)
+	want := wire.TunnelStatus{State: "connected", APIState: "connected", E2EState: "error", E2ELastError: "boom", E2EAPIState: "connecting"}
+	if st.Tunnel != want {
+		t.Errorf("headline tunnel = %+v, want %+v", st.Tunnel, want)
+	}
+	if cs := statusOfController(t, f, token, g1); cs.Tunnel != want {
+		t.Errorf("controller tunnel = %+v, want %+v", cs.Tunnel, want)
+	}
+}

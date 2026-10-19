@@ -106,10 +106,10 @@ func TestBuildServiceWithE2EProxies(t *testing.T) {
 	}
 }
 
-// The E2E proxies fold into the existing status vocabulary: the controller
-// plane's https proxy into State, the LAN-API one into APIState — headline and
-// per controller — so a failing E2E registration is never hidden.
-func TestStatusFoldsE2EProxies(t *testing.T) {
+// The E2E proxies get their own status slots: today's apps read State /
+// APIState for the legacy http plane they actually use, so a failing E2E
+// registration must not turn that red. Headline and per controller.
+func TestStatusReportsE2EProxiesSeparately(t *testing.T) {
 	cfg := e2eConfig()
 	phases := map[string]Status{
 		"ctrl-" + e2eGUID:   {State: "connected"},
@@ -118,27 +118,21 @@ func TestStatusFoldsE2EProxies(t *testing.T) {
 		"e2eapi-" + e2eGUID: {State: "connecting"},
 	}
 	got := statusOf(&cfg, func(name string) Status { return phases[name] })
-	if got.State != "error" || got.LastErr != "type [https] not supported" {
-		t.Errorf("headline = %q/%q, want the e2e ctrl error", got.State, got.LastErr)
+	if got.State != "connected" || got.LastErr != "" || got.APIState != "connected" {
+		t.Errorf("legacy headline = %q/%q/%q, want connected/\"\"/connected", got.State, got.LastErr, got.APIState)
 	}
-	if got.APIState != "connecting" {
-		t.Errorf("api headline = %q, want connecting (the e2e api proxy)", got.APIState)
+	if got.E2EState != "error" || got.E2ELastErr != "type [https] not supported" || got.E2EAPIState != "connecting" {
+		t.Errorf("E2E headline = %q/%q/%q", got.E2EState, got.E2ELastErr, got.E2EAPIState)
 	}
 	ps := got.Controllers[e2eGUID]
-	if ps.State != "error" || ps.APIState != "connecting" || ps.LastErr == "" {
-		t.Errorf("per-controller = %+v", ps)
+	if ps.State != "connected" || ps.APIState != "connected" || ps.LastErr != "" {
+		t.Errorf("per-controller legacy = %+v", ps)
+	}
+	if ps.E2EState != "error" || ps.E2EAPIState != "connecting" || ps.E2ELastErr == "" {
+		t.Errorf("per-controller E2E = %+v", ps)
 	}
 
-	// All four up → connected everywhere.
-	for k := range phases {
-		phases[k] = Status{State: "connected"}
-	}
-	got = statusOf(&cfg, func(name string) Status { return phases[name] })
-	if got.State != "connected" || got.APIState != "connected" {
-		t.Errorf("all connected → %+v", got)
-	}
-
-	// Without labels the E2E names are never consulted.
+	// Without labels the E2E names are never consulted and the slots stay empty.
 	plain := testConfig()
 	plain.APILocalAddr = "127.0.0.1:8480"
 	got = statusOf(&plain, func(name string) Status {
@@ -147,7 +141,7 @@ func TestStatusFoldsE2EProxies(t *testing.T) {
 		}
 		return Status{State: "connected"}
 	})
-	if got.State != "connected" {
+	if got.State != "connected" || got.E2EState != "" || got.E2EAPIState != "" || got.Controllers[e2eGUID].E2EState != "" {
 		t.Errorf("plain status = %+v", got)
 	}
 }

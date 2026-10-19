@@ -2163,7 +2163,10 @@ func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 		singular = controllers[0]
 	}
 
-	tunnelStatus := wire.TunnelStatus{State: ts.State, LastError: ts.LastErr, APIState: ts.APIState}
+	tunnelStatus := wire.TunnelStatus{
+		State: ts.State, LastError: ts.LastErr, APIState: ts.APIState,
+		E2EState: ts.E2EState, E2ELastError: ts.E2ELastErr, E2EAPIState: ts.E2EAPIState,
+	}
 	if msg := parkedReason(st); msg != "" {
 		// Parked (poolpilot-cloud#242): the tunnel reads "disabled"; say why in
 		// the existing last_error field — no shape change.
@@ -2221,7 +2224,10 @@ func (s *Server) controllerStatus(st state.State, c state.Controller, ps tunnel.
 		// serves (servedE2EURLs).
 		RemoteE2EURL:    e2eCtrl,
 		RemoteAPIE2EURL: e2eAPI,
-		Tunnel:          wire.TunnelStatus{State: tunnelState, LastError: ps.LastErr, APIState: ps.APIState},
+		Tunnel: wire.TunnelStatus{
+			State: tunnelState, LastError: ps.LastErr, APIState: ps.APIState,
+			E2EState: ps.E2EState, E2ELastError: ps.E2ELastErr, E2EAPIState: ps.E2EAPIState,
+		},
 	}
 	if msg := parkedReason(st); msg != "" {
 		cs.Tunnel.LastError = msg

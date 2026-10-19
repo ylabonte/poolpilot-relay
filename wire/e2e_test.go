@@ -73,3 +73,21 @@ func TestE2ESubdomainSuffixes(t *testing.T) {
 		t.Fatalf("proxy prefixes = %q, %q", E2ECtrlProxyPrefix, E2EAPIProxyPrefix)
 	}
 }
+
+// The E2E proxies' phases ride in their own additive TunnelStatus fields, so
+// the legacy state/api_state keep describing only the plane today's apps use.
+func TestTunnelStatusE2EFields(t *testing.T) {
+	raw, err := json.Marshal(TunnelStatus{State: "connected", E2EState: "error", E2EAPIState: "connecting", E2ELastError: "boom"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []string{`"e2e_state":"error"`, `"e2e_api_state":"connecting"`, `"e2e_last_error":"boom"`} {
+		if !strings.Contains(string(raw), w) {
+			t.Errorf("%s lacks %s", raw, w)
+		}
+	}
+	raw, _ = json.Marshal(TunnelStatus{State: "connected"})
+	if strings.Contains(string(raw), "e2e") {
+		t.Errorf("zero E2E status leaks: %s", raw)
+	}
+}

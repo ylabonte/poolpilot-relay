@@ -288,6 +288,14 @@ type TunnelStatus struct {
 	// APIState mirrors State for the second (LAN-API) proxy; "" when the tunnel
 	// is disabled. Additive — apps that ignore it are unaffected.
 	APIState string `json:"api_state,omitempty"`
+	// E2EState / E2EAPIState are the end-to-end plane's proxies
+	// (poolpilot-relay#80) — same vocabulary as State, worst-of for the
+	// headline — and E2ELastError the E2E ctrl proxy's error. Reported apart
+	// from State/APIState, which keep describing only the legacy plane. All
+	// absent while no controller has E2E proxies. Additive.
+	E2EState     string `json:"e2e_state,omitempty"`
+	E2EAPIState  string `json:"e2e_api_state,omitempty"`
+	E2ELastError string `json:"e2e_last_error,omitempty"`
 }
 
 type ControllerStatus struct {
