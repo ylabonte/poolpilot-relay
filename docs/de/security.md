@@ -86,6 +86,14 @@ aufbaut und offen hält.
   und die Cloud reicht die Anfrage durch den Tunnel weiter. Jede Strecke ist
   verschlüsselt, aber es ist keine Ende-zu-Ende-Verschlüsselung: Die Cloud
   leitet deine Anfragen weiter.
+- **Durchgereicht, nicht aufbewahrt.** Die Cloud reicht den Tunnel-Verkehr nur
+  durch. Deine Anfragen und die Antworten der Steuerung sind dort nur für den
+  Moment des Weiterleitens sichtbar — sie werden weder gespeichert noch
+  ausgewertet. Der Web-Eingang des Tunnels führt kein Zugriffsprotokoll, es
+  entsteht also keine Spur, was du wann mit deinem Pool gemacht hast. Der
+  Tunnel-Server meldet der Cloud nur, *dass* sich ein Relay verbunden hat oder
+  offline gegangen ist, nie, was hindurchgeht. Protokolliert werden nur Fehler,
+  in kleinen, rotierenden Logs.
 
 Im lokalen Netzwerk spricht die App HTTPS mit dem Relay und pinnt sein
 Zertifikat: Beim Koppeln lernt die App den Fingerabdruck des Relays und vertraut

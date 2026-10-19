@@ -83,6 +83,13 @@ PoolPilot cloud and keeps open.
 - **What the cloud sees.** Your phone talks HTTPS to the PoolPilot cloud, and
   the cloud passes the request on through the tunnel. Every leg is encrypted,
   but it is not end-to-end encryption: the cloud forwards your requests.
+- **Forwarded, not kept.** The cloud only passes tunnel traffic through. Your
+  requests and the controller's answers are visible there just for the moment
+  of forwarding — they are neither stored nor analysed. The tunnel's web
+  front end keeps no access log, so there is no per-request trail of what you
+  did with your pool. The tunnel server only tells the cloud *that* a Relay
+  connected or went offline, never what passes through. The only logs are
+  error logs, kept small and rotated.
 
 On your local network, the app talks HTTPS to the Relay and pins its
 certificate: at pairing the app learns the Relay's fingerprint and from then on
