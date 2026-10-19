@@ -9,9 +9,10 @@
   controller to the <a href="https://poolpilot.eu">PoolPilot</a> apps.
 </p>
 
-The edge agent (Go) talks to your **ProCon.IP**, **VIOLET** or **BADU Blue** pool controller on
-the local network and bridges it to the PoolPilot apps — directly over your LAN
-at home, and through a secure tunnel to the PoolPilot cloud when you're away.
+The edge agent (Go) talks to your **ProCon.IP**, **VIOLET** or **BADU Blue**
+pool controller on the local network and bridges it to the PoolPilot apps —
+directly over your LAN at home, and through a secure tunnel to the PoolPilot
+cloud when you're away.
 
 📖 **Documentation:** [English](docs/en/index.md) · **[🇩🇪 Deutsch](docs/de/index.md)**
 &nbsp;— installation, pairing, commands, configuration, self-update, troubleshooting.
