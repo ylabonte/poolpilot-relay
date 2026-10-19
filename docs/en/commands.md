@@ -25,9 +25,12 @@ when the app doesn't discover the Relay automatically:
 
 1. a **QR code** for a pairing link. Scan it with the PoolPilot app, or with
    your phone's camera, which then opens the app;
-2. the **same link as text**, to paste into the app;
-3. the Relay's **fingerprint**, for manual entry if you can neither scan nor
-   paste.
+2. the **same link as text**. Open it on your phone — tap it in a message
+   you sent yourself, or open it in the phone's browser — and it opens the
+   PoolPilot app, just like the camera does;
+3. the Relay's **fingerprint**, to type into the app's manual entry if you can
+   neither scan nor open the link. Manual entry accepts only the fingerprint
+   (`sha256/…`), not the link.
 
 ```bash
 sudo poolpilot-relay show-pairing

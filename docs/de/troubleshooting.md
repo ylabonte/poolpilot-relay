@@ -99,9 +99,10 @@ Zeige den Kopplungscode am Gerät an und koppel aus der App:
 sudo poolpilot-relay show-pairing
 ```
 
-Scanne den QR-Code mit der PoolPilot-App oder der Kamera deines Telefons, füge
-den ausgegebenen Link in die App ein oder tippe den Fingerabdruck ein. Der
-Befehl ist schreibgeschützt und jederzeit gefahrlos aufrufbar.
+Scanne den QR-Code mit der PoolPilot-App oder der Kamera deines Telefons, öffne
+den ausgegebenen Link auf dem Telefon oder tippe den Fingerabdruck in die
+manuelle Eingabe der App. Der Befehl ist schreibgeschützt und jederzeit
+gefahrlos aufrufbar.
 
 ## Besitzer- und Mitglieds-Telefone
 

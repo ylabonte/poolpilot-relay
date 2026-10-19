@@ -94,9 +94,9 @@ Show the pairing code on the device and pair from the app:
 sudo poolpilot-relay show-pairing
 ```
 
-Scan the QR code with the PoolPilot app or your phone's camera, paste the
-printed link into the app, or type in the fingerprint. This is read‑only and
-safe to run any time.
+Scan the QR code with the PoolPilot app or your phone's camera, open the
+printed link on your phone, or type the fingerprint into the app's manual
+entry. This is read‑only and safe to run any time.
 
 ## Owner and member phones
 
