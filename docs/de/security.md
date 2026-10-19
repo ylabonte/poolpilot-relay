@@ -80,8 +80,8 @@ aufbaut und offen hält.
   kommt, braucht das Zugangstoken eines Telefons, das du gekoppelt hast. Ohne
   lehnt das Relay sie ab — die Webadresse deines Relays zu kennen reicht nicht.
   Das gilt auch für die eigene Weboberfläche deiner Poolsteuerung. Die einzige
-  Ausnahme ist eine kleine öffentliche Info-Seite (Version des Relays, ob es
-  gekoppelt ist, und sein öffentlicher Fingerabdruck), die nichts verrät, womit
+  Ausnahme ist eine kleine öffentliche Info-Seite (etwa Version und Kennung des
+  Relays, ob es gekoppelt ist, und sein öffentlicher Fingerabdruck), die nichts verrät, womit
   jemand hineinkäme.
 - **Das Heikle bleibt zu Hause.** Koppeln sowie Werks- und Haushaltsreset
   funktionieren nur im lokalen Netzwerk. Durch den Tunnel lehnt das Relay sie

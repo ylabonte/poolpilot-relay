@@ -78,8 +78,8 @@ PoolPilot cloud and keeps open.
   needs the access token of a phone you paired. Without one, the Relay
   refuses it — knowing your Relay's web address is not enough. The same goes
   for your controller's own web interface. The one exception is a small
-  public info page (the Relay's version, whether it is paired, and its public
-  fingerprint), which reveals nothing that would let anyone in.
+  public info page (such as the Relay's version, its ID, whether it is paired,
+  and its public fingerprint), which reveals nothing that would let anyone in.
 - **The dangerous things stay at home.** Pairing and the factory and household
   resets work only on your local network. Through the tunnel the Relay refuses
   them, even from a paired phone.
