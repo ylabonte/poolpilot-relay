@@ -108,19 +108,33 @@ func TestLeafSPKIEqualsLANFingerprint(t *testing.T) {
 	}
 }
 
-// TLS 1.2 is the floor (Android 8/9 OkHttp); TLS 1.1 is refused. The Go
-// toolchain this builds with no longer serves TLS < 1.2 at all (the
-// tls10server GODEBUG was removed in Go 1.27), so the listener's own
-// MinVersion is belt and braces; this pins the observable either way.
+// TLS 1.2 is the floor (Android 8/9 OkHttp); TLS 1.1 is refused, and it is
+// the listener's own MinVersion that refuses it. Go's server default is
+// already TLS 1.2, but on Go 1.26 — what go.mod, CI, the release build and the
+// Docker image use — an operator's GODEBUG=tls10server=1 re-enables 1.0/1.1
+// for any server without a MinVersion. Setting it here makes a missing
+// MinVersion observable on 1.26; the setting was removed in Go 1.27, where it
+// is a no-op and the default alone refuses. (Not a //go:debug directive: that
+// fails the build on 1.27.)
+//
+// The refusal is checked at the handshake, not through an HTTP request: an
+// HTTP/2 client would fail on a TLS 1.1 session for its own reasons (h2
+// requires 1.2), which would pass this test without the floor.
 func TestTLSVersionFloor(t *testing.T) {
+	t.Setenv("GODEBUG", "tls10server=1")
 	addr := startServer(t, &Server{Cert: lanCert(t), API: tagHandler("api"), Ctrl: tagHandler("ctrl")})
 
 	if resp, _ := get(t, client(addr, tls.VersionTLS12, tls.VersionTLS12), guid+"-e2e.remote.example", "/"); resp.StatusCode != http.StatusOK {
 		t.Fatalf("TLS 1.2 = %d, want 200", resp.StatusCode)
 	}
-	_, err := client(addr, tls.VersionTLS10, tls.VersionTLS11).Get("https://" + guid + "-e2e.remote.example/")
+	conn, err := tls.Dial("tcp", addr, &tls.Config{ //nolint:gosec // the test offers old versions on purpose
+		InsecureSkipVerify: true, MinVersion: tls.VersionTLS10, MaxVersion: tls.VersionTLS11,
+		ServerName: guid + "-e2e.remote.example",
+	})
 	if err == nil {
-		t.Fatal("a TLS 1.1 client was accepted")
+		v := conn.ConnectionState().Version
+		_ = conn.Close()
+		t.Fatalf("a TLS 1.0/1.1-only client completed a handshake (version %#x)", v)
 	}
 }
 
