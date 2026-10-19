@@ -79,14 +79,20 @@ aufbaut und offen hält.
 - **Nur für gekoppelte Telefone.** Auch eine Anfrage, die durch den Tunnel
   kommt, braucht das Zugangstoken eines Telefons, das du gekoppelt hast. Ohne
   lehnt das Relay sie ab — die Webadresse deines Relays zu kennen reicht nicht.
-  Das gilt auch für die eigene Weboberfläche deiner Poolsteuerung.
+  Das gilt auch für die eigene Weboberfläche deiner Poolsteuerung. Die einzige
+  Ausnahme ist eine kleine öffentliche Info-Seite (Version des Relays, ob es
+  gekoppelt ist, und sein öffentlicher Fingerabdruck), die nichts verrät, womit
+  jemand hineinkäme.
 - **Das Heikle bleibt zu Hause.** Koppeln sowie Werks- und Haushaltsreset
   funktionieren nur im lokalen Netzwerk. Durch den Tunnel lehnt das Relay sie
   ab, selbst von einem gekoppelten Telefon.
 - **Was die Cloud sieht.** Dein Telefon spricht HTTPS mit der PoolPilot-Cloud,
-  und die Cloud reicht die Anfrage durch den Tunnel weiter. Jede Strecke ist
-  verschlüsselt, aber es ist keine Ende-zu-Ende-Verschlüsselung: Die Cloud
-  leitet deine Anfragen weiter.
+  und die Cloud reicht die Anfrage durch den Tunnel weiter. Beide Strecken
+  durchs Internet — vom Telefon zur Cloud und der Tunnel von der Cloud zu
+  deinem Relay — sind verschlüsselt, aber es ist keine
+  Ende-zu-Ende-Verschlüsselung: Die Cloud leitet deine Anfragen weiter. Die
+  letzte Strecke, vom Relay zu deiner Poolsteuerung im Heimnetz, ist oft
+  unverschlüsseltes HTTP, weil viele Steuerungen nur das sprechen.
 - **Durchgereicht, nicht aufbewahrt.** Die Cloud reicht den Tunnel-Verkehr nur
   durch. Deine Anfragen und die Antworten der Steuerung sind dort nur für den
   Moment des Weiterleitens sichtbar — sie werden weder gespeichert noch

@@ -77,13 +77,18 @@ PoolPilot cloud and keeps open.
 - **Only for paired phones.** A request that comes through the tunnel still
   needs the access token of a phone you paired. Without one, the Relay
   refuses it — knowing your Relay's web address is not enough. The same goes
-  for your controller's own web interface.
+  for your controller's own web interface. The one exception is a small
+  public info page (the Relay's version, whether it is paired, and its public
+  fingerprint), which reveals nothing that would let anyone in.
 - **The dangerous things stay at home.** Pairing and the factory and household
   resets work only on your local network. Through the tunnel the Relay refuses
   them, even from a paired phone.
 - **What the cloud sees.** Your phone talks HTTPS to the PoolPilot cloud, and
-  the cloud passes the request on through the tunnel. Every leg is encrypted,
-  but it is not end-to-end encryption: the cloud forwards your requests.
+  the cloud passes the request on through the tunnel. Both internet legs —
+  phone to cloud, and the tunnel from the cloud to your Relay — are
+  encrypted, but it is not end-to-end encryption: the cloud forwards your
+  requests. The last hop, from the Relay to your controller on your home
+  network, is often plain HTTP, because that is what many controllers speak.
 - **Forwarded, not kept.** The cloud only passes tunnel traffic through. Your
   requests and the controller's answers are visible there just for the moment
   of forwarding — they are neither stored nor analysed. The tunnel's web
