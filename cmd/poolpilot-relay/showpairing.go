@@ -75,10 +75,11 @@ func runShowPairing(args []string) int {
 
 	qrterminal.GenerateHalfBlock(pairURL, qrterminal.M, os.Stdout)
 	fmt.Println()
-	fmt.Println("Scan with your phone's camera, or paste this URL into the PoolPilot app:")
+	fmt.Println("Scan with the PoolPilot app or your phone's camera, or open this URL on")
+	fmt.Println("your phone (it opens the PoolPilot app):")
 	fmt.Println("  " + pairURL)
 	fmt.Println()
-	fmt.Println("Manual-entry fingerprint (if you can't scan or paste):")
+	fmt.Println("Manual-entry fingerprint (if you can't scan or open the link):")
 	fmt.Println("  " + fp)
 
 	return 0
