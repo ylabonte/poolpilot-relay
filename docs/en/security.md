@@ -96,9 +96,10 @@ PoolPilot cloud and keeps open.
   did with your pool. The tunnel server only tells the cloud *that* a Relay
   connected or went offline, never what passes through; the cloud keeps just
   the latest of those times, for the online status in the app. Only warnings
-  and errors are logged. Such an entry can contain the internet address of a
-  connecting Relay, but the logs are small and rotating, so they overwrite it
-  after a short time.
+  and errors are logged — routine logins and traffic are not. A warning about a
+  rejected or malformed connection can contain the internet address it came
+  from, but the logs are small and rotating, so they overwrite it after a
+  short time.
 
 On your local network, the app talks HTTPS to the Relay and pins its
 certificate: at pairing the app learns the Relay's fingerprint and from then on

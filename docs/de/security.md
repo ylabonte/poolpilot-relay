@@ -101,9 +101,10 @@ aufbaut und offen hält.
   Tunnel-Server meldet der Cloud nur, *dass* sich ein Relay verbunden hat oder
   offline gegangen ist, nie, was hindurchgeht; die Cloud behält davon nur den
   jeweils letzten Zeitpunkt, für die Online-Anzeige in der App. Protokolliert
-  werden nur Warnungen und Fehler. Ein solcher Eintrag kann die Internetadresse
-  eines Relays enthalten, das sich verbindet, aber die Logs sind klein und
-  rotieren, sodass er nach kurzer Zeit überschrieben wird.
+  werden nur Warnungen und Fehler — normale Anmeldungen und der Verkehr selbst
+  nicht. Eine Warnung zu einer abgelehnten oder fehlerhaften Verbindung kann
+  die Internetadresse enthalten, von der sie kam, aber die Logs sind klein und
+  rotieren, sodass sie nach kurzer Zeit überschrieben wird.
 
 Im lokalen Netzwerk spricht die App HTTPS mit dem Relay und pinnt sein
 Zertifikat: Beim Koppeln lernt die App den Fingerabdruck des Relays und vertraut
