@@ -14,7 +14,8 @@ same things apply:
   your household from the app; until it is paired it serves only an
   unauthenticated info endpoint (`/v1/info`) plus the LAN-only pairing endpoint —
   nothing else.
-- A **ProCon.IP**, **VIOLET** or **BADU Blue** controller reachable on your local network.
+- A **ProCon.IP**, **VIOLET** or **BADU Blue** controller reachable on your
+  local network.
 - Home Assistant OS or Supervised (apps require the Supervisor).
 
 ## Install

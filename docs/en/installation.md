@@ -6,8 +6,8 @@
 
 - A small always‑on computer running **Linux with systemd** — a Raspberry Pi is
   the typical choice, but any SBC or x86 box works.
-- It must be on the **same local network** as your ProCon.IP or VIOLET
-  controller.
+- It must be on the **same local network** as your ProCon.IP, VIOLET or
+  BADU Blue controller.
 - `curl` **or** `wget` (Raspberry Pi OS ships both).
 
 **Supported CPU architectures:** 64‑bit ARM (`arm64`, e.g. Raspberry Pi 3/4/5),

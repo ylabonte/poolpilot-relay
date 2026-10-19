@@ -17,8 +17,8 @@ für dich verwaltet.
 
 - Ein **PoolPilot-Konto** und die iOS- oder Android-App — das Relay wird aus der
   App mit deinem Haushalt gekoppelt.
-- Eine **ProCon.IP**- oder **VIOLET**-Steuerung, erreichbar in deinem lokalen
-  Netzwerk.
+- Eine **ProCon.IP**-, **VIOLET**- oder **BADU-Blue**-Steuerung, erreichbar in
+  deinem lokalen Netzwerk.
 - Home Assistant OS oder Supervised auf einem 64-Bit-System (`aarch64` oder
   `amd64`).
 

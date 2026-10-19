@@ -7,8 +7,8 @@
 - Einen kleinen, dauerhaft laufenden Computer mit **Linux und systemd** — ein
   Raspberry Pi ist die typische Wahl, aber jedes SBC oder jeder x86-Rechner
   funktioniert.
-- Er muss im **selben lokalen Netzwerk** wie deine ProCon.IP- oder
-  VIOLET-Steuerung sein.
+- Er muss im **selben lokalen Netzwerk** wie deine ProCon.IP-, VIOLET- oder
+  BADU-Blue-Steuerung sein.
 - `curl` **oder** `wget` (Raspberry Pi OS bringt beides mit).
 
 **Unterstützte CPU-Architekturen:** 64-Bit-ARM (`arm64`, z. B. Raspberry Pi
