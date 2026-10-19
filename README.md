@@ -5,11 +5,11 @@
 <h1 align="center">PoolPilot Relay</h1>
 
 <p align="center">
-  The edge agent (Go) that bridges your <b>ProCon.IP</b> or <b>VIOLET</b> pool
+  The edge agent (Go) that bridges your <b>ProCon.IP</b>, <b>VIOLET</b> or <b>BADU Blue</b> pool
   controller to the <a href="https://poolpilot.eu">PoolPilot</a> apps.
 </p>
 
-The edge agent (Go) talks to your **ProCon.IP** or **VIOLET** pool controller on
+The edge agent (Go) talks to your **ProCon.IP**, **VIOLET** or **BADU Blue** pool controller on
 the local network and bridges it to the PoolPilot apps — directly over your LAN
 at home, and through a secure tunnel to the PoolPilot cloud when you're away.
 
