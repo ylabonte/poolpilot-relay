@@ -15,3 +15,5 @@ This documentation is available in two languages. Pick yours:
 | Configuration / Konfiguration | [configuration](en/configuration.md) | [configuration](de/configuration.md) |
 | Self-update / Selbst-Update | [self-update](en/self-update.md) | [self-update](de/self-update.md) |
 | Troubleshooting / Fehlerbehebung | [troubleshooting](en/troubleshooting.md) | [troubleshooting](de/troubleshooting.md) |
+| Home Assistant app / Home-Assistant-App | [home-assistant](en/home-assistant.md) | [home-assistant](de/home-assistant.md) |
+| Security & privacy / Sicherheit & Datenschutz | [security](en/security.md) | [security](de/security.md) |
