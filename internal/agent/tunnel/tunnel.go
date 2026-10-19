@@ -98,7 +98,9 @@ type Status struct {
 	APIState string
 	// E2EState / E2ELastErr / E2EAPIState are the worst E2E ctrl-proxy phase
 	// (with its error) and the worst E2E api-proxy phase across the
-	// controllers that have E2E proxies; all "" when none has.
+	// controllers that have E2E proxies — the service-level state and error
+	// when no frp service is running; all "" only while no controller has
+	// E2E proxies.
 	E2EState    string
 	E2ELastErr  string
 	E2EAPIState string
@@ -112,7 +114,8 @@ type ProxyStatus struct {
 	State    string // legacy ctrl proxy phase
 	LastErr  string
 	APIState string // legacy api proxy phase ("" when no api proxy)
-	// E2E ctrl / api proxy phases; all "" when the controller has no E2E
+	// E2E ctrl / api proxy phases (the service-level state when no frp
+	// service is running); all "" only while the controller has no E2E
 	// proxies.
 	E2EState    string
 	E2ELastErr  string
@@ -361,10 +364,11 @@ func (t *frpTunnel) Status() Status {
 		// woken to build it (the first controller was just added, or boot ran
 		// Configure before the supervisor started Run) — "connecting", not a
 		// problem state — or the build/run recorded an error.
-		if t.lastErr == "" {
-			return Status{State: "connecting"}
+		st := Status{State: "connecting"}
+		if t.lastErr != "" {
+			st = Status{State: "error", LastErr: t.lastErr}
 		}
-		return Status{State: "error", LastErr: t.lastErr}
+		return withServiceStateMirroredIntoE2E(t.cfg, st)
 	}
 
 	return statusOf(t.cfg, t.proxyState)
@@ -399,6 +403,26 @@ func statusOf(cfg *Config, lookup func(name string) Status) Status {
 		out.E2EAPIState = worse(out.E2EAPIState, ps.E2EAPIState)
 	}
 	return out
+}
+
+// withServiceStateMirroredIntoE2E copies the service-level state of a tunnel
+// without a running frp service (not built yet, or failed) into the E2E slots
+// of every controller that has E2E proxies, and into the E2E headline — so the
+// E2E fields are absent only while no controller has E2E proxies, never
+// merely because the whole service is down. The legacy per-controller slots
+// are left empty, as they were before E2E existed.
+func withServiceStateMirroredIntoE2E(cfg *Config, st Status) Status {
+	for _, spec := range cfg.Controllers {
+		if !hasE2E(cfg, spec) {
+			continue
+		}
+		if st.Controllers == nil {
+			st.Controllers = make(map[string]ProxyStatus, len(cfg.Controllers))
+			st.E2EState, st.E2ELastErr, st.E2EAPIState = st.State, st.LastErr, st.State
+		}
+		st.Controllers[spec.GUID] = ProxyStatus{E2EState: st.State, E2ELastErr: st.LastErr, E2EAPIState: st.State}
+	}
+	return st
 }
 
 // hasE2E reports whether spec gets the two end-to-end https proxies: only when

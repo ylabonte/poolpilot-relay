@@ -597,3 +597,23 @@ func TestBackfillE2ENeverWritesAControllerChangedMidRequest(t *testing.T) {
 		})
 	}
 }
+
+// With the real (never-run) tunnel the frp service is not built yet: a
+// controller with E2E proxies still reports E2E state — the mirrored
+// service-level "connecting" — headline and per controller, while its legacy
+// per-controller state reads "disabled" exactly as before.
+func TestStatusE2EStateWhileTheServiceIsDown(t *testing.T) {
+	f := newFixture(t)
+	f.srv.E2EAddr = testE2EAddr
+	token := f.pair(t)
+	f.e2eEnabled.Store(true)
+	g1 := putControllerOK(t, f, token, wire.ControllerConfig{Preset: "procon-ip", LanAddress: f.controllerAddr()})
+	st := f.status(t, token)
+	if st.Tunnel.E2EState != "connecting" || st.Tunnel.E2EAPIState != "connecting" {
+		t.Errorf("headline = %+v, want the service state mirrored into E2E", st.Tunnel)
+	}
+	cs := statusOfController(t, f, token, g1)
+	if cs.Tunnel.E2EState != "connecting" || cs.Tunnel.E2EAPIState != "connecting" || cs.Tunnel.State != "disabled" {
+		t.Errorf("controller tunnel = %+v", cs.Tunnel)
+	}
+}

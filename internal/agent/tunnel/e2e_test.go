@@ -145,3 +145,43 @@ func TestStatusReportsE2EProxiesSeparately(t *testing.T) {
 		t.Errorf("plain status = %+v", got)
 	}
 }
+
+// With the frp service down or not yet built, a configured E2E plane is not
+// "absent": the service-level state and error are mirrored into the E2E
+// fields, headline and per controller, so the E2E fields are absent only while
+// no controller has E2E proxies. The legacy per-controller slots stay as they
+// were (empty → "disabled" in /v1/status).
+func TestStatusMirrorsServiceStateIntoE2EWhenServiceDown(t *testing.T) {
+	tn := New()
+	if err := tn.Configure(e2eConfig()); err != nil {
+		t.Fatal(err)
+	}
+	got := tn.Status()
+	if got.State != "connecting" || got.E2EState != "connecting" || got.E2EAPIState != "connecting" || got.E2ELastErr != "" {
+		t.Errorf("before the first build = %+v, want connecting mirrored into E2E", got)
+	}
+	ps := got.Controllers[e2eGUID]
+	if ps.E2EState != "connecting" || ps.E2EAPIState != "connecting" || ps.State != "" || ps.APIState != "" {
+		t.Errorf("per-controller before the first build = %+v", ps)
+	}
+
+	tn.(*frpTunnel).mu.Lock()
+	tn.(*frpTunnel).lastErr = "tunnel: build frp service: boom"
+	tn.(*frpTunnel).mu.Unlock()
+	got = tn.Status()
+	if got.State != "error" || got.E2EState != "error" || got.E2EAPIState != "error" || got.E2ELastErr != "tunnel: build frp service: boom" {
+		t.Errorf("service error = %+v, want it mirrored into E2E", got)
+	}
+	if ps := got.Controllers[e2eGUID]; ps.E2EState != "error" || ps.E2ELastErr == "" || ps.E2EAPIState != "error" {
+		t.Errorf("per-controller service error = %+v", ps)
+	}
+
+	// No E2E proxies configured → the E2E fields stay absent.
+	plain := New()
+	if err := plain.Configure(testConfig()); err != nil {
+		t.Fatal(err)
+	}
+	if got := plain.Status(); got.E2EState != "" || got.E2EAPIState != "" || len(got.Controllers) != 0 {
+		t.Errorf("without E2E proxies = %+v, want no E2E fields and no per-controller entries", got)
+	}
+}
