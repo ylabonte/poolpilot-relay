@@ -39,19 +39,26 @@ für dich verwaltet.
 
 ## Konfiguration
 
-Eine Einstellung, im Reiter **Konfiguration** der App: **`lan_port`**
-(Standard **8443**) — der Port, auf dem die gepinnte Kopplungs-API im
-Host-Netzwerk lauscht. Ändere ihn nur, wenn eine andere App bereits 8443 belegt
-(im Log steht dann `bind: address already in use`). **Setze ihn vor dem
-Koppeln.** Ein Handy, das sich danach koppelt, übernimmt den angekündigten Port
-automatisch per mDNS; ein bereits gekoppeltes Handy behält den Port, mit dem es
-gekoppelt wurde, und löst ihn nicht neu auf — ein Wechsel bei einem bereits
-gekoppelten Relay unterbricht daher den direkten LAN-Pfad, die App fällt auf den
-Cloud-Tunnel zurück, bis du neu koppelst. Ein erneutes Koppeln eines bereits
-gekoppelten Relays läuft über Wiederherstellung/Einladung, nicht über frisches
-Koppeln: der **Besitzer** koppelt mit dem einmaligen Wiederherstellungscode neu
-(siehe **Wiederherstellung / Fortgeschritten** unten), andere Handys über eine
-neue **Einladung**.
+Zwei Einstellungen, im Reiter **Konfiguration** der App:
+
+- **`lan_port`** (Standard **8443**) — der Port, auf dem die gepinnte
+  Kopplungs-API im Host-Netzwerk lauscht. Ändere ihn nur, wenn eine andere App
+  bereits 8443 belegt (im Log steht dann `bind: address already in use`).
+  **Setze ihn vor dem Koppeln.** Ein Handy, das sich danach koppelt, übernimmt
+  den angekündigten Port automatisch per mDNS; ein bereits gekoppeltes Handy
+  behält den Port, mit dem es gekoppelt wurde, und löst ihn nicht neu auf — ein
+  Wechsel bei einem bereits gekoppelten Relay unterbricht daher den direkten
+  LAN-Pfad, die App fällt auf den Cloud-Tunnel zurück, bis du neu koppelst. Ein
+  erneutes Koppeln eines bereits gekoppelten Relays läuft über
+  Wiederherstellung/Einladung, nicht über frisches Koppeln: der **Besitzer**
+  koppelt mit dem einmaligen Wiederherstellungscode neu (siehe
+  **Wiederherstellung / Fortgeschritten** unten), andere Handys über eine neue
+  **Einladung**.
+- **Zusätzliche mDNS-Logs** (`mdns_verbose_logs`, Standard **aus**) — die
+  Discovery-Bibliothek schreibt bei jeder Ankündigung harmlose RFC-6762-Hinweise
+  ins Log; standardmäßig sind sie ausgeblendet, damit das Log lesbar bleibt.
+  Schalte das nur zum Debuggen der Discovery ein (siehe
+  [Fehlerbehebung](troubleshooting.md#wiederkehrende-mdns-rfc6762-logzeilen)).
 
 Alles Übrige ist fest: Die App spricht mit der PoolPilot-Cloud und legt ihre
 Identität auf ihrem eigenen persistenten Volume ab; gekoppelt wird aus der

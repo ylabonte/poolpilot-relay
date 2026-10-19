@@ -36,17 +36,23 @@ features — just running in a container the Home Assistant Supervisor manages.
 
 ## Configuration
 
-One setting, on the app's **Configuration** tab: **`lan_port`** (default
-**8443**) — the port the pinned pairing API binds on the host network. Change it
-only if another app already uses 8443 (the log then shows `bind: address already
-in use`). **Set it before pairing.** A phone that pairs afterwards picks the
-advertised port up over mDNS automatically; an already-paired phone keeps the
-port it paired on and does not re-resolve it, so changing the port on an
-already-paired relay drops the direct LAN path — the app falls back to the cloud
-tunnel until you re-pair. Re-pairing an already-paired relay goes through
-recovery/invite, not a fresh pairing: the **owner** re-pairs with the one-time
-recovery code (see **Recovery / advanced** below), other phones via a new
-**invite**.
+Two settings, on the app's **Configuration** tab:
+
+- **`lan_port`** (default **8443**) — the port the pinned pairing API binds on
+  the host network. Change it only if another app already uses 8443 (the log
+  then shows `bind: address already in use`). **Set it before pairing.** A
+  phone that pairs afterwards picks the advertised port up over mDNS
+  automatically; an already-paired phone keeps the port it paired on and does
+  not re-resolve it, so changing the port on an already-paired relay drops the
+  direct LAN path — the app falls back to the cloud tunnel until you re-pair.
+  Re-pairing an already-paired relay goes through recovery/invite, not a fresh
+  pairing: the **owner** re-pairs with the one-time recovery code (see
+  **Recovery / advanced** below), other phones via a new **invite**.
+- **Additional mDNS logs** (`mdns_verbose_logs`, default **off**) — the
+  discovery library prints harmless RFC 6762 notices on every announcement;
+  they are hidden by default so the log stays readable. Turn this on only to
+  debug discovery (see
+  [Troubleshooting](troubleshooting.md#repeated-mdns-rfc6762-log-lines)).
 
 Everything else is fixed: the app talks to the PoolPilot cloud and stores its
 identity on its own persistent volume; pairing happens from the phone app.
