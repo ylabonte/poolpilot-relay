@@ -11,8 +11,8 @@ Raspberry Pi for it.
 This app runs the **same agent** as a standalone PoolPilot Relay install, so the
 same things apply:
 
-- A **PoolPilot account with Pro** and the iOS or Android app. The relay is paired to
-  your household from the app; until it is paired it serves only an
+- A **PoolPilot account with Pro** and the iOS or Android app. The relay is
+  paired to your household from the app; until it is paired it serves only an
   unauthenticated info endpoint (`/v1/info`) plus the LAN-only pairing endpoint —
   nothing else.
 - A **ProCon.IP**, **VIOLET** or **BADU Blue** controller reachable on your
