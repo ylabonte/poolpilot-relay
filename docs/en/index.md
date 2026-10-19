@@ -4,8 +4,8 @@
 
 The PoolPilot Relay is a small background program (the **edge agent**) that runs
 on a device in your home — typically a Raspberry Pi or a similar small computer.
-It talks to your **ProCon.IP**, **VIOLET** or **BADU Blue** pool controller over your local
-network and bridges it to the PoolPilot apps:
+It talks to your **ProCon.IP**, **VIOLET** or **BADU Blue** pool controller over
+your local network and bridges it to the PoolPilot apps:
 
 - **at home**, the app reaches the relay directly over your Wi‑Fi/LAN, and
 - **when you're away**, through a secure tunnel to the PoolPilot cloud.
