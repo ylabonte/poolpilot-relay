@@ -133,6 +133,28 @@ type fixture struct {
 	releaseCalled   bool
 	releaseAuth     string
 	releaseNotFound atomic.Bool
+
+	// e2eEnabled, when set, makes register and rotate answer with the
+	// end-to-end URLs too ("https://<guid>-e2e.remote.example",
+	// "https://<guid>-api-e2e.remote.example") — a control plane with the E2E
+	// plane on (poolpilot-relay#80). Unset is today's cloud: no E2E fields.
+	e2eEnabled atomic.Bool
+	// listCalls counts relay-authed GET /controllers requests (the E2E
+	// backfill); listStatus, when non-zero, is the status that route answers
+	// instead of the list (404 = a cloud older than the route). The list holds
+	// every guid the stub minted, with E2E URLs iff e2eEnabled.
+	listCalls  atomic.Int64
+	listStatus atomic.Int64
+}
+
+// controllerURLs is the stub cloud's register/rotate/list answer for guid.
+func (f *fixture) controllerURLs(guid string) map[string]string {
+	out := map[string]string{"guid": guid, "remote_url": "https://" + guid + ".remote.example"}
+	if f.e2eEnabled.Load() {
+		out["remote_e2e_url"] = "https://" + guid + "-e2e.remote.example"
+		out["remote_api_e2e_url"] = "https://" + guid + "-api-e2e.remote.example"
+	}
+	return out
 }
 
 // newFixture wires a full agent LAN API against a stubbed cloud and a
@@ -277,9 +299,26 @@ func newFixture(t *testing.T) *fixture {
 			f.revoked[oldGUID] = true
 			f.revokedMu.Unlock()
 			guid := "guid" + strconv.FormatInt(f.guidSeq.Add(1), 10)
-			_ = json.NewEncoder(w).Encode(map[string]string{
-				"guid": guid, "remote_url": "https://" + guid + ".remote.example",
-			})
+			_ = json.NewEncoder(w).Encode(f.controllerURLs(guid))
+			return
+		}
+		// Relay-authed GET /controllers — the E2E backfill's read
+		// (poolpilot-relay#80), in the POST /controllers/list shape.
+		if r.Method == http.MethodGet && r.URL.Path == "/controllers" {
+			if r.Header.Get("Authorization") != "Bearer relay-frpc-token" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			f.listCalls.Add(1)
+			if code := f.listStatus.Load(); code != 0 {
+				w.WriteHeader(int(code))
+				return
+			}
+			list := []map[string]string{}
+			for i := int64(1); i <= f.guidSeq.Load(); i++ {
+				list = append(list, f.controllerURLs("guid"+strconv.FormatInt(i, 10)))
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"controllers": list})
 			return
 		}
 		switch r.URL.Path {
@@ -327,9 +366,7 @@ func newFixture(t *testing.T) *fixture {
 			// Mint a fresh GUID per registration so distinct controllers get
 			// distinct identities (guid1, guid2, …).
 			guid := "guid" + strconv.FormatInt(f.guidSeq.Add(1), 10)
-			_ = json.NewEncoder(w).Encode(map[string]string{
-				"guid": guid, "remote_url": "https://" + guid + ".remote.example",
-			})
+			_ = json.NewEncoder(w).Encode(f.controllerURLs(guid))
 		case "/device-vouchers":
 			// The voucher broker: the relay presents its own frpc bearer and gets
 			// back a role-carrying, single-use app-bearer voucher. An invite code

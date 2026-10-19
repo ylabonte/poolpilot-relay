@@ -309,7 +309,7 @@ func run() error {
 		if boot.Cloud.FRPS.AuthToken == "" {
 			boot.Cloud.FRPS.AuthToken = os.Getenv("FRPS_AUTH_TOKEN")
 		}
-		if err := lanapi.ReconfigureTunnel(tun, boot, lanapi.TunnelListen(), ctrlFilter); err != nil {
+		if err := lanapi.ReconfigureTunnel(tun, boot, lanapi.TunnelListen(), "", ctrlFilter); err != nil {
 			slog.Warn("tunnel resume failed", "err", err)
 		}
 	}
