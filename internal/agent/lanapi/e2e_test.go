@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -525,5 +526,74 @@ func TestStatusSurfacesE2EStateSeparately(t *testing.T) {
 	}
 	if cs := statusOfController(t, f, token, g1); cs.Tunnel != want {
 		t.Errorf("controller tunnel = %+v, want %+v", cs.Tunnel, want)
+	}
+}
+
+// The backfill's lock-free read → cloud → write is safe because it matches by
+// GUID: a controller rotated or deleted while GET /controllers is in flight is
+// never written. The stub answers with a snapshot taken BEFORE the change, so
+// the old GUID's URLs arrive after the change has landed.
+func TestBackfillE2ENeverWritesAControllerChangedMidRequest(t *testing.T) {
+	for _, change := range []string{"rotate", "delete"} {
+		t.Run(change, func(t *testing.T) {
+			f, ft, token := e2eFixture(t)
+			g1 := putControllerOK(t, f, token, wire.ControllerConfig{Preset: "procon-ip", LanAddress: f.controllerAddr()})
+			f.e2eEnabled.Store(true) // the snapshot carries g1's E2E URLs
+			var g2Mu sync.Mutex
+			var g2 string
+			f.listHookMu.Lock()
+			f.listHook = func() {
+				f.listHookMu.Lock()
+				f.listHook = nil // once
+				f.listHookMu.Unlock()
+				f.e2eEnabled.Store(false)
+				switch change {
+				case "rotate":
+					resp, raw := f.do(t, "POST", "/v1/controllers/"+g1+"/rotate", token, nil)
+					if resp.StatusCode != http.StatusOK {
+						t.Errorf("rotate: %d %s", resp.StatusCode, raw)
+						return
+					}
+					var rot wire.ControllerConfigResponse
+					_ = json.Unmarshal(raw, &rot)
+					g2Mu.Lock()
+					g2 = rot.GUID
+					g2Mu.Unlock()
+				case "delete":
+					if resp, raw := f.do(t, "DELETE", "/v1/controllers/"+g1, token, nil); resp.StatusCode/100 != 2 {
+						t.Errorf("delete: %d %s", resp.StatusCode, raw)
+					}
+				}
+			}
+			f.listHookMu.Unlock()
+
+			if err := f.srv.BackfillE2E(context.Background()); err != nil {
+				t.Fatalf("backfill: %v", err)
+			}
+			st := f.store.Get()
+			if _, ok := st.FindController(g1); ok {
+				t.Fatalf("the old guid came back: %+v", st.Controllers)
+			}
+			for _, c := range st.Controllers {
+				if c.RemoteE2EURL != "" || c.RemoteAPIE2EURL != "" {
+					t.Errorf("a stale snapshot was written onto %s: %+v", c.GUID, c)
+				}
+			}
+			if change == "rotate" {
+				g2Mu.Lock()
+				defer g2Mu.Unlock()
+				if g2 == "" {
+					t.Fatal("the hook never rotated")
+				}
+				if c, ok := st.FindController(g2); !ok || c.RemoteE2EURL != "" {
+					t.Errorf("rotated controller = %+v (ok=%v), want exactly what rotate set (no E2E)", c, ok)
+				}
+			}
+			for _, s := range ft.last().Controllers {
+				if s.GUID == g1 || hasLabels(s) {
+					t.Errorf("tunnel carries a stale proxy: %+v", s)
+				}
+			}
+		})
 	}
 }

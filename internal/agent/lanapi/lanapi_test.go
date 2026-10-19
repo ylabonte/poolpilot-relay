@@ -153,6 +153,12 @@ type fixture struct {
 	// absent); listHalfPair makes each entry carry only remote_e2e_url.
 	listOmitAll  atomic.Bool
 	listHalfPair atomic.Bool
+	// listHook, when set, runs inside GET /controllers AFTER the answer was
+	// built and before it is sent — so the relay receives a snapshot that a
+	// change made by the hook (a rotate or delete through the real handler)
+	// has already overtaken.
+	listHookMu sync.Mutex
+	listHook   func()
 }
 
 // controllerURLs is the stub cloud's register/rotate/list answer for guid.
@@ -333,6 +339,12 @@ func newFixture(t *testing.T) *fixture {
 					delete(entry, "remote_api_e2e_url")
 				}
 				list = append(list, entry)
+			}
+			f.listHookMu.Lock()
+			hook := f.listHook
+			f.listHookMu.Unlock()
+			if hook != nil {
+				hook()
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"controllers": list})
 			return
