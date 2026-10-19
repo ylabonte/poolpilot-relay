@@ -2,7 +2,7 @@
 
 *🇬🇧 English · [🇩🇪 Deutsch](../de/configuration.md)*
 
-The relay is configured through one file:
+The Relay is configured through one file:
 
 ```
 /etc/poolpilot-relay/config
@@ -22,9 +22,9 @@ sudo systemctl restart poolpilot-relay
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `CLOUD_BASE_URL` | `https://api.poolpilot.eu` | The PoolPilot cloud the relay talks to. Written by the installer — leave it as is unless support tells you otherwise. |
-| `LAN_LISTEN` | `:8443` | The address/port the relay serves the app on over your LAN. Change the port only if `8443` clashes with something else on the device. |
-| `POLL_INTERVAL` | `60s` | The **default** for how often the relay reads your controller (a Go duration, e.g. `30s`, `2m`). Shorter means fresher readings and a little more load. A value set in the app (see [Poll interval](#poll-interval)) takes precedence. |
+| `CLOUD_BASE_URL` | `https://api.poolpilot.eu` | The PoolPilot cloud the Relay talks to. Written by the installer — leave it as is unless support tells you otherwise. |
+| `LAN_LISTEN` | `:8443` | The address/port the Relay serves the app on over your LAN. Change the port only if `8443` clashes with something else on the device. |
+| `POLL_INTERVAL` | `60s` | The **default** for how often the Relay reads your controller (a Go duration, e.g. `30s`, `2m`). Shorter means fresher readings and a little more load. A value set in the app (see [Poll interval](#poll-interval)) takes precedence. |
 | `UPDATE_DISABLED` | *(unset)* | Set to `1` to turn **automatic self‑update fully off** on this device. See [Self-update](self-update.md) for what that means (and why the app's toggle is usually the better choice). |
 
 The default config the installer writes looks like this:
@@ -45,28 +45,28 @@ and set the value.
 
 ## Poll interval
 
-The household owner can set how often the relay reads the controller right in
+The household owner can set how often the Relay reads the controller right in
 the PoolPilot app (**Settings → Relay**), between **3 seconds and 10 minutes**.
-No SSH and no restart needed: the relay saves the value, uses it from the next
+No SSH and no restart needed: the Relay saves the value, uses it from the next
 poll on, and keeps it across restarts and updates.
 
 - **Precedence:** a value set in the app wins over `POLL_INTERVAL`. Until one is
-  set, the relay polls at `POLL_INTERVAL` (or 60 s when that is unset).
+  set, the Relay polls at `POLL_INTERVAL` (or 60 s when that is unset).
   Clearing the app's value (`DELETE /v1/poll-interval`, below) hands control
   back to `POLL_INTERVAL`, so later edits to the config file take effect again.
-- **Lifetime:** the value belongs to the relay, not to the household — removing
-  the household from the relay keeps it. A factory reset clears it.
+- **Lifetime:** the value belongs to the Relay, not to the household — removing
+  the household from the Relay keeps it. A factory reset clears it.
 - **When to go slower:** some controllers, and some hosting setups in front of
   them, react badly to frequent requests; a metered connection is another
   reason. A slower cadence is gentler on both.
 - **When the controller is unreachable:** a failed read (connection refused,
   timeout) is simply retried at the next scheduled poll — never sooner — so a
-  controller that is down, or a host that is blocking the relay, sees at most one
+  controller that is down, or a host that is blocking the Relay, sees at most one
   attempt per interval.
 
-### How the relay identifies itself
+### How the Relay identifies itself
 
-Every request the relay sends to your controller — the regular reads, the
+Every request the Relay sends to your controller — the regular reads, the
 check during pairing, the dosing-limit reads — carries the header
 `User-Agent: PoolPilot-Relay/<version> (+https://poolpilot.eu)`, and so do its
 requests to the PoolPilot cloud and its update downloads. Without it, Go's
@@ -75,10 +75,10 @@ default `Go-http-client/1.1` would go out, a string that hosting firewalls
 sight. That matters for controllers on the internet, like the vendors' public
 demo boxes; a controller on your own LAN does not care.
 
-When you open the controller's web interface remotely, the relay passes it
+When you open the controller's web interface remotely, the Relay passes it
 through unchanged: the controller sees your app's or browser's own
 `User-Agent`. Only a request that arrives without one (or with Go's default)
-gets the relay's.
+gets the Relay's.
 
 ### How it affects alerts
 
@@ -91,7 +91,7 @@ quickly they react:
   interval*: about 3 minutes at the default 60 s, 30 minutes at 10 minutes, and
   9 seconds at 3 seconds.
 - The **"no fresh data"** alert is time-based (90 minutes without a successful
-  read by default) and is checked right after each poll, so a relay that polls
+  read by default) and is checked right after each poll, so a Relay that polls
   slowly but successfully never looks stale. A slow cadence delays it instead:
   an outage is noticed up to one poll interval after that window. If you set
   the window **shorter than the poll interval**, a single failed poll is
@@ -111,7 +111,7 @@ At 10 minutes, each of these can take up to 10 minutes.
 
 ### For app developers: the LAN API
 
-Over the relay's LAN API (and the same routes through the remote tunnel), with
+Over the Relay's LAN API (and the same routes through the remote tunnel), with
 a paired device's bearer token. `GET` is open to any paired device; `PUT` and
 `DELETE` are owner-only, and a member device gets
 `403 {"error":"owner_required"}`:
@@ -124,19 +124,19 @@ a paired device's bearer token. `GET` is open to any paired device; `PUT` and
   `400 {"error":"poll_interval_out_of_range","min_seconds":3,"max_seconds":600}`,
   a missing or non-integer value `400 {"error":"bad_json"}`.
 - `DELETE /v1/poll-interval` → `200` and the same body: clears the value set
-  over the API, so the relay polls at `default_seconds` again. Clearing when
+  over the API, so the Relay polls at `default_seconds` again. Clearing when
   nothing is set is a `200` too.
 - The unauthenticated `GET /v1/info` reports the cadence in force as
   `poll_interval_seconds`. This field is the **only** capability signal: a
-  relay that predates the setting omits it. Do not read a `404` on
-  `/v1/poll-interval` as "older relay" — through the remote tunnel, a `404` can
-  also mean the relay is not reachable right now.
+  Relay that predates the setting omits it. Do not read a `404` on
+  `/v1/poll-interval` as "older Relay" — through the remote tunnel, a `404` can
+  also mean the Relay is not reachable right now.
 
 ## Advanced settings
 
 A few more variables exist mainly for development, testing, and support. You
 should not need them on a normal home install, and changing them can stop the
-relay from working — only set them if you know why:
+Relay from working — only set them if you know why:
 
 `TUNNEL_LISTEN`, `CTRL_FILTER_LISTEN`, `STATE_PATH`, `MDNS_DISABLED`,
 `MDNS_VERBOSE_LOGS`, `FRPS_AUTH_TOKEN`, `PAIR_URL_BASE`, `REPO_DL_BASE` — plus the

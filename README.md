@@ -94,18 +94,18 @@ A small program for your home that connects your pool controller to the
 
 | What you get | ProCon.IP | BADU Blue | VIOLET |
 | --- | --- | --- | --- |
-| Control your pool at home over Wi‑Fi | works without the relay | works without the relay | works without the relay |
-| Control your pool while you're away | ✓ with the relay | built in | built in |
-| Push to your phone when something's off | ✓ with the relay | ✓ with the relay | built in\* |
-| Share your pool with your family — Pro features included, up to 10 devices, iPhone and Android mixed | ✓ with the relay | ✓ with the relay | ✓ with the relay |
+| Control your pool at home over Wi‑Fi | works without the Relay | works without the Relay | works without the Relay |
+| Control your pool while you're away | ✓ with the Relay | built in | built in |
+| Push to your phone when something's off | ✓ with the Relay | ✓ with the Relay | built in\* |
+| Share your pool with your family — Pro features included, up to 10 devices, iPhone and Android mixed | ✓ with the Relay | ✓ with the Relay | ✓ with the Relay |
 
-\* Free in PoolPilot — the relay can optionally take it over.
+\* Free in PoolPilot — the Relay can optionally take it over.
 
 **In short:**
 
-- **ProCon.IP:** the relay gets it ready for when you're away.
-- **BADU Blue:** the relay brings push to PoolPilot.
-- **VIOLET:** you only need the relay for sharing.
+- **ProCon.IP:** the Relay gets it ready for when you're away.
+- **BADU Blue:** the Relay brings push to PoolPilot.
+- **VIOLET:** you only need the Relay for sharing.
 
 **What do you need?** A device that's always on at home (e.g. a Raspberry Pi or
 your Home Assistant) and PoolPilot Pro.
@@ -118,7 +118,7 @@ your Home Assistant) and PoolPilot Pro.
 curl -fsSL https://get.poolpilot.eu/install.sh | bash
 ```
 
-Then open the PoolPilot app on the same Wi‑Fi and pair the relay. From then on
+Then open the PoolPilot app on the same Wi‑Fi and pair the Relay. From then on
 it [updates itself](docs/en/self-update.md). Prefer to read what you run first?
 The installer is right here in this repo:
 [`deploy/relay/install.sh`](deploy/relay/install.sh).
@@ -138,8 +138,8 @@ Home Assistant app.
 | Page | What it covers |
 | --- | --- |
 | [Installation & pairing](docs/en/installation.md) | Requirements, the installer, first pairing |
-| [Home Assistant app](docs/en/home-assistant.md) | Running the relay as a Home Assistant app instead of on a Pi |
-| [Commands](docs/en/commands.md) | The programs the relay installs and how to run them |
+| [Home Assistant app](docs/en/home-assistant.md) | Running the Relay as a Home Assistant app instead of on a Pi |
+| [Commands](docs/en/commands.md) | The programs the Relay installs and how to run them |
 | [Configuration](docs/en/configuration.md) | The `/etc/poolpilot-relay/config` file |
 | [Self-update](docs/en/self-update.md) | How automatic updates work and how to control them |
 | [Troubleshooting](docs/en/troubleshooting.md) | Logs, re-pairing, recovery, reinstalling, removing |
