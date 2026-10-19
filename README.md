@@ -117,8 +117,9 @@ your Home Assistant) and PoolPilot Pro.
 curl -fsSL https://get.poolpilot.eu/install.sh | bash
 ```
 
-Then open the PoolPilot app on the same Wi‑Fi and pair the relay. From then on it
-[updates itself](docs/en/self-update.md). Prefer to read what you run first? The installer is right here in this repo:
+Then open the PoolPilot app on the same Wi‑Fi and pair the relay. From then on
+it [updates itself](docs/en/self-update.md). Prefer to read what you run first?
+The installer is right here in this repo:
 [`deploy/relay/install.sh`](deploy/relay/install.sh).
 
 **With Home Assistant:** add this repo under **Settings → Add-ons → Add-on store
