@@ -21,8 +21,8 @@ von deiner Steuerung ab:
 - **BADU Blue:** Das Relay bringt Push in PoolPilot.
 - **VIOLET:** Das Relay brauchst du nur zum Teilen.
 
-**Was brauchst du dafür?** Ein Gerät, das bei dir zu Hause immer läuft (z.B. ein
-Raspberry Pi, oder dein [Home Assistant](home-assistant.md)) und PoolPilot Pro.
+**Was brauchst du dafür?** Ein Gerät, das bei dir zu Hause immer läuft (z. B. ein
+Raspberry Pi oder dein [Home Assistant](home-assistant.md)) und PoolPilot Pro.
 
 ## So funktioniert's
 

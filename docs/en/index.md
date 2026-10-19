@@ -21,7 +21,7 @@ depends on your controller:
 - **BADU Blue:** the relay brings push to PoolPilot.
 - **VIOLET:** you only need the relay for sharing.
 
-**What do you need?** A device that's always on at home (e.g. a Raspberry Pi,
+**What do you need?** A device that's always on at home (e.g. a Raspberry Pi
 or your [Home Assistant](home-assistant.md)) and PoolPilot Pro.
 
 ## How it works
