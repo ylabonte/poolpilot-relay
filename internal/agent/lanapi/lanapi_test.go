@@ -145,6 +145,10 @@ type fixture struct {
 	// every guid the stub minted, with E2E URLs iff e2eEnabled.
 	listCalls  atomic.Int64
 	listStatus atomic.Int64
+	// e2eMalformed, with e2eEnabled, makes the stub's remote_e2e_url name a
+	// label that is not the controller's own — a pair e2eLabels rejects, so
+	// the relay registers no E2E proxies for it.
+	e2eMalformed atomic.Bool
 }
 
 // controllerURLs is the stub cloud's register/rotate/list answer for guid.
@@ -152,6 +156,9 @@ func (f *fixture) controllerURLs(guid string) map[string]string {
 	out := map[string]string{"guid": guid, "remote_url": "https://" + guid + ".remote.example"}
 	if f.e2eEnabled.Load() {
 		out["remote_e2e_url"] = "https://" + guid + "-e2e.remote.example"
+		if f.e2eMalformed.Load() {
+			out["remote_e2e_url"] = "https://someone-else-e2e.remote.example"
+		}
 		out["remote_api_e2e_url"] = "https://" + guid + "-api-e2e.remote.example"
 	}
 	return out

@@ -378,3 +378,61 @@ func TestRunE2EBackfillLoop(t *testing.T) {
 		t.Errorf("RunE2EBackfill = %v, want context.Canceled", err)
 	}
 }
+
+// The relay advertises only E2E URLs it actually serves: the app reads their
+// presence as "the pinned remote leg exists", so a URL whose proxies were
+// never registered — E2E listener disabled, or a pair e2eLabels rejects —
+// must surface nowhere: not in the PUT (miss or hit) or rotate answers, not in
+// /v1/controllers or /v1/status, and no session_e2e_url. The raw values are
+// still stored.
+func TestUnservedE2EURLsAreNotSurfaced(t *testing.T) {
+	for name, setup := range map[string]func(f *fixture){
+		"listener disabled": func(f *fixture) { f.srv.E2EAddr = "" },
+		"label rejected":    func(f *fixture) { f.e2eMalformed.Store(true) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, ft, token := e2eFixture(t)
+			f.srv.CtrlFilter = &ctrlfilter.Server{Addr: "127.0.0.1:0"}
+			f.e2eEnabled.Store(true)
+			setup(f)
+			noE2E := func(what string, raw []byte) {
+				t.Helper()
+				if strings.Contains(string(raw), "e2e_url") {
+					t.Errorf("%s surfaced an unserved E2E URL: %s", what, raw)
+				}
+			}
+			cfg := wire.ControllerConfig{Preset: "procon-ip", LanAddress: f.controllerAddr()}
+			resp, raw := f.do(t, "PUT", "/v1/controllers", token, cfg)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("PUT: %d %s", resp.StatusCode, raw)
+			}
+			noE2E("PUT (miss)", raw)
+			var cc wire.ControllerConfigResponse
+			_ = json.Unmarshal(raw, &cc)
+			if c, _ := f.store.Get().FindController(cc.GUID); c.RemoteE2EURL == "" || c.RemoteAPIE2EURL == "" {
+				t.Errorf("raw values must still be stored: %+v", c)
+			}
+			if s := specFor(t, ft.last(), cc.GUID); hasLabels(s) && f.srv.E2EAddr != "" {
+				t.Errorf("rejected pair still got labels: %+v", s)
+			}
+			_, raw = f.do(t, "PUT", "/v1/controllers", token, wire.ControllerConfig{Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: "x"})
+			noE2E("PUT (hit)", raw)
+			_, raw = f.do(t, "GET", "/v1/controllers", token, nil)
+			noE2E("GET /v1/controllers", raw)
+			_, raw = f.do(t, "GET", "/v1/status", token, nil)
+			noE2E("GET /v1/status", raw)
+			resp, raw = f.do(t, "POST", "/v1/controllers/"+cc.GUID+"/web-session", token, nil)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("web-session: %d %s", resp.StatusCode, raw)
+			}
+			noE2E("web-session", raw)
+			resp, raw = f.do(t, "POST", "/v1/controllers/"+cc.GUID+"/rotate", token, nil)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("rotate: %d %s", resp.StatusCode, raw)
+			}
+			noE2E("rotate", raw)
+		})
+	}
+}
+
+func hasLabels(s tunnel.ProxySpec) bool { return s.E2ECtrlLabel != "" || s.E2EAPILabel != "" }

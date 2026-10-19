@@ -1190,9 +1190,10 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 		if remoteAPIURL == "" {
 			remoteAPIURL = deriveRemoteAPIURL(guid, st.Cloud.FRPS.SubdomainHost)
 		}
+		e2eCtrl, e2eAPI := s.servedE2EURLs(existing)
 		writeJSON(w, http.StatusOK, wire.ControllerConfigResponse{
 			GUID: guid, RemoteURL: existing.RemoteURL, RemoteAPIURL: remoteAPIURL,
-			RemoteE2EURL: existing.RemoteE2EURL, RemoteAPIE2EURL: existing.RemoteAPIE2EURL,
+			RemoteE2EURL: e2eCtrl, RemoteAPIE2EURL: e2eAPI,
 		})
 		return
 	}
@@ -1223,7 +1224,8 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 		c.RemoteAPIURL = remoteAPIURL
 		// The E2E pair is stored exactly as the cloud sent it (both, one, or
 		// none) and never derived; ReconfigureTunnel registers the https
-		// proxies only when both are present and well formed.
+		// proxies only when both are present and well formed, and every
+		// surface shows them only then (servedE2EURLs).
 		c.RemoteE2EURL = res.RemoteE2EURL
 		c.RemoteAPIE2EURL = res.RemoteAPIE2EURL
 		// Reconcile (not just "seed when empty"): filling the boot-seeded phantom
@@ -1247,9 +1249,10 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 	if err := s.reconfigureTunnel(); err != nil {
 		slog.Warn("tunnel reconfigure", "err", err)
 	}
+	e2eCtrl, e2eAPI := s.servedE2EURLs(state.Controller{GUID: guid, RemoteE2EURL: res.RemoteE2EURL, RemoteAPIE2EURL: res.RemoteAPIE2EURL})
 	writeJSON(w, http.StatusOK, wire.ControllerConfigResponse{
 		GUID: guid, RemoteURL: remoteURL, RemoteAPIURL: remoteAPIURL,
-		RemoteE2EURL: res.RemoteE2EURL, RemoteAPIE2EURL: res.RemoteAPIE2EURL,
+		RemoteE2EURL: e2eCtrl, RemoteAPIE2EURL: e2eAPI,
 	})
 }
 
@@ -1292,6 +1295,7 @@ func (s *Server) getControllers(w http.ResponseWriter, _ *http.Request) {
 		if c.LanAddress == "" {
 			continue
 		}
+		e2eCtrl, e2eAPI := s.servedE2EURLs(c)
 		info := wire.ControllerInfo{
 			GUID:         c.GUID,
 			Label:        c.Label,
@@ -1299,9 +1303,9 @@ func (s *Server) getControllers(w http.ResponseWriter, _ *http.Request) {
 			RemoteURL:    c.RemoteURL,
 			RemoteAPIURL: c.RemoteAPIURL,
 			Preset:       c.EffectivePreset(),
-			// Never derived: absent until the cloud delivered them.
-			RemoteE2EURL:    c.RemoteE2EURL,
-			RemoteAPIE2EURL: c.RemoteAPIE2EURL,
+			// Never derived, and only what the relay serves (servedE2EURLs).
+			RemoteE2EURL:    e2eCtrl,
+			RemoteAPIE2EURL: e2eAPI,
 		}
 		if info.RemoteAPIURL == "" {
 			info.RemoteAPIURL = deriveRemoteAPIURL(c.GUID, st.Cloud.FRPS.SubdomainHost)
@@ -1439,8 +1443,8 @@ func (s *Server) webSessionHandler(w http.ResponseWriter, r *http.Request) {
 		SessionURL: ctrl.RemoteURL + ctrlfilter.SessionPath + "?t=" + token,
 		ExpiresIn:  int(ctrlfilter.TokenTTL / time.Second),
 	}
-	if ctrl.RemoteE2EURL != "" {
-		resp.SessionE2EURL = ctrl.RemoteE2EURL + ctrlfilter.SessionPath + "?t=" + token
+	if e2eCtrl, _ := s.servedE2EURLs(ctrl); e2eCtrl != "" {
+		resp.SessionE2EURL = e2eCtrl + ctrlfilter.SessionPath + "?t=" + token
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -1566,9 +1570,10 @@ func (s *Server) rotateControllerHandler(w http.ResponseWriter, r *http.Request)
 	// reconciled by the next request/restart anyway, so ordering it last is safe;
 	// the app should still treat a dropped rotate response as "may have applied"
 	// and re-fetch GET /v1/controllers (contract note for pool-apps).
+	e2eCtrl, e2eAPI := s.servedE2EURLs(state.Controller{GUID: res.GUID, RemoteE2EURL: res.RemoteE2EURL, RemoteAPIE2EURL: res.RemoteAPIE2EURL})
 	writeJSON(w, http.StatusOK, wire.ControllerConfigResponse{
 		GUID: res.GUID, RemoteURL: res.RemoteURL, RemoteAPIURL: remoteAPIURL,
-		RemoteE2EURL: res.RemoteE2EURL, RemoteAPIE2EURL: res.RemoteAPIE2EURL,
+		RemoteE2EURL: e2eCtrl, RemoteAPIE2EURL: e2eAPI,
 	})
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
@@ -1765,6 +1770,23 @@ func e2eLabels(c state.Controller) (ctrlLabel, apiLabel string) {
 		return "", ""
 	}
 	return ctrlLabel, apiLabel
+}
+
+// servedE2EURLs is the E2E pair every app-facing surface shows for c: the
+// stored URLs only when the relay actually serves them — the E2E listener is
+// configured AND e2eLabels accepts the pair, i.e. exactly when
+// ReconfigureTunnel registers c's two https proxies — else ("", ""). The app
+// reads the URLs' presence as "the pinned remote leg exists", so a URL with no
+// proxy behind it would turn "returns after the Relay's update" into an
+// unexplained "unreachable". The raw values stay stored either way.
+func (s *Server) servedE2EURLs(c state.Controller) (ctrlURL, apiURL string) {
+	if s.E2EAddr == "" {
+		return "", ""
+	}
+	if l, _ := e2eLabels(c); l == "" {
+		return "", ""
+	}
+	return c.RemoteE2EURL, c.RemoteAPIE2EURL
 }
 
 func e2eLabel(raw, guid string) (string, bool) {
@@ -2150,17 +2172,17 @@ func (s *Server) controllerStatus(st state.State, c state.Controller, ps tunnel.
 	if tunnelState == "" {
 		tunnelState = "disabled"
 	}
+	e2eCtrl, e2eAPI := s.servedE2EURLs(c)
 	cs := wire.ControllerStatus{
 		GUID:         c.GUID,
 		Label:        c.Label,
 		Configured:   true,
 		Reachable:    snap.Reachable,
 		RemoteAPIURL: c.RemoteAPIURL,
-		// Never derived (unlike RemoteAPIURL below): absent until the cloud
-		// delivered them. The E2E proxies' phases are folded into Tunnel by
-		// tunnel.Status.
-		RemoteE2EURL:    c.RemoteE2EURL,
-		RemoteAPIE2EURL: c.RemoteAPIE2EURL,
+		// Never derived (unlike RemoteAPIURL below), and only what the relay
+		// serves (servedE2EURLs).
+		RemoteE2EURL:    e2eCtrl,
+		RemoteAPIE2EURL: e2eAPI,
 		Tunnel:          wire.TunnelStatus{State: tunnelState, LastError: ps.LastErr, APIState: ps.APIState},
 	}
 	if msg := parkedReason(st); msg != "" {
