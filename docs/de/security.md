@@ -92,8 +92,9 @@ aufbaut und offen hält.
   ausgewertet. Der Web-Eingang des Tunnels führt kein Zugriffsprotokoll, es
   entsteht also keine Spur, was du wann mit deinem Pool gemacht hast. Der
   Tunnel-Server meldet der Cloud nur, *dass* sich ein Relay verbunden hat oder
-  offline gegangen ist, nie, was hindurchgeht. Protokolliert werden nur Fehler,
-  in kleinen, rotierenden Logs.
+  offline gegangen ist, nie, was hindurchgeht; die Cloud behält davon nur den
+  jeweils letzten Zeitpunkt, für die Online-Anzeige in der App. Protokolliert
+  werden nur Fehler, in kleinen, rotierenden Logs.
 
 Im lokalen Netzwerk spricht die App HTTPS mit dem Relay und pinnt sein
 Zertifikat: Beim Koppeln lernt die App den Fingerabdruck des Relays und vertraut

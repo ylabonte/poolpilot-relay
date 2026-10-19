@@ -88,8 +88,9 @@ PoolPilot cloud and keeps open.
   of forwarding — they are neither stored nor analysed. The tunnel's web
   front end keeps no access log, so there is no per-request trail of what you
   did with your pool. The tunnel server only tells the cloud *that* a Relay
-  connected or went offline, never what passes through. The only logs are
-  error logs, kept small and rotated.
+  connected or went offline, never what passes through; the cloud keeps just
+  the latest of those times, for the online status in the app. The only logs
+  are error logs, kept small and rotated.
 
 On your local network, the app talks HTTPS to the Relay and pins its
 certificate: at pairing the app learns the Relay's fingerprint and from then on
