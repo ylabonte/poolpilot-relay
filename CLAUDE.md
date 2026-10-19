@@ -91,3 +91,7 @@ coordinating a new tagged release (see *Cross-repo* below).
 - **Distribution:** signed GitHub Release assets, installed via `https://get.poolpilot.eu` (which
   serves `deploy/relay/install.sh`). The control plane selects the version, so halting a release stops
   fresh installs too.
+- **The website mirrors these docs.** `README.md` and `docs/{de,en}/` are the content source of
+  truth; poolpilot.eu (`ylabonte/poolpilot-site`) presents the same content for end users. When a
+  change here alters what a user reads (a fact, a step, a requirement), note in the PR that the site
+  needs aligning — the site's drift check will open an issue for it too.
