@@ -66,7 +66,7 @@ Home-Assistant-App über den Store.
 | [Konfiguration](docs/de/configuration.md) | Die Datei `/etc/poolpilot-relay/config` |
 | [Selbst-Update](docs/de/self-update.md) | Wie automatische Updates funktionieren und wie du sie steuerst |
 | [Fehlerbehebung](docs/de/troubleshooting.md) | Logs, neu koppeln, Wiederherstellung, neu installieren, entfernen |
-| [Sicherheit & Datenschutz](docs/de/security.md) | Was wo gespeichert ist, Netzwerk und Ports, der Tunnel, signierte Versionen |
+| [Sicherheit & Datenschutz](docs/de/security.md) | Was wo gespeichert ist, Netzwerk und Ports, der Ende-zu-Ende-verschlüsselte Tunnel, signierte Versionen |
 
 Fragen oder ein Problem? [Issue anlegen](https://github.com/ylabonte/poolpilot-relay/issues)
 · Website: [poolpilot.eu](https://poolpilot.eu)
@@ -143,7 +143,7 @@ Home Assistant app.
 | [Configuration](docs/en/configuration.md) | The `/etc/poolpilot-relay/config` file |
 | [Self-update](docs/en/self-update.md) | How automatic updates work and how to control them |
 | [Troubleshooting](docs/en/troubleshooting.md) | Logs, re-pairing, recovery, reinstalling, removing |
-| [Security & privacy](docs/en/security.md) | What is stored where, network and ports, the tunnel, signed releases |
+| [Security & privacy](docs/en/security.md) | What is stored where, network and ports, the end-to-end encrypted tunnel, signed releases |
 
 Questions or a problem? [Open an issue](https://github.com/ylabonte/poolpilot-relay/issues)
 · Website: [poolpilot.eu](https://poolpilot.eu)
@@ -152,7 +152,10 @@ Questions or a problem? [Open an issue](https://github.com/ylabonte/poolpilot-re
 
 The edge agent is one Go module at the repo root. It talks to the controller on
 the local network and reaches the PoolPilot cloud through an outbound tunnel
-when you're away.
+when you're away. The app's remote connections terminate TLS on the Relay
+itself, with its pinned LAN certificate, so the cloud only forwards encrypted
+bytes (end-to-end, from app version 1.2; see
+[Security & privacy](docs/en/security.md#the-tunnel-in-plain-words)).
 
 ```bash
 go build ./...     # compile every package

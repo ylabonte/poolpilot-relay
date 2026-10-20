@@ -86,19 +86,38 @@ aufbaut und offen hält.
 - **Das Heikle bleibt zu Hause.** Koppeln sowie Werks- und Haushaltsreset
   funktionieren nur im lokalen Netzwerk. Durch den Tunnel lehnt das Relay sie
   ab, selbst von einem gekoppelten Telefon.
-- **Was die Cloud sieht.** Dein Telefon spricht HTTPS mit der PoolPilot-Cloud,
-  und die Cloud reicht die Anfrage durch den Tunnel weiter. Beide Strecken
-  durchs Internet — vom Telefon zur Cloud und der Tunnel von der Cloud zu
-  deinem Relay — sind verschlüsselt, aber es ist keine
-  Ende-zu-Ende-Verschlüsselung: Die Cloud leitet deine Anfragen weiter. Die
-  letzte Strecke, vom Relay zu deiner Poolsteuerung im Heimnetz, ist oft
-  unverschlüsseltes HTTP, weil viele Steuerungen nur das sprechen.
-- **Durchgereicht, nicht aufbewahrt.** Die Cloud reicht den Tunnel-Verkehr nur
-  durch. Deine Anfragen und die Antworten der Steuerung sind dort nur für den
-  Moment des Weiterleitens sichtbar — sie werden weder gespeichert noch
-  ausgewertet. Der Web-Eingang des Tunnels führt kein Zugriffsprotokoll, es
-  entsteht also keine Spur, was du wann mit deinem Pool gemacht hast. Der
-  Tunnel-Server meldet der Cloud nur, *dass* sich ein Relay verbunden hat, noch
+- **Ende-zu-Ende-verschlüsselt.** Alles, was die App durch den Tunnel mit
+  deinem Relay austauscht — Relay-Verwaltung, deine Poolwerte und die
+  Weboberfläche der Steuerung im eingebauten Browser der App — ist
+  Ende-zu-Ende-verschlüsselt zwischen deinem Telefon und deinem Relay. Das
+  Relay nimmt die verschlüsselte Verbindung selbst an, mit demselben
+  Zertifikat wie im lokalen Netzwerk, und die App akzeptiert nur den
+  Fingerabdruck, den sie beim Koppeln gelernt hat. Die Cloud leitet
+  verschlüsselte Bytes weiter, die sie nicht lesen kann. Die letzte Strecke,
+  vom Relay zu deiner Poolsteuerung im Heimnetz, bleibt unverändert und ist
+  oft unverschlüsseltes HTTP, weil viele Steuerungen nur das sprechen.
+- **Was die Cloud trotzdem sieht.** Dass eine Verbindung zur Adresse deiner
+  Steuerung aufgebaut wurde (die Kennung der Steuerung ist Teil dieser
+  Adresse), wann, von welcher Internetadresse (wird nicht gespeichert — siehe
+  unten) und wie viele Daten geflossen sind. Nutzt eine Verbindung das ältere
+  TLS 1.2, kann die Cloud außerdem das Zertifikat des Relays sehen, das die
+  Kennung des Relays und den Hostnamen des Geräts enthält. Was du abfragst,
+  die Zugangsdaten deiner Steuerung und deine Werte sieht sie nicht.
+- **Getrennt vom Tunnel.** Für Koppeln, deinen Haushalt und die
+  Push-Einrichtung spricht die App direkt mit der PoolPilot-Cloud, und das
+  Relay schickt deine Alarme an die Cloud, damit sie Push-Nachrichten
+  zustellen kann (siehe *Was wo gespeichert ist* oben). Auch diese
+  Verbindungen sind verschlüsselt, enden aber bei der Cloud.
+- **Ältere App-Versionen.** Das gilt ab PoolPilot-App-Version 1.2 mit Relay
+  0.11 oder neuer. Ältere App-Versionen nutzen weiterhin die bisherige
+  Verbindung: Das Telefon spricht HTTPS mit der Cloud, und die Cloud reicht
+  jede Anfrage durch den Tunnel weiter, entschlüsselt diesen Verkehr also und
+  verschlüsselt ihn neu. Deine Anfragen und die Antworten der Steuerung sind
+  dort nur für den Moment des Weiterleitens sichtbar — sie werden weder
+  gespeichert noch ausgewertet.
+- **Nichts wird aufbewahrt.** Der Web-Eingang des Tunnels führt kein
+  Zugriffsprotokoll, es entsteht also keine Spur, was du wann mit deinem Pool
+  gemacht hast. Der Tunnel-Server meldet der Cloud nur, *dass* sich ein Relay verbunden hat, noch
   online ist oder offline gegangen ist, nie, was hindurchgeht; die Cloud behält
   davon nur jeweils den letzten Zeitpunkt, für die Online-Anzeige in der App. Protokolliert
   werden nur Warnungen und Fehler — normale Anmeldungen und der Verkehr selbst

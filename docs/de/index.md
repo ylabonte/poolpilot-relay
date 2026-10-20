@@ -33,7 +33,9 @@ deiner **ProCon.IP**-, **VIOLET**- oder **BADU-Blue**-Poolsteuerung und
 verbindet sie mit den PoolPilot-Apps:
 
 - **zu Hause** über dein WLAN und
-- **unterwegs** über den sicheren Tunnel zur PoolPilot-Cloud.
+- **unterwegs** über einen Tunnel durch die PoolPilot-Cloud — ab App-Version
+  1.2 Ende-zu-Ende-verschlüsselt zwischen deinem Telefon und deinem Relay
+  (siehe [Sicherheit & Datenschutz](security.md#der-tunnel-in-einfachen-worten)).
 
 Einmal installiert und gekoppelt, kümmert sich das Relay um sich selbst: Es hält
 deine Steuerung verbunden, verschickt die in der App eingestellten Alarme und
@@ -61,7 +63,7 @@ Installer macht und wie du den Kopplungscode von Hand anzeigst.
 | [Selbst-Update](self-update.md) | Wie automatische Updates funktionieren und wie du sie steuerst |
 | [Fehlerbehebung](troubleshooting.md) | Logs, neu koppeln, Wiederherstellung, neu installieren, entfernen |
 | [Home-Assistant-App](home-assistant.md) | Das Relay als Home-Assistant-App statt auf einem Pi betreiben |
-| [Sicherheit & Datenschutz](security.md) | Was wo gespeichert ist, Netzwerk und Ports, der Tunnel, signierte Versionen |
+| [Sicherheit & Datenschutz](security.md) | Was wo gespeichert ist, Netzwerk und Ports, der Ende-zu-Ende-verschlüsselte Tunnel, signierte Versionen |
 
 > 🇬🇧 This documentation is also available **[in English](../en/index.md)**.
 
