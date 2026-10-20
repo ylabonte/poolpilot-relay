@@ -13,7 +13,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -32,6 +34,7 @@ import (
 	"github.com/ylabonte/poolpilot-relay/internal/agent/poller"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/recovery"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/state"
+	"github.com/ylabonte/poolpilot-relay/internal/agent/tlslog"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/tunnel"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/updater"
 	"github.com/ylabonte/poolpilot-relay/internal/measure"
@@ -103,6 +106,9 @@ type Server struct {
 	Fingerprint string
 	Cert        tls.Certificate
 	Addr        string
+	// errorLog overrides the TLS server's ErrorLog (tests); nil means the
+	// pre-handshake-disconnect filter over the standard logger.
+	errorLog *log.Logger
 	// TunnelAddr is the loopback plain-HTTP bind the frp api proxy forwards to
 	// (TUNNEL_LISTEN). Empty disables the tunnel-facing listener.
 	TunnelAddr string
@@ -395,14 +401,28 @@ func lanOnly(w http.ResponseWriter, _ *http.Request) {
 
 // Run serves HTTPS until ctx is done.
 func (s *Server) Run(ctx context.Context) error {
+	ln, err := net.Listen("tcp", s.Addr)
+	if err != nil {
+		return err
+	}
+	return s.serveTLS(ctx, ln)
+}
+
+// serveTLS serves HTTPS on ln until ctx is done. Pre-handshake disconnects
+// (the app's discovery probe) are kept out of the error log.
+func (s *Server) serveTLS(ctx context.Context, ln net.Listener) error {
+	errLog := s.errorLog
+	if errLog == nil {
+		errLog = tlslog.NewLogger()
+	}
 	srv := &http.Server{
-		Addr:              s.Addr,
 		Handler:           s.Handler(),
+		ErrorLog:          errLog,
 		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{s.Cert}, MinVersion: tls.VersionTLS12},
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	errCh := make(chan error, 1)
-	go func() { errCh <- srv.ListenAndServeTLS("", "") }()
+	go func() { errCh <- srv.ServeTLS(ln, "", "") }()
 	select {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
