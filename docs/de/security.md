@@ -36,10 +36,11 @@ die Daten des Dienstes ablegt). In Home Assistant liegt sie auf dem eigenen
 Home-Assistant-Backup, das die App enthält, so wie das Gerät selbst.
 
 **In der PoolPilot-Cloud.** Die Cloud kennt das Relay und den Haushalt, zu dem
-es gehört, Typ, Adresse und Namen der Steuerungen sowie die Tunnel-Zugangsdaten,
-die sie ausgestellt hat. Sie bekommt deine Alarme (welche Regel ausgelöst hat,
-der Wert, der Name des Pools), damit sie sie als Push verschicken kann. Deine
-laufenden Messwerte lädt das Relay nicht hoch.
+es gehört, Typ, Adresse und Namen der Steuerungen sowie die
+Tunnel-Zugangsdaten, die sie ausgestellt hat. Sie bekommt deine Alarme (welche
+Regel ausgelöst hat, der Wert, der Name des Pools), damit sie sie als Push
+verschicken kann, und bewahrt sie bis zu 30 Tage auf, damit du sie in der App
+nachlesen kannst. Deine laufenden Messwerte lädt das Relay nicht hoch.
 
 ## Netzwerk und Ports
 
@@ -98,11 +99,12 @@ aufbaut und offen hält.
   oft unverschlüsseltes HTTP, weil viele Steuerungen nur das sprechen.
 - **Was die Cloud trotzdem sieht.** Dass eine Verbindung zur Adresse deiner
   Steuerung aufgebaut wurde (die Kennung der Steuerung ist Teil dieser
-  Adresse), wann, von welcher Internetadresse (wird nicht gespeichert — siehe
-  unten) und wie viele Daten geflossen sind. Nutzt eine Verbindung das ältere
-  TLS 1.2, kann die Cloud außerdem das Zertifikat des Relays sehen, das die
-  Kennung des Relays und den Hostnamen des Geräts enthält. Was du abfragst,
-  die Zugangsdaten deiner Steuerung und deine Werte sieht sie nicht.
+  Adresse), wann, von welcher Internetadresse (bei normalen Verbindungen nicht
+  protokolliert — siehe unten) und wie viele Daten geflossen sind. Nutzt eine
+  Verbindung das ältere TLS 1.2, kann die Cloud außerdem das Zertifikat des
+  Relays sehen, das die Kennung des Relays und den Hostnamen des Geräts
+  enthält (so, wie er beim ersten Start des Relays hieß). Was du abfragst, die
+  Zugangsdaten deiner Steuerung und deine Werte sieht sie nicht.
 - **Getrennt vom Tunnel.** Für Koppeln, deinen Haushalt und die
   Push-Einrichtung spricht die App direkt mit der PoolPilot-Cloud, und das
   Relay schickt deine Alarme an die Cloud, damit sie Push-Nachrichten
@@ -114,16 +116,19 @@ aufbaut und offen hält.
   jede Anfrage durch den Tunnel weiter, entschlüsselt diesen Verkehr also und
   verschlüsselt ihn neu. Deine Anfragen und die Antworten der Steuerung sind
   dort nur für den Moment des Weiterleitens sichtbar — sie werden weder
-  gespeichert noch ausgewertet.
-- **Nichts wird aufbewahrt.** Der Web-Eingang des Tunnels führt kein
+  gespeichert noch ausgewertet. Mit App 1.2 und einem Relay älter als 0.11
+  gibt es keinen Rückfall auf diese Verbindung: Der Fernzugriff über das Relay
+  pausiert, bis das Relay aktualisiert ist, und zu Hause funktioniert
+  alles weiter.
+- **Kein Verkehrsprotokoll.** Der Web-Eingang des Tunnels führt kein
   Zugriffsprotokoll, es entsteht also keine Spur, was du wann mit deinem Pool
-  gemacht hast. Der Tunnel-Server meldet der Cloud nur, *dass* sich ein Relay verbunden hat, noch
-  online ist oder offline gegangen ist, nie, was hindurchgeht; die Cloud behält
-  davon nur jeweils den letzten Zeitpunkt, für die Online-Anzeige in der App. Protokolliert
-  werden nur Warnungen und Fehler — normale Anmeldungen und der Verkehr selbst
-  nicht. Eine Warnung zu einer abgelehnten oder fehlerhaften Verbindung kann
-  die Internetadresse enthalten, von der sie kam; die Logs sind in der Größe
-  begrenzt und rotieren.
+  gemacht hast. Der Tunnel-Server meldet der Cloud nur, *dass* sich ein Relay
+  verbunden hat, noch online ist oder offline gegangen ist, nie, was
+  hindurchgeht; die Cloud behält davon nur jeweils den letzten Zeitpunkt, für
+  die Online-Anzeige in der App. Protokolliert werden nur Warnungen und Fehler
+  — normale Anmeldungen und der Verkehr selbst nicht. Eine Warnung zu einer
+  abgelehnten oder fehlerhaften Verbindung kann die Internetadresse enthalten,
+  von der sie kam; die Logs sind in der Größe begrenzt und rotieren.
 
 Im lokalen Netzwerk spricht die App HTTPS mit dem Relay und pinnt sein
 Zertifikat: Beim Koppeln lernt die App den Fingerabdruck des Relays und vertraut
