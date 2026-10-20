@@ -26,6 +26,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -33,6 +34,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ylabonte/poolpilot-relay/internal/agent/tlslog"
 	"github.com/ylabonte/poolpilot-relay/wire"
 )
 
@@ -66,6 +68,10 @@ type Server struct {
 	// the LAN-API mux is host-agnostic, so without this any well-formed label
 	// routed here would reach it. Nil accepts every well-formed GUID.
 	KnownGUID func(guid string) bool
+
+	// errorLog overrides the http.Server ErrorLog (tests); nil means the
+	// pre-handshake-disconnect filter over the standard logger.
+	errorLog *log.Logger
 }
 
 // guidLabel is a controller GUID as idgen.GUID mints it: 32 hex, one label.
@@ -142,8 +148,13 @@ func (s *Server) Run(ctx context.Context) error {
 // Serve serves TLS on ln until ctx is done, then shuts down gracefully. It
 // takes ownership of ln.
 func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
+	errLog := s.errorLog
+	if errLog == nil {
+		errLog = tlslog.NewLogger()
+	}
 	srv := &http.Server{
 		Handler:           s.Handler(),
+		ErrorLog:          errLog,
 		TLSConfig:         s.tlsConfig(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
