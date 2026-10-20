@@ -60,6 +60,12 @@ var (
 	// ErrUnavailable because the lifecycle watcher counts these (and only
 	// these) toward parking the tunnel; it never discards credentials on it.
 	ErrUnknownToken = errors.New("cloud does not recognise the relay token")
+	// ErrNotSupported: the control plane does not have the route at all (404,
+	// or 405 where Go's ServeMux knows the path under another method) — an
+	// older cloud. Distinct from ErrRejected because it is not a verdict on
+	// this relay: the same call succeeds once the cloud is upgraded, so a
+	// periodic caller just tries again later.
+	ErrNotSupported = errors.New("cloud does not support this route yet")
 )
 
 // maxResponseBytes caps how much of a control-plane response body is decoded.
@@ -344,6 +350,45 @@ func (c *Client) RotateController(ctx context.Context, oldGUID string) (wire.Con
 		return wire.ControllerConfigResponse{}, fmt.Errorf("%w: controllers rotate HTTP %d", ErrRejected, status)
 	default:
 		return wire.ControllerConfigResponse{}, fmt.Errorf("%w: controllers rotate HTTP %d", ErrUnavailable, status)
+	}
+}
+
+// ListControllers reads this relay's own controllers from the control plane:
+// relay-authed GET /controllers (poolpilot-relay#80), bearer = the stored frpc
+// token, no body, answered in the POST /controllers/list shape
+// (wire.ControllerListResponse). Its job is the E2E URL backfill — a
+// controller registered before the cloud emitted remote_e2e_url /
+// remote_api_e2e_url learns them here, since registration is the only other
+// time the cloud hands URLs out (rotation aside).
+//
+// Status mapping: 404/405 → ErrNotSupported (a cloud older than the route);
+// 403 → ErrSubscriptionInactive (relayFromBearer's entitlement verdict);
+// 429, 5xx and transport → ErrUnavailable; any other 4xx → ErrRejected. The
+// backfill treats every error alike — try again at the next tick — so the
+// distinctions are for the log line.
+func (c *Client) ListControllers(ctx context.Context) (wire.ControllerListResponse, error) {
+	s := c.store.Get()
+	if !s.Enrolled() {
+		return wire.ControllerListResponse{}, fmt.Errorf("%w: not enrolled", ErrRejected)
+	}
+	var out wire.ControllerListResponse
+	status, err := c.doJSON(ctx, http.MethodGet, s.Cloud.BaseURL+"/controllers", s.Cloud.FrpcToken, nil, &out)
+	if err != nil {
+		return wire.ControllerListResponse{}, err
+	}
+	switch {
+	case status == http.StatusOK:
+		return out, nil
+	case status == http.StatusNotFound, status == http.StatusMethodNotAllowed:
+		return wire.ControllerListResponse{}, fmt.Errorf("%w: GET controllers HTTP %d", ErrNotSupported, status)
+	case status == http.StatusForbidden:
+		return wire.ControllerListResponse{}, fmt.Errorf("%w: GET controllers HTTP 403", ErrSubscriptionInactive)
+	case status == http.StatusTooManyRequests:
+		return wire.ControllerListResponse{}, fmt.Errorf("%w: GET controllers HTTP 429", ErrUnavailable)
+	case status >= 400 && status < 500:
+		return wire.ControllerListResponse{}, fmt.Errorf("%w: GET controllers HTTP %d", ErrRejected, status)
+	default:
+		return wire.ControllerListResponse{}, fmt.Errorf("%w: GET controllers HTTP %d", ErrUnavailable, status)
 	}
 }
 

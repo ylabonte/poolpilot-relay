@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -105,6 +106,18 @@ type Server struct {
 	// TunnelAddr is the loopback plain-HTTP bind the frp api proxy forwards to
 	// (TUNNEL_LISTEN). Empty disables the tunnel-facing listener.
 	TunnelAddr string
+	// E2EAddr is the loopback TLS listener (internal/agent/e2e, E2E_LISTEN)
+	// the end-to-end https proxies forward to (poolpilot-relay#80). Empty
+	// disables those proxies; a controller also needs both cloud-delivered E2E
+	// URLs before it gets them.
+	E2EAddr string
+	// E2EBackfillInterval is how often RunE2EBackfill re-asks the cloud while
+	// a controller still lacks its E2E URLs; zero means DefaultE2EBackfillInterval.
+	E2EBackfillInterval time.Duration
+	// E2ERecheckInterval is RunE2EBackfill's slow cadence once every
+	// registered controller has its E2E URLs — how a complete relay hears the
+	// cloud withdraw them; zero means DefaultE2ERecheckInterval.
+	E2ERecheckInterval time.Duration
 	// CtrlFilter is the shared issue poolpilot-cloud#27 authenticated tunnel gate every
 	// controller's ctrl-<GUID> proxy forwards to instead of the
 	// controller itself. Nil disables the gate — the ctrl-<GUID> proxy's
@@ -1181,8 +1194,10 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 		if remoteAPIURL == "" {
 			remoteAPIURL = deriveRemoteAPIURL(guid, st.Cloud.FRPS.SubdomainHost)
 		}
+		e2eCtrl, e2eAPI := s.servedE2EURLs(existing)
 		writeJSON(w, http.StatusOK, wire.ControllerConfigResponse{
 			GUID: guid, RemoteURL: existing.RemoteURL, RemoteAPIURL: remoteAPIURL,
+			RemoteE2EURL: e2eCtrl, RemoteAPIE2EURL: e2eAPI,
 		})
 		return
 	}
@@ -1211,6 +1226,12 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 		c.GUID = guid
 		c.RemoteURL = remoteURL
 		c.RemoteAPIURL = remoteAPIURL
+		// The E2E pair is stored exactly as the cloud sent it (both, one, or
+		// none) and never derived; ReconfigureTunnel registers the https
+		// proxies only when both are present and well formed, and every
+		// surface shows them only then (servedE2EURLs).
+		c.RemoteE2EURL = res.RemoteE2EURL
+		c.RemoteAPIE2EURL = res.RemoteAPIE2EURL
 		// Reconcile (not just "seed when empty"): filling the boot-seeded phantom
 		// adopts its pH+ORP defaults, and a bare `len==0` guard would then leave a
 		// VIOLET registered as the first controller without its chlorine rule.
@@ -1232,8 +1253,10 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 	if err := s.reconfigureTunnel(); err != nil {
 		slog.Warn("tunnel reconfigure", "err", err)
 	}
+	e2eCtrl, e2eAPI := s.servedE2EURLs(state.Controller{GUID: guid, RemoteE2EURL: res.RemoteE2EURL, RemoteAPIE2EURL: res.RemoteAPIE2EURL})
 	writeJSON(w, http.StatusOK, wire.ControllerConfigResponse{
 		GUID: guid, RemoteURL: remoteURL, RemoteAPIURL: remoteAPIURL,
+		RemoteE2EURL: e2eCtrl, RemoteAPIE2EURL: e2eAPI,
 	})
 }
 
@@ -1276,6 +1299,7 @@ func (s *Server) getControllers(w http.ResponseWriter, _ *http.Request) {
 		if c.LanAddress == "" {
 			continue
 		}
+		e2eCtrl, e2eAPI := s.servedE2EURLs(c)
 		info := wire.ControllerInfo{
 			GUID:         c.GUID,
 			Label:        c.Label,
@@ -1283,6 +1307,9 @@ func (s *Server) getControllers(w http.ResponseWriter, _ *http.Request) {
 			RemoteURL:    c.RemoteURL,
 			RemoteAPIURL: c.RemoteAPIURL,
 			Preset:       c.EffectivePreset(),
+			// Never derived, and only what the relay serves (servedE2EURLs).
+			RemoteE2EURL:    e2eCtrl,
+			RemoteAPIE2EURL: e2eAPI,
 		}
 		if info.RemoteAPIURL == "" {
 			info.RemoteAPIURL = deriveRemoteAPIURL(c.GUID, st.Cloud.FRPS.SubdomainHost)
@@ -1411,10 +1438,19 @@ func (s *Server) webSessionHandler(w http.ResponseWriter, r *http.Request) {
 	// The token is base64url plus "." separators — every byte is already safe in
 	// a query value, so no escaping is needed or wanted (escaping would change
 	// the bytes the filter verifies).
-	writeJSON(w, http.StatusOK, wire.WebSessionResponse{
+	//
+	// The same token also goes into SessionE2EURL, on the controller's
+	// end-to-end host, when it has one (poolpilot-relay#80): the token binds
+	// the guid and not a hostname, and ctrlfilter maps "<guid>-e2e" onto the
+	// same guid, so it redeems on either host — once (the nonce is burned).
+	resp := wire.WebSessionResponse{
 		SessionURL: ctrl.RemoteURL + ctrlfilter.SessionPath + "?t=" + token,
 		ExpiresIn:  int(ctrlfilter.TokenTTL / time.Second),
-	})
+	}
+	if e2eCtrl, _ := s.servedE2EURLs(ctrl); e2eCtrl != "" {
+		resp.SessionE2EURL = e2eCtrl + ctrlfilter.SessionPath + "?t=" + token
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // rotateControllerHandler serves POST /v1/controllers/{guid}/rotate (issue
@@ -1510,6 +1546,9 @@ func (s *Server) rotateControllerHandler(w http.ResponseWriter, r *http.Request)
 		c.GUID = res.GUID
 		c.RemoteURL = res.RemoteURL
 		c.RemoteAPIURL = remoteAPIURL
+		// Overwritten even when empty: the old E2E URLs name the revoked guid.
+		c.RemoteE2EURL = res.RemoteE2EURL
+		c.RemoteAPIE2EURL = res.RemoteAPIE2EURL
 	})
 	if err != nil {
 		// Cloud already rotated but the local persist failed (a state.json write
@@ -1535,8 +1574,10 @@ func (s *Server) rotateControllerHandler(w http.ResponseWriter, r *http.Request)
 	// reconciled by the next request/restart anyway, so ordering it last is safe;
 	// the app should still treat a dropped rotate response as "may have applied"
 	// and re-fetch GET /v1/controllers (contract note for pool-apps).
+	e2eCtrl, e2eAPI := s.servedE2EURLs(state.Controller{GUID: res.GUID, RemoteE2EURL: res.RemoteE2EURL, RemoteAPIE2EURL: res.RemoteAPIE2EURL})
 	writeJSON(w, http.StatusOK, wire.ControllerConfigResponse{
 		GUID: res.GUID, RemoteURL: res.RemoteURL, RemoteAPIURL: remoteAPIURL,
+		RemoteE2EURL: e2eCtrl, RemoteAPIE2EURL: e2eAPI,
 	})
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
@@ -1717,6 +1758,178 @@ func deriveRemoteAPIURL(guid, subdomainHost string) string {
 	return "https://" + guid + wire.APISubdomainSuffix + "." + subdomainHost
 }
 
+// e2eLabels returns the subdomain labels of c's two end-to-end https proxies,
+// taken from the leading label of the cloud-delivered RemoteE2EURL /
+// RemoteAPIE2EURL — or ("", "") when the controller should get no E2E
+// proxies: either URL missing, not https, without a host below the label, a
+// label that does not start with this controller's own GUID, or both URLs on
+// the same label. The cloud's frps plugin is the authority on which labels a
+// relay may register; this only keeps a malformed value from reaching frp
+// (where one bad proxy would fail the whole config) or steering a proxy onto
+// another controller's name.
+func e2eLabels(c state.Controller) (ctrlLabel, apiLabel string) {
+	ctrlLabel, ok1 := e2eLabel(c.RemoteE2EURL, c.GUID)
+	apiLabel, ok2 := e2eLabel(c.RemoteAPIE2EURL, c.GUID)
+	if !ok1 || !ok2 || ctrlLabel == apiLabel {
+		return "", ""
+	}
+	return ctrlLabel, apiLabel
+}
+
+// servedE2EURLs is the E2E pair every app-facing surface shows for c: the
+// stored URLs only when the relay actually serves them — the E2E listener is
+// configured AND e2eLabels accepts the pair, i.e. exactly when
+// ReconfigureTunnel registers c's two https proxies — else ("", ""). The app
+// reads the URLs' presence as "the pinned remote leg exists", so a URL with no
+// proxy behind it would turn "returns after the Relay's update" into an
+// unexplained "unreachable". The raw values stay stored either way.
+func (s *Server) servedE2EURLs(c state.Controller) (ctrlURL, apiURL string) {
+	if s.E2EAddr == "" {
+		return "", ""
+	}
+	if l, _ := e2eLabels(c); l == "" {
+		return "", ""
+	}
+	return c.RemoteE2EURL, c.RemoteAPIE2EURL
+}
+
+func e2eLabel(raw, guid string) (string, bool) {
+	if raw == "" || guid == "" {
+		return "", false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" {
+		return "", false
+	}
+	label, rest, ok := strings.Cut(strings.ToLower(u.Hostname()), ".")
+	if !ok || rest == "" || !strings.HasPrefix(label, strings.ToLower(guid)) {
+		return "", false
+	}
+	return label, true
+}
+
+// DefaultE2EBackfillInterval is RunE2EBackfill's fast cadence: how often it
+// re-asks the cloud while any registered controller still lacks its E2E URLs.
+const DefaultE2EBackfillInterval = time.Hour
+
+// DefaultE2ERecheckInterval is RunE2EBackfill's slow cadence once every
+// registered controller has its E2E URLs. It bounds how long a complete relay
+// keeps advertising and registering an E2E plane the cloud has withdrawn.
+const DefaultE2ERecheckInterval = 12 * time.Hour
+
+// RunE2EBackfill keeps every registered controller's E2E URLs in step with the
+// control plane (poolpilot-relay#80): it runs BackfillE2E at once — main starts
+// it after the boot-time tunnel resume — then every E2EBackfillInterval while
+// any registered controller lacks its pair, and every E2ERecheckInterval once
+// none does. The slow re-check never stops, because it is how a complete relay
+// hears the cloud withdraw the E2E plane (BackfillE2E's clear). Every error
+// just waits for the next tick: an older cloud without the route
+// (ErrNotSupported) is the normal state during the rollout.
+func (s *Server) RunE2EBackfill(ctx context.Context) error {
+	fast, slow := s.E2EBackfillInterval, s.E2ERecheckInterval
+	if fast <= 0 {
+		fast = DefaultE2EBackfillInterval
+	}
+	if slow <= 0 {
+		slow = DefaultE2ERecheckInterval
+	}
+	for {
+		if err := s.BackfillE2E(ctx); err != nil {
+			if errors.Is(err, cloud.ErrNotSupported) {
+				slog.Debug("E2E URL backfill: the control plane has no GET /controllers yet", "err", err)
+			} else {
+				slog.Info("E2E URL backfill deferred to the next tick", "err", err)
+			}
+		}
+		interval := slow
+		if e2eMissing(s.Store.Get()) {
+			interval = fast
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(interval):
+		}
+	}
+}
+
+// e2eMissing reports whether any registered controller lacks its E2E pair.
+func e2eMissing(st state.State) bool {
+	for _, c := range st.Controllers {
+		if c.LanAddress != "" && c.GUID != "" && (c.RemoteE2EURL == "" || c.RemoteAPIE2EURL == "") {
+			return true
+		}
+	}
+	return false
+}
+
+// BackfillE2E reads the E2E URLs of this relay's controllers from the control
+// plane (relay-authed GET /controllers), persists any change, and reconfigures
+// the tunnel when something changed. Per GUID present in a 200 answer:
+//
+//   - both URLs set: stored (the cloud is authoritative, so a differing pair
+//     is overwritten);
+//   - both URLs empty: the stored pair is CLEARED — the cloud's off-switch
+//     for the E2E plane, which takes the https proxies down and stops every
+//     surface advertising them;
+//   - exactly one set: malformed, the stored pair is left alone.
+//
+// A GUID absent from the answer, and any error (old cloud, outage, refusal),
+// change nothing. No request is made when the relay is not enrolled, its
+// tunnel is parked, or it has no registered controller.
+//
+// Entries are matched by GUID, so a controller rotated or deleted while the
+// request was in flight is never written (its old GUID no longer matches a
+// row); the persist is also bound to the household the read started under,
+// like the controller handlers'.
+func (s *Server) BackfillE2E(ctx context.Context) error {
+	st := s.Store.Get()
+	if !st.Enrolled() || st.TunnelParked() {
+		return nil
+	}
+	registered := false
+	for _, c := range st.Controllers {
+		if c.LanAddress != "" && c.GUID != "" {
+			registered = true
+			break
+		}
+	}
+	if !registered {
+		return nil
+	}
+	res, err := s.Cloud.ListControllers(ctx)
+	if err != nil {
+		return err
+	}
+	byGUID := make(map[string]wire.CloudControllerInfo, len(res.Controllers))
+	for _, c := range res.Controllers {
+		// Both set or both empty; a half pair is malformed and ignored.
+		if c.GUID != "" && (c.RemoteE2EURL == "") == (c.RemoteAPIE2EURL == "") {
+			byGUID[c.GUID] = c
+		}
+	}
+	changed := false
+	if _, err := s.Store.UpdateIfToken(st.Cloud.FrpcToken, func(doc *state.State) {
+		for i := range doc.Controllers {
+			c := &doc.Controllers[i]
+			info, ok := byGUID[c.GUID]
+			if !ok || c.GUID == "" {
+				continue
+			}
+			if c.RemoteE2EURL != info.RemoteE2EURL || c.RemoteAPIE2EURL != info.RemoteAPIE2EURL {
+				c.RemoteE2EURL, c.RemoteAPIE2EURL = info.RemoteE2EURL, info.RemoteAPIE2EURL
+				changed = true
+			}
+		}
+	}); err != nil {
+		return fmt.Errorf("lanapi: persist backfilled E2E URLs: %w", err)
+	}
+	if !changed {
+		return nil
+	}
+	return s.reconfigureTunnel()
+}
+
 // reconfigureTunnel pushes the current persisted state into the frp tunnel.
 // Also called from main on boot when a controller is already configured.
 func (s *Server) reconfigureTunnel() error {
@@ -1727,7 +1940,7 @@ func (s *Server) reconfigureTunnel() error {
 	if s.afterTunnelStateRead != nil {
 		s.afterTunnelStateRead() // test seam: widen the read→apply window
 	}
-	return ReconfigureTunnel(s.Tunnel, st, s.TunnelAddr, s.CtrlFilter)
+	return ReconfigureTunnel(s.Tunnel, st, s.TunnelAddr, s.E2EAddr, s.CtrlFilter)
 }
 
 // ApplyTunnelState re-applies the tunnel from the current persisted state —
@@ -1819,7 +2032,11 @@ func materializeFrpsCA(caPEM string) (string, error) {
 // pre-poolpilot-cloud#27 passthrough behaviour: LocalAddr is the controller's raw address,
 // unfiltered — kept only for callers/tests that don't wire ctrlfilter in; a
 // real deployment always passes one (see main.go).
-func ReconfigureTunnel(t tunnel.Tunnel, st state.State, apiLocalAddr string, filter *ctrlfilter.Server) error {
+//
+// e2eLocalAddr is the loopback E2E TLS listener (poolpilot-relay#80); empty
+// disables the E2E https proxies. Each controller's E2E labels come from its
+// cloud-delivered URLs (see e2eLabels) — never derived here.
+func ReconfigureTunnel(t tunnel.Tunnel, st state.State, apiLocalAddr, e2eLocalAddr string, filter *ctrlfilter.Server) error {
 	var specs []tunnel.ProxySpec
 	var targets map[string]ctrlfilter.Target
 	filterEnabled := filter != nil && filter.Addr != ""
@@ -1847,7 +2064,11 @@ func ReconfigureTunnel(t tunnel.Tunnel, st state.State, apiLocalAddr string, fil
 			targets[ctrl.GUID] = ctrlfilter.Target{BaseURL: scheme + "://" + localAddr}
 			proxyLocalAddr = filter.Addr
 		}
-		specs = append(specs, tunnel.ProxySpec{GUID: ctrl.GUID, LocalAddr: proxyLocalAddr})
+		ctrlLabel, apiLabel := e2eLabels(ctrl)
+		specs = append(specs, tunnel.ProxySpec{
+			GUID: ctrl.GUID, LocalAddr: proxyLocalAddr,
+			E2ECtrlLabel: ctrlLabel, E2EAPILabel: apiLabel,
+		})
 	}
 	if filterEnabled {
 		filter.SetTargets(targets)
@@ -1867,6 +2088,9 @@ func ReconfigureTunnel(t tunnel.Tunnel, st state.State, apiLocalAddr string, fil
 	// frp needs a host:port; a host-less bind like ":8480" becomes loopback.
 	if apiLocalAddr != "" && strings.HasPrefix(apiLocalAddr, ":") {
 		apiLocalAddr = "127.0.0.1" + apiLocalAddr
+	}
+	if e2eLocalAddr != "" && strings.HasPrefix(e2eLocalAddr, ":") {
+		e2eLocalAddr = "127.0.0.1" + e2eLocalAddr
 	}
 	// Issue poolpilot-cloud#31: materialize the delivered CA (if any) to a file frp can open,
 	// and pin the tunnel server against it. FAIL CLOSED on error: CAPEM ==
@@ -1894,6 +2118,7 @@ func ReconfigureTunnel(t tunnel.Tunnel, st state.State, apiLocalAddr string, fil
 		Controllers:    specs,
 		SubdomainHost:  st.Cloud.FRPS.SubdomainHost,
 		APILocalAddr:   apiLocalAddr,
+		E2ELocalAddr:   e2eLocalAddr,
 		FrpsCAFile:     caFile,
 		FrpsServerName: st.Cloud.FRPS.ServerName,
 	})
@@ -1938,7 +2163,10 @@ func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 		singular = controllers[0]
 	}
 
-	tunnelStatus := wire.TunnelStatus{State: ts.State, LastError: ts.LastErr, APIState: ts.APIState}
+	tunnelStatus := wire.TunnelStatus{
+		State: ts.State, LastError: ts.LastErr, APIState: ts.APIState,
+		E2EState: ts.E2EState, E2ELastError: ts.E2ELastErr, E2EAPIState: ts.E2EAPIState,
+	}
 	if msg := parkedReason(st); msg != "" {
 		// Parked (poolpilot-cloud#242): the tunnel reads "disabled"; say why in
 		// the existing last_error field — no shape change.
@@ -1985,13 +2213,21 @@ func (s *Server) controllerStatus(st state.State, c state.Controller, ps tunnel.
 	if tunnelState == "" {
 		tunnelState = "disabled"
 	}
+	e2eCtrl, e2eAPI := s.servedE2EURLs(c)
 	cs := wire.ControllerStatus{
 		GUID:         c.GUID,
 		Label:        c.Label,
 		Configured:   true,
 		Reachable:    snap.Reachable,
 		RemoteAPIURL: c.RemoteAPIURL,
-		Tunnel:       wire.TunnelStatus{State: tunnelState, LastError: ps.LastErr, APIState: ps.APIState},
+		// Never derived (unlike RemoteAPIURL below), and only what the relay
+		// serves (servedE2EURLs).
+		RemoteE2EURL:    e2eCtrl,
+		RemoteAPIE2EURL: e2eAPI,
+		Tunnel: wire.TunnelStatus{
+			State: tunnelState, LastError: ps.LastErr, APIState: ps.APIState,
+			E2EState: ps.E2EState, E2ELastError: ps.E2ELastErr, E2EAPIState: ps.E2EAPIState,
+		},
 	}
 	if msg := parkedReason(st); msg != "" {
 		cs.Tunnel.LastError = msg

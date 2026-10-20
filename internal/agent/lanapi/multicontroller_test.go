@@ -558,7 +558,7 @@ func TestReconfigureTunnelMultipleControllers(t *testing.T) {
 			{GUID: "gp", LanAddress: ""},                            // phantom → skip
 		},
 	}
-	if err := ReconfigureTunnel(ft, st, "127.0.0.1:8480", nil); err != nil {
+	if err := ReconfigureTunnel(ft, st, "127.0.0.1:8480", "", nil); err != nil {
 		t.Fatalf("reconfigure: %v", err)
 	}
 	cfg := ft.last()
@@ -594,7 +594,7 @@ func TestReconfigureTunnelMaterializesFrpsCA(t *testing.T) {
 		}},
 		Controllers: []state.Controller{{GUID: "g1", LanAddress: "192.168.2.3"}},
 	}
-	if err := ReconfigureTunnel(ft, st, "127.0.0.1:8480", nil); err != nil {
+	if err := ReconfigureTunnel(ft, st, "127.0.0.1:8480", "", nil); err != nil {
 		t.Fatalf("reconfigure: %v", err)
 	}
 	cfg := ft.last()
@@ -626,7 +626,7 @@ func TestReconfigureTunnelNoCAPEMLeavesFrpsCAFileEmpty(t *testing.T) {
 		Cloud:       state.Cloud{FrpcToken: "relay-tok", FRPS: state.FRPS{ServerAddr: "frps", ServerPort: 7000, AuthToken: "shared"}},
 		Controllers: []state.Controller{{GUID: "g1", LanAddress: "192.168.2.3"}},
 	}
-	if err := ReconfigureTunnel(ft, st, "127.0.0.1:8480", nil); err != nil {
+	if err := ReconfigureTunnel(ft, st, "127.0.0.1:8480", "", nil); err != nil {
 		t.Fatalf("reconfigure: %v", err)
 	}
 	cfg := ft.last()
@@ -658,7 +658,7 @@ func TestReconfigureTunnelFailsClosedWhenCAMaterializeErrors(t *testing.T) {
 		}},
 		Controllers: []state.Controller{{GUID: "g1", LanAddress: "192.168.2.3"}},
 	}
-	err := ReconfigureTunnel(ft, st, "127.0.0.1:8480", nil)
+	err := ReconfigureTunnel(ft, st, "127.0.0.1:8480", "", nil)
 	if err == nil {
 		t.Fatal("ReconfigureTunnel returned nil error; want a fail-closed error when CA materialization fails")
 	}
@@ -685,7 +685,7 @@ func TestReconfigureTunnelWithCtrlFilterRewiresLocalAddr(t *testing.T) {
 			{GUID: "g2", Preset: "violet", LanAddress: "192.168.2.9", UseHTTPS: true},
 		},
 	}
-	if err := ReconfigureTunnel(ft, st, "127.0.0.1:8480", filter); err != nil {
+	if err := ReconfigureTunnel(ft, st, "127.0.0.1:8480", "", filter); err != nil {
 		t.Fatalf("reconfigure: %v", err)
 	}
 	cfg := ft.last()
@@ -718,7 +718,7 @@ func TestReconfigureTunnelNilFilterIsPassthrough(t *testing.T) {
 		Cloud:       state.Cloud{FrpcToken: "relay-tok", FRPS: state.FRPS{ServerAddr: "frps", ServerPort: 7000, AuthToken: "shared"}},
 		Controllers: []state.Controller{{GUID: "g1", Preset: "procon-ip", LanAddress: "192.168.2.3"}},
 	}
-	if err := ReconfigureTunnel(ft, st, "127.0.0.1:8480", nil); err != nil {
+	if err := ReconfigureTunnel(ft, st, "127.0.0.1:8480", "", nil); err != nil {
 		t.Fatalf("reconfigure: %v", err)
 	}
 	cfg := ft.last()
@@ -746,7 +746,7 @@ func TestReconfigureTunnelNormalizesLocalAddr(t *testing.T) {
 	// The captured config carries a canonical host:port LocalAddr for each —
 	// SplitHostPort-safe, matching the NormalizeLanAddress output exactly.
 	ft := &fakeTunnel{}
-	if err := ReconfigureTunnel(ft, st, "127.0.0.1:8480", nil); err != nil {
+	if err := ReconfigureTunnel(ft, st, "127.0.0.1:8480", "", nil); err != nil {
 		t.Fatalf("reconfigure: %v", err)
 	}
 	cfg := ft.last()
@@ -763,7 +763,7 @@ func TestReconfigureTunnelNormalizesLocalAddr(t *testing.T) {
 	// End-to-end: the REAL tunnel's translate must ACCEPT the whole config. The
 	// old ad-hoc port-defaulting made translate fail on these addresses, so
 	// Configure rejected every controller — not just the malformed one.
-	if err := ReconfigureTunnel(tunnel.New(), st, "127.0.0.1:8480", nil); err != nil {
+	if err := ReconfigureTunnel(tunnel.New(), st, "127.0.0.1:8480", "", nil); err != nil {
 		t.Fatalf("real tunnel rejected the whole config on a normalizable address: %v", err)
 	}
 }

@@ -17,6 +17,15 @@
 //	                 to (default 127.0.0.1:8481) — the authenticated,
 //	                 credential-gated proxy (poolpilot-cloud#27) standing in front of
 //	                 every controller's real address
+//	E2E_LISTEN       loopback TLS bind every end-to-end https frp proxy
+//	                 forwards to (default 127.0.0.1:8482; poolpilot-relay#80).
+//	                 Serves the existing LAN certificate (same SPKI pin as the
+//	                 LAN API) with a TLS 1.2 floor, so the remote leg is
+//	                 encrypted end to end between app and relay; demuxes
+//	                 <guid>-api-e2e onto the tunneled LAN API and <guid>-e2e
+//	                 onto the controller filter. Its proxies are registered
+//	                 only once the cloud delivers a controller's E2E URLs.
+//	                 A Home Assistant lan_port on this port is ignored.
 //	POLL_INTERVAL    default controller poll cadence, Go duration (default 60s; e2e: 1s);
 //	                 an app-set PUT /v1/poll-interval value (persisted) takes precedence
 //	MDNS_DISABLED    "1" disables the mDNS announcer (docker/e2e)
@@ -67,6 +76,7 @@ import (
 	"github.com/ylabonte/poolpilot-relay/internal/agent/announce"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/cloud"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/ctrlfilter"
+	"github.com/ylabonte/poolpilot-relay/internal/agent/e2e"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/lanapi"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/lifecycle"
 	"github.com/ylabonte/poolpilot-relay/internal/agent/poller"
@@ -230,8 +240,7 @@ func run() error {
 	// record from it so the advertised port can never diverge from the bind. A
 	// Home Assistant lan_port option (if any) must not land on a port the agent
 	// already uses for its loopback frp proxies.
-	lanListen := resolveLanListen(os.Getenv("HA_OPTIONS"),
-		lanPort(lanapi.TunnelListen()), lanPort(ctrlfilter.Listen()))
+	lanListen := resolveLanListen(os.Getenv("HA_OPTIONS"), reservedLoopbackPorts()...)
 	// Quiet the dnssd library's own INFO chatter (harmless RFC 6762 sanitize
 	// notices) by default; MDNS_VERBOSE_LOGS / the HA `mdns_verbose_logs` option
 	// re-enables it. Set once, before the announcer starts.
@@ -267,6 +276,7 @@ func run() error {
 		Cert:         cert,
 		Addr:         lanListen,
 		TunnelAddr:   lanapi.TunnelListen(),
+		E2EAddr:      e2e.Listen(),
 		CtrlFilter:   ctrlFilter,
 		CloudBaseURL: cloudBaseURL,
 		OnPaired:     announcer,
@@ -309,9 +319,26 @@ func run() error {
 		if boot.Cloud.FRPS.AuthToken == "" {
 			boot.Cloud.FRPS.AuthToken = os.Getenv("FRPS_AUTH_TOKEN")
 		}
-		if err := lanapi.ReconfigureTunnel(tun, boot, lanapi.TunnelListen(), ctrlFilter); err != nil {
+		if err := lanapi.ReconfigureTunnel(tun, boot, lanapi.TunnelListen(), e2e.Listen(), ctrlFilter); err != nil {
 			slog.Warn("tunnel resume failed", "err", err)
 		}
+	}
+
+	// The end-to-end listener (poolpilot-relay#80): the E2E https proxies land
+	// here, TLS terminates with the SAME LAN certificate (never a new one, so
+	// the app's pairing pin authenticates this leg too), and both planes are
+	// mounted in process — the tunnel route set, whose LAN-only ceremonies stay
+	// 403 lan_only, and the controller filter. Only labels naming one of this
+	// relay's controllers are served.
+	e2eServer := &e2e.Server{
+		Addr: e2e.Listen(),
+		Cert: cert,
+		API:  api.TunnelHandler(),
+		Ctrl: ctrlFilter.Handler(),
+		KnownGUID: func(guid string) bool {
+			_, ok := ctrlFilter.Lookup(guid)
+			return ok
+		},
 	}
 
 	// Supervisor: each subsystem restarts independently with backoff — a
@@ -320,6 +347,10 @@ func run() error {
 	supervise(ctx, &wg, "lanapi", api.Run)
 	supervise(ctx, &wg, "lanapi-tunnel", api.RunTunnelListener)
 	supervise(ctx, &wg, "ctrlfilter", ctrlFilter.Run)
+	supervise(ctx, &wg, "e2e", e2eServer.Run)
+	// After the boot-time resume above: fills in E2E URLs the cloud did not
+	// hand out at registration, hourly while any is missing.
+	supervise(ctx, &wg, "e2e-backfill", api.RunE2EBackfill)
 	supervise(ctx, &wg, "tunnel", tun.Run)
 	supervise(ctx, &wg, "poller", poll.Run)
 	supervise(ctx, &wg, "announce", announcer.Run)
@@ -422,6 +453,13 @@ func bootHasRegisteredController(st state.State) bool {
 		}
 	}
 	return false
+}
+
+// reservedLoopbackPorts is every loopback port the agent binds for its frp
+// proxies — the tunneled LAN API, the controller filter and the E2E TLS
+// listener — which a Home Assistant lan_port must not collide with.
+func reservedLoopbackPorts() []int {
+	return []int{lanPort(lanapi.TunnelListen()), lanPort(ctrlfilter.Listen()), lanPort(e2e.Listen())}
 }
 
 // lanPort extracts the numeric port from a host:port (or ":port") bind address,

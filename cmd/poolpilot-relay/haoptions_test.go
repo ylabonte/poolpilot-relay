@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -243,4 +244,23 @@ func TestResolveMDNSVerbose(t *testing.T) {
 			t.Error("default must be off (no env var, no HA option)")
 		}
 	})
+}
+
+// Every loopback listener the agent binds is off-limits for the HA lan_port —
+// the E2E TLS listener (poolpilot-relay#80) included, defaults and overrides
+// alike.
+func TestReservedLoopbackPortsIncludeE2E(t *testing.T) {
+	t.Setenv("TUNNEL_LISTEN", "")
+	t.Setenv("CTRL_FILTER_LISTEN", "")
+	t.Setenv("E2E_LISTEN", "")
+	if got := reservedLoopbackPorts(); !slices.Equal(got, []int{8480, 8481, 8482}) {
+		t.Errorf("defaults = %v, want [8480 8481 8482]", got)
+	}
+	t.Setenv("E2E_LISTEN", "127.0.0.1:9482")
+	if got := reservedLoopbackPorts(); !slices.Contains(got, 9482) {
+		t.Errorf("override = %v, want it to contain 9482", got)
+	}
+	if got := resolveLanListen(writeOptions(t, `{"lan_port": 9482}`), reservedLoopbackPorts()...); got != lanapi.DefaultListen {
+		t.Errorf("lan_port on the E2E port = %q, want the default %q", got, lanapi.DefaultListen)
+	}
 }

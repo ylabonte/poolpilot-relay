@@ -292,3 +292,42 @@ func TestSeedCloudSyncFlagsControllersWithACloudIdentityOnce(t *testing.T) {
 		t.Fatalf("second pass must be a no-op: seeded=%v flags=%v/%v", got.CloudSyncSeeded, got.Controllers[0].CloudSyncPending, got.Controllers[2].CloudSyncPending)
 	}
 }
+
+// The cloud-delivered end-to-end URLs (poolpilot-relay#80) survive a persist +
+// reopen under their own JSON names, and an older state file without them
+// loads as "no E2E URLs" — never an error.
+func TestControllerE2EURLsRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := st.Update(func(s *State) {
+		s.Controllers = []Controller{
+			{LanAddress: "192.168.2.3", GUID: "g1",
+				RemoteE2EURL: "https://g1-e2e.remote.example", RemoteAPIE2EURL: "https://g1-api-e2e.remote.example"},
+			{LanAddress: "192.168.2.4", GUID: "g2"},
+		}
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"remote_e2e_url": "https://g1-e2e.remote.example"`) ||
+		!strings.Contains(string(raw), `"remote_api_e2e_url": "https://g1-api-e2e.remote.example"`) {
+		t.Errorf("state file lacks the E2E URLs under their JSON names:\n%s", raw)
+	}
+	st2, err := Open(path)
+	if err != nil {
+		t.Fatalf("Reopen: %v", err)
+	}
+	s := st2.Get()
+	if c := s.Controllers[0]; c.RemoteE2EURL != "https://g1-e2e.remote.example" || c.RemoteAPIE2EURL != "https://g1-api-e2e.remote.example" {
+		t.Errorf("E2E URLs round-trip: %+v", c)
+	}
+	if c := s.Controllers[1]; c.RemoteE2EURL != "" || c.RemoteAPIE2EURL != "" {
+		t.Errorf("controller without E2E URLs gained some: %+v", c)
+	}
+}

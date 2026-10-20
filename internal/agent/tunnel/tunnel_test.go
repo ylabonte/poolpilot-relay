@@ -317,6 +317,11 @@ func TestNeedsRestart(t *testing.T) {
 		{"change local addr", proxyOnly(func(c *Config) { c.Controllers[0].LocalAddr = "192.168.2.99:8080" }), false},
 		{"toggle api local addr", proxyOnly(func(c *Config) { c.APILocalAddr = "127.0.0.1:8480" }), false},
 		{"change subdomain host", proxyOnly(func(c *Config) { c.SubdomainHost = "other.example" }), false},
+		{"gain e2e labels", proxyOnly(func(c *Config) {
+			c.E2ELocalAddr = "127.0.0.1:8482"
+			c.Controllers[0].E2ECtrlLabel = c.Controllers[0].GUID + "-e2e"
+			c.Controllers[0].E2EAPILabel = c.Controllers[0].GUID + "-api-e2e"
+		}), false},
 		{"change server addr", proxyOnly(func(c *Config) { c.ServerAddr = "other-frps.example" }), true},
 		{"change server port", proxyOnly(func(c *Config) { c.ServerPort = 7443 }), true},
 		{"change auth token", proxyOnly(func(c *Config) { c.AuthToken = "rotated-token" }), true},
