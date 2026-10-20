@@ -39,7 +39,7 @@ type Filter struct {
 
 	dropped  atomic.Uint64 // total, for Dropped()
 	pending  atomic.Uint64 // since the last summary
-	lastEmit atomic.Int64  // unix nanos of the last summary (or creation)
+	lastEmit atomic.Int64  // unix nanos of the last summary (one interval before creation at start)
 	lastAddr atomic.Pointer[string]
 }
 
@@ -53,7 +53,9 @@ func NewFilter(sink func(line string)) *Filter {
 
 func newFilter(sink func(string), interval time.Duration, now func() time.Time, summary func(uint64, string)) *Filter {
 	f := &Filter{sink: sink, summary: summary, now: now, interval: interval}
-	f.lastEmit.Store(now().UnixNano())
+	// Start one interval in the past, so the very first drop is reported at once (a lone
+	// silent pin rejection on first setup must leave a trace); later drops are batched.
+	f.lastEmit.Store(now().Add(-interval).UnixNano())
 	return f
 }
 

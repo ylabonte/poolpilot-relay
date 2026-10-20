@@ -89,22 +89,25 @@ func TestSummaryIsRateLimitedAndCounted(t *testing.T) {
 	if len(sums) != 0 {
 		t.Fatal("summary without drops")
 	}
-	drop("10.0.0.1:1")
+	drop("10.0.0.1:1") // the very first drop is reported at once
+	if len(sums) != 1 || sums[0] != (sum{1, "10.0.0.1:1"}) {
+		t.Fatalf("want the first drop reported immediately, got %v", sums)
+	}
 	drop("10.0.0.2:2")
 	drop("10.0.0.3:3")
-	if len(sums) != 0 {
+	if len(sums) != 1 {
 		t.Fatalf("summary inside the interval: %v", sums)
 	}
 	now = now.Add(time.Minute)
 	drop("10.0.0.4:4") // first drop after the interval carries the summary
 	drop("10.0.0.5:5")
-	if len(sums) != 1 || sums[0] != (sum{4, "10.0.0.4:4"}) {
-		t.Fatalf("want one summary of 4 ending at 10.0.0.4:4, got %v", sums)
+	if len(sums) != 2 || sums[1] != (sum{3, "10.0.0.4:4"}) {
+		t.Fatalf("want a summary of 3 ending at 10.0.0.4:4, got %v", sums)
 	}
 	now = now.Add(time.Minute)
 	drop("10.0.0.6:6")
-	if len(sums) != 2 || sums[1] != (sum{2, "10.0.0.6:6"}) {
-		t.Fatalf("second interval: %v", sums)
+	if len(sums) != 3 || sums[2] != (sum{2, "10.0.0.6:6"}) {
+		t.Fatalf("third interval: %v", sums)
 	}
 	if f.Dropped() != 6 {
 		t.Fatalf("Dropped()=%d", f.Dropped())
