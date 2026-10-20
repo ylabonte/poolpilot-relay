@@ -2,7 +2,10 @@ package tlslog
 
 import (
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func collect(t *testing.T) (*Filter, *[]string) {
@@ -67,5 +70,62 @@ func TestFilterMultiLineAndPartialWrites(t *testing.T) {
 	_, _ = f3.Write([]byte("http: TLS handshake error from 1.2.3.4:5: EOF"))
 	if len(*got3) != 1 || f3.Dropped() != 1 {
 		t.Fatalf("unterminated line lost: %q", *got3)
+	}
+}
+
+func TestSummaryIsRateLimitedAndCounted(t *testing.T) {
+	type sum struct {
+		n    uint64
+		addr string
+	}
+	var sums []sum
+	now := time.Unix(1000, 0)
+	f := newFilter(func(string) {}, time.Minute, func() time.Time { return now },
+		func(n uint64, a string) { sums = append(sums, sum{n, a}) })
+	drop := func(addr string) {
+		_, _ = f.Write([]byte("http: TLS handshake error from " + addr + ": EOF\n"))
+	}
+
+	if len(sums) != 0 {
+		t.Fatal("summary without drops")
+	}
+	drop("10.0.0.1:1")
+	drop("10.0.0.2:2")
+	drop("10.0.0.3:3")
+	if len(sums) != 0 {
+		t.Fatalf("summary inside the interval: %v", sums)
+	}
+	now = now.Add(time.Minute)
+	drop("10.0.0.4:4") // first drop after the interval carries the summary
+	drop("10.0.0.5:5")
+	if len(sums) != 1 || sums[0] != (sum{4, "10.0.0.4:4"}) {
+		t.Fatalf("want one summary of 4 ending at 10.0.0.4:4, got %v", sums)
+	}
+	now = now.Add(time.Minute)
+	drop("10.0.0.6:6")
+	if len(sums) != 2 || sums[1] != (sum{2, "10.0.0.6:6"}) {
+		t.Fatalf("second interval: %v", sums)
+	}
+	if f.Dropped() != 6 {
+		t.Fatalf("Dropped()=%d", f.Dropped())
+	}
+}
+
+func TestSummaryRaceSafe(t *testing.T) {
+	var emitted atomic.Uint64
+	f := newFilter(func(string) {}, 0, time.Now, func(n uint64, _ string) { emitted.Add(n) })
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				_, _ = f.Write([]byte("http: TLS handshake error from 1.2.3.4:5: EOF\n"))
+			}
+		}()
+	}
+	wg.Wait()
+	if f.Dropped() != 1600 || emitted.Load() > 1600 {
+		t.Fatalf("dropped=%d emitted=%d", f.Dropped(), emitted.Load())
 	}
 }

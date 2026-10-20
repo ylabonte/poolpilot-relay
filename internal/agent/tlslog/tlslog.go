@@ -4,43 +4,83 @@
 // The app's discovery probe does exactly that on every refresh. Genuine
 // handshake failures (bad certificate, unknown CA, protocol-version errors,
 // non-TLS bytes on the TLS port) look different and are passed through.
+//
+// A client that rejects the certificate by silently closing the connection
+// (no TLS alert) also surfaces as EOF and is suppressed too. Clients that do
+// send an alert ("bad certificate" etc.) stay visible, and pin failures are
+// diagnosed from the app's own logs.
 package tlslog
 
 import (
+	"fmt"
 	"log"
 	"log/slog"
 	"regexp"
 	"strings"
 	"sync/atomic"
+	"time"
 )
 
 // preHandshakeEOF matches exactly the stdlib line for a pre-handshake
 // disconnect: the error text is just "EOF" or "unexpected EOF".
-var preHandshakeEOF = regexp.MustCompile(`^http: TLS handshake error from \S+: (?:unexpected )?EOF$`)
+var preHandshakeEOF = regexp.MustCompile(`^http: TLS handshake error from (\S+): (?:unexpected )?EOF$`)
+
+// SummaryInterval is the most often a drop summary is logged.
+const SummaryInterval = 10 * time.Minute
 
 // Filter is an io.Writer for log.New that drops pre-handshake-disconnect
-// lines and hands every other line to a sink.
+// lines and hands every other line to a sink. Drops are not silent: the next
+// drop after SummaryInterval logs one Info summary (no goroutine or ticker).
 type Filter struct {
-	sink    func(line string)
-	dropped atomic.Uint64
+	sink     func(line string)
+	summary  func(n uint64, lastAddr string)
+	now      func() time.Time
+	interval time.Duration
+
+	dropped  atomic.Uint64 // total, for Dropped()
+	pending  atomic.Uint64 // since the last summary
+	lastEmit atomic.Int64  // unix nanos of the last summary (or creation)
+	lastAddr atomic.Pointer[string]
 }
 
 // NewFilter returns a Filter forwarding kept lines (without the trailing
-// newline) to sink.
-func NewFilter(sink func(line string)) *Filter { return &Filter{sink: sink} }
+// newline) to sink and logging drop summaries via slog.
+func NewFilter(sink func(line string)) *Filter {
+	return newFilter(sink, SummaryInterval, time.Now, func(n uint64, addr string) {
+		slog.Info(fmt.Sprintf("tlslog: suppressed %d pre-handshake disconnects (last from %s)", n, addr))
+	})
+}
+
+func newFilter(sink func(string), interval time.Duration, now func() time.Time, summary func(uint64, string)) *Filter {
+	f := &Filter{sink: sink, summary: summary, now: now, interval: interval}
+	f.lastEmit.Store(now().UnixNano())
+	return f
+}
 
 // Write treats p as whole lines (log.Logger always writes one terminated line
 // per call), so there is no cross-call buffering.
 func (f *Filter) Write(p []byte) (int, error) {
 	for _, line := range strings.Split(strings.TrimRight(string(p), "\n"), "\n") {
-		if preHandshakeEOF.MatchString(line) {
-			f.dropped.Add(1)
-			slog.Debug("tls: pre-handshake disconnect (suppressed)", "total", f.dropped.Load())
+		if m := preHandshakeEOF.FindStringSubmatch(line); m != nil {
+			f.drop(m[1])
 			continue
 		}
 		f.sink(line)
 	}
 	return len(p), nil
+}
+
+func (f *Filter) drop(addr string) {
+	f.dropped.Add(1)
+	f.lastAddr.Store(&addr)
+	f.pending.Add(1)
+	now := f.now().UnixNano()
+	last := f.lastEmit.Load()
+	if now-last >= int64(f.interval) && f.lastEmit.CompareAndSwap(last, now) {
+		if n := f.pending.Swap(0); n > 0 {
+			f.summary(n, *f.lastAddr.Load())
+		}
+	}
 }
 
 // Dropped is the number of suppressed lines so far.
