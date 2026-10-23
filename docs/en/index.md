@@ -32,7 +32,9 @@ It talks to your **ProCon.IP**, **VIOLET** or **BADU Blue** pool controller over
 your local network and bridges it to the PoolPilot apps:
 
 - **at home** over your Wi‑Fi, and
-- **when you're away** through the secure tunnel to the PoolPilot cloud.
+- **when you're away** through a tunnel via the PoolPilot cloud — end-to-end
+  encrypted between your phone and your Relay from app version 1.2 (see
+  [Security & privacy](security.md#the-tunnel-in-plain-words)).
 
 Once it's installed and paired, the Relay looks after itself: it keeps your
 controller connected, sends the alerts you configured in the app, and
@@ -60,7 +62,7 @@ installer does, and how to scan the pairing code by hand.
 | [Self-update](self-update.md) | How automatic updates work and how to control them |
 | [Troubleshooting](troubleshooting.md) | Logs, re-pairing, recovery, reinstalling, removing |
 | [Home Assistant app](home-assistant.md) | Running the Relay as a Home Assistant app instead of on a Pi |
-| [Security & privacy](security.md) | What is stored where, network and ports, the tunnel, signed releases |
+| [Security & privacy](security.md) | What is stored where, network and ports, the end-to-end encrypted tunnel, signed releases |
 
 > 🇩🇪 Diese Dokumentation gibt es auch **[auf Deutsch](../de/index.md)**.
 

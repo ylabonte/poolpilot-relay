@@ -37,8 +37,9 @@ that includes the app, as you would the device itself.
 **In the PoolPilot cloud.** The cloud knows the Relay and the household it
 belongs to, the controllers' type, address and name, and the tunnel
 credentials it issued. It receives your alerts (which rule fired, the value,
-the pool's name) so it can send them as push messages. The Relay does not
-upload your regular readings.
+the pool's name) so it can send them as push messages, and keeps them for up
+to 30 days so you can re-read them in the app. The Relay does not upload your
+regular readings.
 
 ## Network and ports
 
@@ -83,22 +84,44 @@ PoolPilot cloud and keeps open.
 - **The dangerous things stay at home.** Pairing and the factory and household
   resets work only on your local network. Through the tunnel the Relay refuses
   them, even from a paired phone.
-- **What the cloud sees.** Your phone talks HTTPS to the PoolPilot cloud, and
-  the cloud passes the request on through the tunnel. Both internet legs —
-  phone to cloud, and the tunnel from the cloud to your Relay — are
-  encrypted, but it is not end-to-end encryption: the cloud forwards your
-  requests. The last hop, from the Relay to your controller on your home
-  network, is often plain HTTP, because that is what many controllers speak.
-- **Forwarded, not kept.** The cloud only passes tunnel traffic through. Your
+- **End-to-end encrypted.** Everything the app exchanges with your Relay
+  through the tunnel — relay management, your pool readings, and the
+  controller's own web interface in the app's built-in browser — is encrypted
+  end-to-end between your phone and your Relay. The Relay itself answers the
+  encrypted connection, with the same certificate it uses on your local
+  network, and the app only accepts the fingerprint it learned when you
+  paired. The cloud forwards encrypted bytes it cannot read. The last hop,
+  from the Relay to your controller on your home network, is unchanged and
+  often plain HTTP, because that is what many controllers speak.
+- **What the cloud still sees.** That a connection to your controller's
+  address was made (the controller's ID is part of that address), when, from
+  which internet address (not logged for normal connections — see below), and
+  how much data flowed.
+  If a connection uses the older TLS 1.2, the cloud can also see the Relay's
+  certificate, which names the Relay's ID and the device's host name (as it was
+  when the Relay first started). It does not see what you request, your
+  controller login or your readings.
+- **Separate from the tunnel.** The app talks to the PoolPilot cloud directly
+  for pairing, your household and push setup, and the Relay sends your alerts
+  to the cloud so it can deliver push messages (see *What is stored where*
+  above). Those connections are encrypted too, but they end at the cloud.
+- **Older app versions.** This applies from PoolPilot app version 1.2 with
+  Relay 0.11 or later. Older app versions still use the previous connection:
+  the phone talks HTTPS to the cloud, and the cloud passes each request on
+  through the tunnel, so it decrypts and re-encrypts that traffic. Your
   requests and the controller's answers are visible there just for the moment
-  of forwarding — they are neither stored nor analysed. The tunnel's web
-  front end keeps no access log, so there is no per-request trail of what you
-  did with your pool. The tunnel server only tells the cloud *that* a Relay
-  connected, is still online or went offline, never what passes through; the
-  cloud keeps just the latest time of each, for the online status in the app. Only warnings
-  and errors are logged — routine logins and traffic are not. A warning about a
-  rejected or malformed connection can contain the internet address it came
-  from; the logs are size-capped and rotate.
+  of forwarding — they are neither stored nor analysed. With app 1.2 and a
+  Relay older than 0.11 there is no fallback to that connection: remote access
+  through the Relay pauses until the Relay is updated, and at home
+  everything keeps working.
+- **No traffic log.** The tunnel's web front end keeps no access log, so there
+  is no per-request trail of what you did with your pool. The tunnel server
+  only tells the cloud *that* a Relay connected, is still online or went
+  offline, never what passes through; the cloud keeps just the latest time of
+  each, for the online status in the app. Only warnings and errors are logged
+  — routine logins and traffic are not. A warning about a rejected or
+  malformed connection can contain the internet address it came from; the logs
+  are size-capped and rotate.
 
 On your local network, the app talks HTTPS to the Relay and pins its
 certificate: at pairing the app learns the Relay's fingerprint and from then on
