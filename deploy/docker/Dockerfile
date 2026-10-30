@@ -12,7 +12,7 @@
 # platform (no QEMU emulation), so multi-arch builds stay fast.
 
 # Keep this Go minor in lockstep with the `go` directive in go.mod.
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.26.10-alpine AS build
 RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /src
 COPY go.mod go.sum ./

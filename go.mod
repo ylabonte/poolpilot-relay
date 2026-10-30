@@ -2,6 +2,8 @@ module github.com/ylabonte/poolpilot-relay
 
 go 1.26
 
+toolchain go1.26.10
+
 require (
 	aead.dev/minisign v0.3.0
 	github.com/brutella/dnssd v1.2.14
