@@ -11,10 +11,12 @@
 # The builder stage cross-compiles with Go's native cross-compiler on the build
 # platform (no QEMU emulation), so multi-arch builds stay fast.
 
-# Keep this Go version in lockstep with the `toolchain` directive in go.mod
-# (and its minor with the `go` directive): GOTOOLCHAIN=local in this image
-# ignores go.mod, so a Go security patch must be bumped here too.
-FROM --platform=$BUILDPLATFORM golang:1.26.10-alpine AS build
+# Keep this Go version in lockstep with the `toolchain` directive in go.mod:
+# GOTOOLCHAIN=local in this image ignores go.mod, so a Go security patch must
+# be bumped here too. The tag tracks the toolchain line, not the `go` directive
+# (the minimum for importers such as poolpilot-cloud), so its minor may be
+# newer than the `go` directive's.
+FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine AS build
 RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /src
 COPY go.mod go.sum ./
