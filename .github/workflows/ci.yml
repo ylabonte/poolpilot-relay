@@ -160,5 +160,22 @@ jobs:
           go-version-file: go.mod
           cache: true
           cache-dependency-path: go.sum
+      # The HA app image compiles with deploy/docker/Dockerfile's golang tag
+      # (GOTOOLCHAIN=local there ignores go.mod), so the scan above only covers
+      # it while that tag equals the toolchain line. Enforce it.
+      - name: image Go matches go.mod toolchain
+        run: |
+          tc=$(go mod edit -json | jq -r '.Toolchain // empty')
+          img=$(sed -nE 's/^FROM .*golang:([0-9]+\.[0-9]+\.[0-9]+)-alpine.*/\1/p' deploy/docker/Dockerfile | head -n1)
+          [ -n "$tc" ] && [ -n "$img" ] || { echo "::error::could not read toolchain ($tc) or image Go ($img)"; exit 1; }
+          [ "$tc" = "go$img" ] || { echo "::error::deploy/docker/Dockerfile builds with golang:$img but go.mod has toolchain $tc; bump both together"; exit 1; }
+      # Scan every shipped platform: crypto/x509 and other stdlib packages have
+      # per-OS files (root_darwin.go, root_windows.go). linux covers the whole
+      # module; darwin/windows ship only the agent (release.yml), and the
+      # linux-only updater does not build there.
       - name: govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          GOOS=linux govulncheck ./...
+          GOOS=darwin govulncheck ./cmd/poolpilot-relay
+          GOOS=windows govulncheck ./cmd/poolpilot-relay
