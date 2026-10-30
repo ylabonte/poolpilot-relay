@@ -145,3 +145,20 @@ jobs:
           GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -o /dev/null ./cmd/poolpilot-relay
           GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o /dev/null ./cmd/poolpilot-relay
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o /dev/null ./cmd/poolpilot-relay
+  # Known-vulnerability gate. govulncheck checks the Go toolchain this job really
+  # builds with (go.mod's toolchain line, via go-version-file) AND the module graph
+  # against the Go vulnerability database, and fails only on vulnerabilities our
+  # code actually CALLS. A stdlib CVE therefore fails CI until the toolchain line
+  # is bumped, and a called dependency CVE fails until the module is bumped. Never
+  # add exclusions here: fix the root cause.
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
