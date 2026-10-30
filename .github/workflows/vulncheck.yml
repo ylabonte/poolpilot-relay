@@ -1,0 +1,52 @@
+# Daily scan for newly published Go and dependency vulnerabilities.
+#
+# A SEPARATE workflow on purpose: a `schedule:` trigger in ci.yml would make every
+# cron run build and push images. The PR-time gate is the govulncheck job in
+# ci.yml; this file only re-runs the same scan on a timer, so a vulnerability
+# published in a quiet week does not stay unseen until the next push.
+#
+# A red run means a NEW vulnerability was published (or became reachable) since the
+# last green scan: fix the root cause (bump the Go toolchain or the module). Never
+# add exclusions here.
+#
+# govulncheck is pinned like the ci.yml gate; bump both together.
+name: vulncheck
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+jobs:
+  govulncheck:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      # The HA app image compiles with deploy/docker/Dockerfile's golang tag
+      # (GOTOOLCHAIN=local there ignores go.mod), so the scan only covers it
+      # while that tag equals the toolchain line. Enforce it.
+      - name: image Go matches go.mod toolchain
+        run: |
+          tc=$(go mod edit -json | jq -r '.Toolchain // empty')
+          img=$(sed -nE 's/^FROM .*golang:([0-9]+\.[0-9]+\.[0-9]+)-alpine.*/\1/p' deploy/docker/Dockerfile | head -n1)
+          [ -n "$tc" ] && [ -n "$img" ] || { echo "::error::could not read toolchain ($tc) or image Go ($img)"; exit 1; }
+          [ "$tc" = "go$img" ] || { echo "::error::deploy/docker/Dockerfile builds with golang:$img but go.mod has toolchain $tc; bump both together"; exit 1; }
+      # Scan every shipped platform: crypto/x509 and other stdlib packages have
+      # per-OS files (root_darwin.go, root_windows.go). linux covers the whole
+      # module; darwin/windows ship only the agent (release.yml), and the
+      # linux-only updater does not build there.
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          GOOS=linux govulncheck ./...
+          GOOS=darwin govulncheck ./cmd/poolpilot-relay
+          GOOS=windows govulncheck ./cmd/poolpilot-relay
