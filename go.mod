@@ -2,7 +2,7 @@ module github.com/ylabonte/poolpilot-relay
 
 go 1.26
 
-toolchain go1.26.10
+toolchain go1.27.3
 
 require (
 	aead.dev/minisign v0.3.0
