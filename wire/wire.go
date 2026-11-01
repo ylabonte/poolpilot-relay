@@ -498,12 +498,17 @@ type AttestKeyRequest struct {
 // which is any 4xx except 401, 403, 408 and 429 (the cloud sends 400 for a
 // body it cannot accept; 404/405 mean a control plane without the route).
 // 401, 408, 429, 5xx and transport errors are retried with backoff, 403
-// ("subscription inactive" while the route is Pro-gated) after a long delay.
+// after a long delay. The cloud accepts this report from any tier, Pro or
+// not; the only 403 left is "subscription revoked" for a household an admin
+// revoked, which stays retryable in case the admin lifts it. The agent,
+// however, still holds reports while its tunnel is parked (suspended or
+// unknown lifecycle), so a lapsed or free household's report goes out once it
+// is entitled again, or is dropped after 30 days.
 // Entries older than 30 days, or beyond the newest 50, are dropped with a log
 // line, and a re-pair flushes the queue once under the old credentials and
 // discards the rest (cloud.Client.ReportDeviceRemovals, FlushDeviceRemovals).
-// Scoped to the calling relay's own entitlement — see relayFromBearer — so
-// this can never touch another entitlement's tokens.
+// Scoped to the calling relay's own entitlement (resolved from its bearer, any
+// tier), so this can never touch another entitlement's tokens.
 // Idempotent: an unknown or already-invalidated device_id is still a 200.
 //
 // It is also the removal report for the device's cloud entry: the cloud drops
