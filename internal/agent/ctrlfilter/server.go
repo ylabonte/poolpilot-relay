@@ -88,6 +88,13 @@ type Server struct {
 // CONTROLLER's own Basic Auth, which is forwarded untouched.
 const BearerHeader = "X-PoolPilot-Bearer"
 
+// forbiddenBody is the body of every 403 this filter itself returns. It is a
+// cross-repo contract: the PoolPilot app (poolpilot-app #1181/#1263) treats a
+// 403 whose trimmed body is exactly this text as "this device's pairing was
+// revoked" (and tells it apart from a controller's own relayed 403). Changing
+// it breaks that detection — coordinate with the app first.
+const forbiddenBody = "forbidden"
+
 // SetBearerAuthorizer installs the pairing-bearer check. Mirrors SetTargets and
 // SetSessionKey: safe alongside a running Handler(). A callback rather than a
 // snapshot of token hashes on purpose — it reads live state, so a device paired
@@ -181,13 +188,13 @@ func (s *Server) hasValidSession(r *http.Request, guid string, now time.Time) bo
 func (s *Server) serveSession(w http.ResponseWriter, r *http.Request, guid string, now time.Time) {
 	key := s.sessionKey()
 	if len(key) == 0 {
-		http.Error(w, "forbidden", http.StatusForbidden)
+		http.Error(w, forbiddenBody, http.StatusForbidden)
 		return
 	}
 	nonce, ok := VerifySigned(key, r.URL.Query().Get("t"), guid, now)
 	if !ok {
 		slog.Debug("ctrlfilter: session bootstrap refused", "guid", guid, "reason", "invalid token")
-		http.Error(w, "forbidden", http.StatusForbidden)
+		http.Error(w, forbiddenBody, http.StatusForbidden)
 		return
 	}
 	// Retain the burned nonce for TokenTTL: an upper bound on how long this
@@ -195,12 +202,12 @@ func (s *Server) serveSession(w http.ResponseWriter, r *http.Request, guid strin
 	// refused. Pruning past that keeps the list bounded.
 	if !s.burned.use(nonce, now.Add(TokenTTL), now) {
 		slog.Debug("ctrlfilter: session bootstrap refused", "guid", guid, "reason", "token already redeemed")
-		http.Error(w, "forbidden", http.StatusForbidden)
+		http.Error(w, forbiddenBody, http.StatusForbidden)
 		return
 	}
 	value, err := MintCookie(key, guid, now, CookieTTL)
 	if err != nil {
-		http.Error(w, "forbidden", http.StatusForbidden)
+		http.Error(w, forbiddenBody, http.StatusForbidden)
 		return
 	}
 	// No Domain attribute, so the cookie stays host-only to
@@ -273,7 +280,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		if !s.authorized(r, guid, now) {
 			slog.Debug("ctrlfilter: refused an unauthorized request", "guid", guid, "path", r.URL.Path)
-			http.Error(w, "forbidden", http.StatusForbidden)
+			http.Error(w, forbiddenBody, http.StatusForbidden)
 			return
 		}
 		// Fetch-Metadata CSRF guard. The pp_ctrl session cookie is SameSite=Lax,
@@ -286,7 +293,7 @@ func (s *Server) Handler() http.Handler {
 		// all, so neither legitimate path is affected.
 		if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
 			slog.Debug("ctrlfilter: refused a cross-site request", "guid", guid, "path", r.URL.Path)
-			http.Error(w, "forbidden", http.StatusForbidden)
+			http.Error(w, forbiddenBody, http.StatusForbidden)
 			return
 		}
 		stripRelayCredentials(r)
