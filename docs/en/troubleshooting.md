@@ -143,6 +143,22 @@ The role on the Relay is set at pairing. Promoting or demoting someone in the
 app's household settings does not change it; to give a member phone owner
 rights on the Relay, pair it with a recovery code.
 
+## The household is at its device limit
+
+A household can have at most 10 phones signed in at once. When it is full, the
+Relay refuses to pair another phone, whether it joins with an invite or takes
+the owner role back with a recovery code. The app is told so with `409` and the
+error code `household_device_quota`. Nothing is paired and nothing is used up:
+the invite code still works, and so does the recovery code until it expires.
+
+To make room, an owner removes a phone that is no longer used under
+**PoolPilot Relay → Paired devices** in the app, or a member signs out on a
+phone they no longer need. Then pair again with the same code.
+
+Relays up to v0.12.0 answer this case with `409 voucher_quota` instead, for which
+the app says to wait a few minutes and try again with the same code. Waiting
+does not help there either: make room first.
+
 ## Lost owner access
 
 If no phone can act as the household owner any more, mint a one‑time recovery

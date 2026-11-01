@@ -156,6 +156,24 @@ Haushaltseinstellungen der App befördert oder herabgestuft wird, behält auf de
 Relay seine Rolle; soll ein Mitglieds-Telefon auf dem Relay Besitzer-Rechte
 bekommen, koppel es mit einem Wiederherstellungscode.
 
+## Der Haushalt hat sein Geräte-Limit erreicht
+
+In einem Haushalt können höchstens 10 Telefone gleichzeitig angemeldet sein. Ist
+er voll, koppelt das Relay kein weiteres Telefon – weder per Einladung noch mit
+einem Wiederherstellungscode für die Besitzer-Rolle. Die App erhält dann `409`
+mit dem Fehlercode `household_device_quota`. Es wird nichts gekoppelt und nichts
+verbraucht: Der Einladungscode gilt weiter, der Wiederherstellungscode bis zu
+seinem Ablauf.
+
+Um Platz zu schaffen, entfernt ein Besitzer in der App unter
+**PoolPilot Relay → Gekoppelte Geräte** ein Telefon, das nicht mehr genutzt
+wird, oder ein Mitglied meldet sich auf einem Telefon ab, das es nicht mehr
+braucht. Danach mit demselben Code erneut koppeln.
+
+Relays bis v0.12.0 antworten in diesem Fall stattdessen mit `409 voucher_quota`,
+worauf die App rät, ein paar Minuten zu warten und es mit demselben Code erneut
+zu versuchen. Warten hilft auch dort nicht: Erst Platz schaffen.
+
 ## Besitzer-Zugriff verloren
 
 Wenn kein Telefon mehr als Haushalts-Besitzer agieren kann, erzeuge am Gerät
