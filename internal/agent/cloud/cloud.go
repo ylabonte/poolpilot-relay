@@ -484,14 +484,20 @@ const (
 	removalBackoffInactive = 6 * time.Hour
 )
 
+// removalPassTimeout bounds one whole ReportDeviceRemovals pass, on top of
+// each request's own RequestTimeout, so a slow cloud cannot hold the poller's
+// tick for queue-length × RequestTimeout. Entries the deadline cuts off stay
+// queued for the next tick. A var so tests can shorten it.
+var removalPassTimeout = time.Minute
+
 // ReportDeviceRemovals sends every due entry of the durable removal queue
 // (state.State.PendingDeviceRemovals) to the cloud and settles it by the
-// answer. Callers: lanapi's deleteDevice, right after the revoke committed
-// (the immediate attempt), and the poller's tick (the retry path) — the same
-// two-caller shape as SyncControllers, and single-flight the same way: a
-// caller that finds a pass running records a rerun and returns nil, and the
-// running pass makes one more pass after it releases the lock, so an entry
-// queued mid-pass is still sent now rather than at the next tick.
+// answer. It is the poller tick's retry path; lanapi's deleteDevice uses
+// ReportDeviceRemoval for its immediate attempt instead. Single-flight like
+// SyncControllers: a caller that finds a pass running records a rerun and
+// returns nil, and the running pass makes one more pass after it releases the
+// lock, so an entry queued mid-pass is still sent now rather than at the next
+// tick. Each pass is bounded in total by removalPassTimeout.
 //
 // Per entry:
 //   - 2xx → reported; removed. The route is idempotent, so a repeat after a
@@ -503,9 +509,9 @@ const (
 //     device_id is NOT one of these: the cloud 200s it.
 //   - 403 "subscription inactive" → kept, next attempt after
 //     removalBackoffInactive (see that constant).
-//   - transport error, 5xx, 401, 408, 429 → kept, exponential backoff. A 401
-//     is the lifecycle machinery's business (it parks the tunnel after
-//     repeated ones); the queue only waits.
+//   - transport error, timeout, 5xx, 401, 408, 429 → kept, exponential
+//     backoff. A 401 is the lifecycle machinery's business (it parks the
+//     tunnel after repeated ones); the queue only waits.
 //   - older than RemovalMaxAge → dropped unattempted, with a warning.
 //
 // Nothing is sent while the agent is not enrolled or its tunnel is parked
@@ -517,7 +523,9 @@ func (c *Client) ReportDeviceRemovals(ctx context.Context) error {
 		c.removalRerun.Store(true)
 		return nil
 	}
-	err := c.removalPass(ctx)
+	passCtx, cancel := context.WithTimeout(ctx, removalPassTimeout)
+	err := c.removalPass(passCtx, "")
+	cancel()
 	c.removalMu.Unlock()
 	if c.removalRerun.Swap(false) {
 		return c.ReportDeviceRemovals(ctx)
@@ -525,14 +533,39 @@ func (c *Client) ReportDeviceRemovals(ctx context.Context) error {
 	return err
 }
 
-// removalPass is one ReportDeviceRemovals pass under removalMu.
-func (c *Client) removalPass(ctx context.Context) error {
+// ReportDeviceRemoval is deleteDevice's immediate attempt: it sends ONLY the
+// queue entry for deviceID, by the same rules as ReportDeviceRemovals, and
+// leaves every other entry to the poller. The caller bounds it with ctx's
+// deadline. If a pass is already running it sends nothing and asks that pass
+// for a rerun, which picks the new entry up; it never waits for the lock, so
+// the request path cannot queue behind a slow pass.
+func (c *Client) ReportDeviceRemoval(ctx context.Context, deviceID string) error {
+	if !c.removalMu.TryLock() {
+		c.removalRerun.Store(true)
+		return nil
+	}
+	defer c.removalMu.Unlock()
+	return c.removalPass(ctx, deviceID)
+}
+
+// removalPass is one pass under removalMu over every entry, or over the entry
+// for only when non-empty.
+func (c *Client) removalPass(ctx context.Context, only string) error {
 	s := c.store.Get()
 	if len(s.PendingDeviceRemovals) == 0 || !s.Enrolled() || s.TunnelParked() {
 		return nil
 	}
 	var firstErr error
 	for _, p := range s.PendingDeviceRemovals {
+		if only != "" && p.DeviceID != only {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("%w: device removal pass cut off: %v", ErrUnavailable, err)
+			}
+			return firstErr
+		}
 		now := c.now()
 		if now.Sub(p.CreatedAt) > RemovalMaxAge {
 			slog.Warn("dropping unreported device removal: too old", "device_id", p.DeviceID, "queued_at", p.CreatedAt, "attempts", p.Attempts)

@@ -140,6 +140,10 @@ type Server struct {
 	ExitFn func()
 	// probeTimeout bounds the live controller probe in PUT /v1/controllers.
 	ProbeTimeout time.Duration
+	// RemovalReportTimeout bounds DELETE /v1/devices/{id}'s immediate attempt
+	// to report the removal to the cloud, in total; whatever it cannot settle
+	// in time stays queued for the poller. Zero → defaultRemovalReportTimeout.
+	RemovalReportTimeout time.Duration
 
 	// ValidateLan gates a submitted lan_address (issue poolpilot-cloud#36 SSRF block). nil is
 	// the strict default (state.ValidateLanAddress — rejects loopback/link-
@@ -1108,13 +1112,22 @@ func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 		// THIS relay. The request never waits on the cloud's verdict: failing
 		// a lost-phone revoke over control-plane reachability would be
 		// strictly worse.
+		// Only THIS removal is attempted here, under a hard total deadline
+		// (RemovalReportTimeout): the rest of the queue is the poller's, so a
+		// slow cloud costs this request at most that long, never the whole
+		// queue. A report the deadline cuts off stays queued.
 		// WithoutCancel: the phone hanging up right after DELETE must not abort
-		// the cleanup mid-flight — the cloud client's own RequestTimeout still
-		// bounds each call, so this cannot hang the handler goroutine forever.
+		// the cleanup mid-flight; the deadline above still bounds it.
 		cleanupCtx := context.WithoutCancel(r.Context())
-		if err := s.Cloud.ReportDeviceRemovals(cleanupCtx); err != nil {
+		reportTimeout := s.RemovalReportTimeout
+		if reportTimeout <= 0 {
+			reportTimeout = defaultRemovalReportTimeout
+		}
+		reportCtx, cancelReport := context.WithTimeout(cleanupCtx, reportTimeout)
+		if err := s.Cloud.ReportDeviceRemoval(reportCtx, id); err != nil {
 			slog.Warn("cloud device removal report", "device_id", id, "err", err)
 		}
+		cancelReport()
 
 		if remaining == 0 {
 			for _, guid := range removedGUIDs {
@@ -1131,6 +1144,11 @@ func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
+
+// defaultRemovalReportTimeout is RemovalReportTimeout's default: long enough
+// for a healthy cloud round trip, short enough that a lost-phone revoke never
+// waits on an unhealthy one.
+const defaultRemovalReportTimeout = 5 * time.Second
 
 // isLastActiveOwner reports whether devices[idx] is an active owner and no
 // OTHER active device is one — i.e. revoking it would leave the household
