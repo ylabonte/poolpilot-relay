@@ -57,6 +57,15 @@ var (
 	// mint a replacement (or to re-run show-recovery) for nothing. Transient —
 	// live vouchers expire in minutes — so retrying the SAME code is the advice.
 	ErrVoucherCapReached = errors.New("cloud live-voucher cap reached")
+	// ErrHouseholdDeviceCap: the cloud refused to broker an app-bearer voucher
+	// because the HOUSEHOLD already holds its maximum of live app bearers
+	// (HTTP 409 {"error":"too many active bearers"} from /device-vouchers,
+	// poolpilot-cloud#278). Like ErrVoucherCapReached it is checked before the
+	// invite is consumed, so the code is still good — but unlike it, it does
+	// not clear by itself: a device has to be removed from the household (or
+	// sign out) first. Folding it into ErrVoucherCapReached would tell the user
+	// to wait a few minutes for a condition waiting never fixes.
+	ErrHouseholdDeviceCap = errors.New("cloud household device cap reached")
 	// ErrUnknownToken: POST /relay/status answered 401 — the control plane
 	// knows neither this relay's token nor a tombstone for it. Distinct from
 	// ErrUnavailable because the lifecycle watcher counts these (and only
@@ -775,7 +784,9 @@ func (c *Client) Release(ctx context.Context, baseURL, frpcToken string) error {
 // use, TTL-bounded, and only if it belongs to THIS relay's household) and
 // answers with a voucher carrying role "member". A 4xx means the code is
 // rejected — expired, already used, or somebody else's — and must not be
-// retried.
+// retried. The exceptions are the two 409s, which leave the code alive:
+// ErrVoucherCapReached (retry the same code in minutes) and
+// ErrHouseholdDeviceCap (retry the same code once a device is removed).
 //
 // Note what is NOT sent: no agent_id. The device-code ceremony this replaced
 // bound its code to one relay as defence in depth against an honest mis-redeem
@@ -814,7 +825,7 @@ func (c *Client) brokerVoucher(ctx context.Context, body wire.DeviceVoucherReque
 		return wire.DeviceVoucherResponse{}, fmt.Errorf("%w: not enrolled", ErrRejected)
 	}
 	var out wire.DeviceVoucherResponse
-	status, err := c.doJSON(ctx, http.MethodPost, s.Cloud.BaseURL+"/device-vouchers", s.Cloud.FrpcToken, body, &out)
+	status, errCode, err := c.doJSONErrCode(ctx, http.MethodPost, s.Cloud.BaseURL+"/device-vouchers", s.Cloud.FrpcToken, body, &out)
 	if err != nil {
 		return wire.DeviceVoucherResponse{}, err
 	}
@@ -831,9 +842,17 @@ func (c *Client) brokerVoucher(ctx context.Context, body wire.DeviceVoucherReque
 		// somebody else. Both are terminal for this attempt and neither consumed
 		// the code, so the generic rejected arm is the honest answer.
 		return wire.DeviceVoucherResponse{}, fmt.Errorf("%w: device-vouchers (%s) HTTP 403", ErrRejected, what)
+	case status == http.StatusConflict && errCode == cloudErrTooManyActiveBearers:
+		// The household's device cap (poolpilot-cloud#278), refused ahead of
+		// consuming the invite. The code survives, but retrying in a few minutes
+		// will not help until a device is removed — hence its own error.
+		return wire.DeviceVoucherResponse{}, fmt.Errorf("%w: device-vouchers (%s) HTTP 409", ErrHouseholdDeviceCap, what)
 	case status == http.StatusConflict:
-		// The live-voucher cap, refused ahead of consuming the invite. The code
-		// survives, so this must not reach the user as "your code is dead".
+		// The live-voucher cap ("too many live vouchers"), refused ahead of
+		// consuming the invite. The code survives, so this must not reach the
+		// user as "your code is dead". Any other or unreadable 409 body lands
+		// here too: it is how every relay up to v0.12.0 read a 409, and an
+		// older cloud never sends the household-cap body above.
 		return wire.DeviceVoucherResponse{}, fmt.Errorf("%w: device-vouchers (%s) HTTP 409", ErrVoucherCapReached, what)
 	case status >= 400 && status < 500:
 		return wire.DeviceVoucherResponse{}, fmt.Errorf("%w: device-vouchers (%s) HTTP %d", ErrRejected, what, status)
@@ -1132,12 +1151,32 @@ func (c *Client) popOutboxHead() error {
 // doJSON sends a request (method) with an optional JSON body (nil in → no body)
 // and decodes a JSON response (when out != nil and the body parses). Returns
 // the HTTP status; transport failures map to ErrUnavailable.
+// cloudErrTooManyActiveBearers is the control plane's error literal for the
+// household's live-app-bearer cap (poolpilot-cloud internal/api: add-device,
+// redeem-voucher and, since poolpilot-cloud#278, /device-vouchers).
+const cloudErrTooManyActiveBearers = "too many active bearers"
+
+// maxErrorBodyBytes caps how much of a control-plane ERROR body is read: an
+// error body is a one-field {"error": "..."} object, so anything bigger is not
+// one and is not worth a Pi's memory.
+const maxErrorBodyBytes = 4 << 10
+
+// doJSON performs one control-plane call; see doJSONErrCode, which it wraps.
 func (c *Client) doJSON(ctx context.Context, method, url, bearer string, in, out any) (int, error) {
+	status, _, err := c.doJSONErrCode(ctx, method, url, bearer, in, out)
+	return status, err
+}
+
+// doJSONErrCode is doJSON that also returns the control plane's error code:
+// the "error" field of a non-2xx {"error": "..."} body, or "" when the body is
+// absent, oversized or not that shape. Best effort by design — a caller must
+// treat "" as "no more than the status says", never as a verdict of its own.
+func (c *Client) doJSONErrCode(ctx context.Context, method, url, bearer string, in, out any) (int, string, error) {
 	var bodyReader io.Reader
 	if in != nil {
 		payload, err := json.Marshal(in)
 		if err != nil {
-			return 0, fmt.Errorf("cloud: encode request: %w", err)
+			return 0, "", fmt.Errorf("cloud: encode request: %w", err)
 		}
 		bodyReader = bytes.NewReader(payload)
 	}
@@ -1145,7 +1184,7 @@ func (c *Client) doJSON(ctx context.Context, method, url, bearer string, in, out
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
 	if err != nil {
-		return 0, fmt.Errorf("%w: %v", ErrUnavailable, err)
+		return 0, "", fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	useragent.Set(req.Header)
 	if in != nil {
@@ -1156,15 +1195,23 @@ func (c *Client) doJSON(ctx context.Context, method, url, bearer string, in, out
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return 0, fmt.Errorf("%w: %v", ErrUnavailable, err)
+		return 0, "", fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	defer resp.Body.Close()
 	if out != nil && resp.StatusCode < 300 {
 		// Bounded: every control-plane response is small, and an unbounded
 		// decode would let a misbehaving server exhaust a Pi's memory.
 		if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(out); err != nil {
-			return resp.StatusCode, fmt.Errorf("%w: decode response: %v", ErrUnavailable, err)
+			return resp.StatusCode, "", fmt.Errorf("%w: decode response: %v", ErrUnavailable, err)
 		}
 	}
-	return resp.StatusCode, nil
+	if resp.StatusCode >= 300 {
+		var e struct {
+			Error string `json:"error"`
+		}
+		if json.NewDecoder(io.LimitReader(resp.Body, maxErrorBodyBytes)).Decode(&e) == nil {
+			return resp.StatusCode, e.Error, nil
+		}
+	}
+	return resp.StatusCode, "", nil
 }

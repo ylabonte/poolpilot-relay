@@ -717,6 +717,16 @@ func (s *Server) pairWithVoucher(
 	token, dev := mintDevice(req.DeviceName, "")
 	voucher, err := broker(cloudCtx(r), dev.ID)
 	switch {
+	case errors.Is(err, cloud.ErrHouseholdDeviceCap):
+		// The HOUSEHOLD is at its cloud device cap (poolpilot-cloud#278), which
+		// the cloud checks before consuming the invite. Nothing is persisted
+		// here either (this returns before the Update below, so no device row
+		// and no spent recovery window): the phone is not paired, and the code
+		// is still good. Its own code, not voucher_quota — waiting will not
+		// clear it — and not device_quota, which is THIS relay's own cap and
+		// names a different list to remove from.
+		writeErr(w, http.StatusConflict, "household_device_quota")
+		return
 	case errors.Is(err, cloud.ErrVoucherCapReached):
 		// The cloud's live-voucher cap, which it checks BEFORE consuming the
 		// invite — so unlike every other refusal on this path the code survives.

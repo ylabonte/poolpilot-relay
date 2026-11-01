@@ -1169,6 +1169,14 @@ type InviteMintResponse struct {
 // and a voucher without it simply mints an unlinked bearer, as before. It is
 // an opaque, relay-scoped label, not a credential — it authorizes nothing, and
 // the cloud must only ever look it up under the relay that sent it.
+//
+// Two refusals leave the invite (or the recovery code) UNCONSUMED, and both
+// are 409s told apart by their {"error": ...} body: "too many live vouchers"
+// (this relay holds its live vouchers — transient, minutes) and "too many
+// active bearers" (the household holds its maximum of live app bearers,
+// poolpilot-cloud#278 — lasting until a device is removed). A relay up to
+// v0.12.0 reads both as the first; later ones answer the phone with distinct
+// LAN codes (voucher_quota, household_device_quota).
 type DeviceVoucherRequest struct {
 	InviteCode string `json:"invite_code,omitempty"`
 	Recovery   bool   `json:"recovery,omitempty"`

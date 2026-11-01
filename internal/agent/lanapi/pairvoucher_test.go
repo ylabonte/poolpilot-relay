@@ -320,6 +320,55 @@ func TestVoucherCapIsNotReportedAsADeadCode(t *testing.T) {
 	}
 }
 
+// TestHouseholdDeviceCapPairsNothing pins poolpilot-cloud#278 on the relay
+// side: when the cloud refuses the broker because the household already holds
+// its maximum of devices, the phone gets its own 409 household_device_quota —
+// not voucher_quota (waiting will not clear it), not code_rejected (the code
+// is still good) — and the relay commits nothing: no device row, no spent
+// recovery window. Before the fix the relay paired the phone and the redeem
+// refused it afterwards, leaving an orphan row under Paired devices.
+func TestHouseholdDeviceCapPairsNothing(t *testing.T) {
+	f := newFixture(t)
+	f.pairFirst(t)
+	seedTLSKey(t, f)
+	f.householdCapReached.Store(true)
+	before := len(f.store.Get().Devices)
+
+	for _, tc := range []struct {
+		name string
+		req  wire.PairRequest
+	}{
+		{"join", wire.PairRequest{InviteCode: goodInvite, DeviceName: "second phone"}},
+		{"recovery", wire.PairRequest{RecoveryCode: recoveryCodeNow(t, f), DeviceName: "owner phone"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, raw := pairRaw(t, f, tc.req)
+			if resp.StatusCode != http.StatusConflict {
+				t.Fatalf("%s at the household cap: HTTP %d %s, want 409", tc.name, resp.StatusCode, raw)
+			}
+			if got := errCode(t, raw); got != "household_device_quota" {
+				t.Errorf("%s at the household cap: error = %q, want household_device_quota", tc.name, got)
+			}
+		})
+	}
+
+	st := f.store.Get()
+	if got := len(st.Devices); got != before {
+		t.Fatalf("a refused pairing persisted a device (%d → %d) — that is the orphan row #278 removes", before, got)
+	}
+	if st.RecoveryWindowUsed != 0 {
+		t.Errorf("a refused recovery spent the window (%d) — the code is now dead for nothing", st.RecoveryWindowUsed)
+	}
+	// Once a slot is free the same codes work: nothing was consumed.
+	f.householdCapReached.Store(false)
+	if resp, raw := pairRaw(t, f, wire.PairRequest{InviteCode: goodInvite, DeviceName: "second phone"}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("join after the cap cleared: HTTP %d %s, want 200", resp.StatusCode, raw)
+	}
+	if resp, raw := pairRaw(t, f, wire.PairRequest{RecoveryCode: recoveryCodeNow(t, f)}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("recovery after the cap cleared: HTTP %d %s, want 200 — the code should have survived", resp.StatusCode, raw)
+	}
+}
+
 // TestRejectedRecoveryCodeNeverReachesTheCloud pins the ordering: the agent-local
 // check runs BEFORE the broker call, so a wrong code costs no cloud round trip
 // and — more importantly — cannot mint an owner voucher.
