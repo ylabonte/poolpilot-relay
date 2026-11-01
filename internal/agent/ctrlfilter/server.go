@@ -93,6 +93,12 @@ const BearerHeader = "X-PoolPilot-Bearer"
 // 403 whose trimmed body is exactly this text as "this device's pairing was
 // revoked" (and tells it apart from a controller's own relayed 403). Changing
 // it breaks that detection — coordinate with the app first.
+//
+// Every 403 here must therefore mean "no accepted credential". The /__session
+// and cross-site (Sec-Fetch-Site) refusals share the body only because native
+// clients never send those requests. A new 403 with any other meaning (a rate
+// limit, a policy refusal) needs a different body, or the app will tell its
+// user the device was removed.
 const forbiddenBody = "forbidden"
 
 // SetBearerAuthorizer installs the pairing-bearer check. Mirrors SetTargets and
