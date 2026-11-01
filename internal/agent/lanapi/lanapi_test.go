@@ -130,6 +130,9 @@ type fixture struct {
 	// revoke-push (POST /devices/revoke-push), keyed by device_id.
 	revokedPushMu sync.Mutex
 	revokedPush   map[string]bool
+	// revokePushStatus, when non-zero, makes POST /devices/revoke-push answer
+	// that status instead of recording the device_id and answering 200.
+	revokePushStatus atomic.Int64
 
 	// releasedMu/releaseCalled/releaseAuth record whether POST /relay/release
 	// was hit by a factory reset, and the bearer it presented. releaseNotFound,
@@ -208,6 +211,10 @@ func newFixture(t *testing.T) *fixture {
 		if r.Method == http.MethodPost && r.URL.Path == "/devices/revoke-push" {
 			if r.Header.Get("Authorization") != "Bearer relay-frpc-token" {
 				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			if st := f.revokePushStatus.Load(); st != 0 {
+				w.WriteHeader(int(st))
 				return
 			}
 			var body map[string]string

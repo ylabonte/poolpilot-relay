@@ -1,8 +1,11 @@
 package state
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ylabonte/poolpilot-relay/wire"
 )
@@ -78,5 +81,73 @@ func TestPollIntervalPersistsAndSurvivesHouseholdReset(t *testing.T) {
 	s.ResetHousehold()
 	if s.PollIntervalSeconds != 180 {
 		t.Fatalf("ResetHousehold dropped the poll interval")
+	}
+}
+
+// QueueDeviceRemoval never duplicates a device id: a second queue keeps the
+// first entry, its age and its backoff.
+func TestQueueDeviceRemovalDedups(t *testing.T) {
+	var s State
+	t0 := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	s.QueueDeviceRemoval("dev-a", t0)
+	s.PendingDeviceRemovals[0].Attempts = 3
+	s.QueueDeviceRemoval("dev-a", t0.Add(time.Hour))
+	s.QueueDeviceRemoval("dev-b", t0)
+	if len(s.PendingDeviceRemovals) != 2 {
+		t.Fatalf("queue = %+v, want two entries", s.PendingDeviceRemovals)
+	}
+	if p := s.PendingDeviceRemovals[0]; p.DeviceID != "dev-a" || !p.CreatedAt.Equal(t0) || p.Attempts != 3 {
+		t.Errorf("dev-a entry = %+v, want the original kept", p)
+	}
+}
+
+// Every Update caps the queue at PendingRemovalLimit, keeping the newest; and
+// the queue survives a reload.
+func TestPendingRemovalsCappedAndPersisted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t0 := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	if err := st.Update(func(s *State) {
+		for i := range PendingRemovalLimit + 5 {
+			s.QueueDeviceRemoval(fmt.Sprintf("dev-%d", i), t0.Add(time.Duration(i)*time.Second))
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	q := st.Get().PendingDeviceRemovals
+	if len(q) != PendingRemovalLimit || q[0].DeviceID != "dev-5" || q[len(q)-1].DeviceID != fmt.Sprintf("dev-%d", PendingRemovalLimit+4) {
+		t.Fatalf("capped queue: len %d, first %q — want %d entries starting at dev-5", len(q), q[0].DeviceID, PendingRemovalLimit)
+	}
+	re, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := re.Get().PendingDeviceRemovals; len(got) != PendingRemovalLimit || !got[0].CreatedAt.Equal(q[0].CreatedAt) {
+		t.Errorf("reloaded queue: len %d, want %d with the same entries", len(got), PendingRemovalLimit)
+	}
+}
+
+// A document written before the queue existed loads with an empty queue; a
+// household reset forgets the queue with the household.
+func TestPendingRemovalsLegacyDocAndHouseholdReset(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := os.WriteFile(path, []byte(`{"v":2,"agent_id":"a1","cloud":{"base_url":"https://c","frpc_token":"t"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open legacy doc: %v", err)
+	}
+	if q := st.Get().PendingDeviceRemovals; len(q) != 0 {
+		t.Errorf("legacy doc queue = %+v, want empty", q)
+	}
+	s := st.Get()
+	s.QueueDeviceRemoval("dev-a", time.Now())
+	s.ResetHousehold()
+	if len(s.PendingDeviceRemovals) != 0 {
+		t.Errorf("ResetHousehold kept the removal queue: %+v", s.PendingDeviceRemovals)
 	}
 }
