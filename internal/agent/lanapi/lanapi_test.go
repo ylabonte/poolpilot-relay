@@ -866,6 +866,12 @@ func TestSecondPairingRejectedCode(t *testing.T) {
 // The active-device cap stops runaway growth (a lost/reset phone is revoked to
 // free a slot). The over-cap add is refused 409 device_quota.
 func TestDeviceQuota(t *testing.T) {
+	// Owner decision: the owner's phone plus ten more. Pinned here so a change
+	// to the constant is a deliberate one, made together with the docs that
+	// state it (docs/{en,de}/troubleshooting.md) and the cloud's household cap.
+	if DeviceCap != 11 {
+		t.Fatalf("DeviceCap = %d, want 11 (owner + 10)", DeviceCap)
+	}
 	f := newFixture(t)
 	f.pairFirst(t) // device 1
 	// Fill up to the cap.
