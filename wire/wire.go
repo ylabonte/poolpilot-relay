@@ -1264,6 +1264,13 @@ type EnrollRedeemRequest struct {
 // DeviceVoucherRequest.DeviceID / EnrollRedeemRequest.DeviceID. Planned for
 // removal 6–12 months after it ships, once those pairings have aged out.
 //
+// Known gap, accepted for a transitional route: a relay with no controller
+// registered has no entry in POST /controllers/list, so the app never learns
+// its RelayID and cannot backfill the link for it. Such a phone gets linked on
+// its next pairing with that relay; until then, removing it there leaves its
+// household entry in place, and it shows up as an extra row in the member list
+// that an owner can remove.
+//
 // The id is self-asserted by the phone, so the cloud must treat it as a label
 // scoped to the caller's own household and relay — never as proof of anything,
 // and never as a way to reach another bearer's link.

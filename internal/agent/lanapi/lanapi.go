@@ -938,9 +938,11 @@ func (s *Server) getDevices(w http.ResponseWriter, r *http.Request) {
 // A revoke is also reported to the cloud, which drops this relay's link to the
 // device's household entry (wire.DevicePushRevokeRequest), so a cross-revoke
 // of the last owner would leave this relay with nobody who can administer it,
-// short of owner recovery at the relay's console. Leaving the
-// household yourself stays allowed: a self-revoke of the last owner is a
-// deliberate act by that owner, as it always was.
+// short of owner recovery at the relay's console. Removing yourself stays
+// allowed: a self-revoke of the last owner is a deliberate act by that owner,
+// as it always was. It ends only THIS relay's link to the phone's household
+// entry; the household membership itself ends only once the phone has no link
+// left to any relay of the household.
 //
 // In steady state the selfOrOwner gate already makes this unreachable — only
 // an owner may revoke another device, and an active owner caller means the
