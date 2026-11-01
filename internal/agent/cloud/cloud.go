@@ -474,7 +474,8 @@ func (c *Client) revokePush(ctx context.Context, creds state.Cloud, deviceID str
 const (
 	// RemovalMaxAge is how long an unconfirmed removal stays queued. After it
 	// the entry is dropped with a warning: the cloud keeps the household
-	// entry until an owner removes it from the member list by hand — the same
+	// entry until an owner removes it by hand (the app's Paired devices list
+	// shows such leftovers) — the same
 	// outcome the pre-queue, fire-once report had on its first failure.
 	RemovalMaxAge = 30 * 24 * time.Hour
 	// removalBackoffBase / removalBackoffMax bound the backoff after a

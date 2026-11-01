@@ -1272,8 +1272,8 @@ type EnrollRedeemRequest struct {
 // registered has no entry in POST /controllers/list, so the app never learns
 // its RelayID and cannot backfill the link for it. Such a phone gets linked on
 // its next pairing with that relay; until then, removing it there leaves its
-// household entry in place, and it shows up as an extra row in the member list
-// that an owner can remove.
+// household entry in place, and it shows up as an extra row in the app's
+// Paired devices list that an owner can remove.
 //
 // The id is self-asserted by the phone, so the cloud must treat it as a label
 // scoped to the caller's own household and relay — never as proof of anything,

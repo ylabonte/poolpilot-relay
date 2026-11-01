@@ -136,9 +136,7 @@ Ein entferntes Telefon verliert den Zugriff auf das Relay sofort. Das Relay
 meldet die Entfernung außerdem an die PoolPilot-Cloud. Ist die Cloud in dem
 Moment nicht erreichbar, behält das Relay die Meldung und versucht es bei seinen
 regelmäßigen Kontakten weiter, bis die Cloud sie bestätigt, längstens 30 Tage;
-solange das Abo des Haushalts nicht aktiv ist, nur alle paar Stunden. Steht das
-Telefon noch in der Mitgliederliste des Haushalts in der App, kann ein Besitzer
-es dort entfernen.
+solange das Abo des Haushalts nicht aktiv ist, nur alle paar Stunden.
 
 Den Pool bedienen dürfen alle Telefone des Haushalts: Auch Mitglieder nutzen die
 eigene Weboberfläche der Steuerung samt der Einstellungen, die sie anbietet.

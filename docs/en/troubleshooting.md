@@ -125,8 +125,7 @@ A removed phone loses access to the Relay at once. The Relay also reports the
 removal to the PoolPilot cloud. If the cloud cannot be reached at that moment,
 the Relay keeps the report and keeps retrying on its regular check-ins until
 the cloud confirms it, for up to 30 days; while the household's subscription is
-inactive, it retries only every few hours. If the phone still shows up in the
-household's member list in the app, an owner can remove it there.
+inactive, it retries only every few hours.
 
 Operating the pool stays with every household phone: members can use the
 controller's own web interface, including the settings it offers. The owner-only
