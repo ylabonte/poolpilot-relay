@@ -162,13 +162,23 @@ In einem Haushalt können höchstens 10 Telefone gleichzeitig angemeldet sein. I
 er voll, koppelt das Relay kein weiteres Telefon – weder per Einladung noch mit
 einem Wiederherstellungscode für die Besitzer-Rolle. Die App erhält dann `409`
 mit dem Fehlercode `household_device_quota`. Es wird nichts gekoppelt und nichts
-verbraucht: Der Einladungscode gilt weiter, der Wiederherstellungscode bis zu
-seinem Ablauf.
+verbraucht – weder der Einladungscode noch der Wiederherstellungscode, der bis
+zu seinem Ablauf gilt. Das Limit wird vor dem
+Einladungscode selbst geprüft, daher bekommt auch eine vertippte oder
+abgelaufene Einladung diese Antwort und wird erst als solche abgelehnt, wenn
+wieder Platz ist.
 
 Um Platz zu schaffen, entfernt ein Besitzer in der App unter
 **PoolPilot Relay → Gekoppelte Geräte** ein Telefon, das nicht mehr genutzt
 wird, oder ein Mitglied meldet sich auf einem Telefon ab, das es nicht mehr
 braucht. Danach mit demselben Code erneut koppeln.
+
+Holst du dir die Besitzer-Rolle zurück, weil kein Besitzer-Telefon mehr übrig
+ist, kann niemand für dich ein anderes Telefon entfernen: Ein Mitglied muss sich
+auf einem Telefon abmelden, das es nicht mehr braucht. Kann das auch kein
+Mitglied (die übrigen Telefone wurden zurückgesetzt oder deinstalliert, ohne
+sich abzumelden), siehe [Immer noch hängen?](#immer-noch-hängen). Dass die
+Besitzer-Wiederherstellung auch am Limit gelingt, ist als Korrektur geplant.
 
 Relays bis v0.12.0 antworten in diesem Fall stattdessen mit `409 voucher_quota`,
 worauf die App rät, ein paar Minuten zu warten und es mit demselben Code erneut
