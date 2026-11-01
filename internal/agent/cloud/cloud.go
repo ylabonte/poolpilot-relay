@@ -918,7 +918,9 @@ func (c *Client) RelayStatus(ctx context.Context, baseURL, frpcToken string) (wi
 		case wire.RelayStateActive, wire.RelayStateSuspended, wire.RelayStateDeleted:
 			// Reason is informational, but it is persisted (Cloud.LifecycleReason),
 			// logged and echoed in /v1/status: keep only a documented value, so a
-			// misbehaving control plane cannot plant arbitrary text there.
+			// misbehaving control plane cannot plant arbitrary text there. The
+			// allow-list also makes an undocumented reason fail open: it reads as
+			// "", which removalsHeld does not hold, so removal reports still go out.
 			out.Reason = knownRelayReason(out.Reason)
 			return out, nil
 		default:
