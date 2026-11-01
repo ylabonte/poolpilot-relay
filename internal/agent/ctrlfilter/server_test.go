@@ -464,3 +464,39 @@ func TestRelayCredentialsAreStrippedBeforeProxying(t *testing.T) {
 		t.Fatalf("the controller's OWN credentials were mangled: %q", gotAuth)
 	}
 }
+
+// The body of a refused request is a cross-repo contract: the PoolPilot app
+// (poolpilot-app #1181/#1263) reads 403 + exactly "forbidden" as "this device's
+// pairing was revoked", and must not confuse it with a controller's own 403.
+func TestRefusalBodyIsTheForbiddenContract(t *testing.T) {
+	backend := newFakeController()
+	defer backend.Close()
+	srv := &Server{}
+	srv.SetTargets(map[string]Target{"guid1": {BaseURL: backend.URL}})
+	srv.SetSessionKey(testKey)
+	srv.SetBearerAuthorizer(func(tok string) bool { return tok == "live-pairing-bearer" })
+
+	for _, tc := range []struct {
+		name   string
+		bearer string
+	}{
+		{"missing bearer", ""},
+		{"revoked bearer", "revoked-or-forged"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/GetState.csv", nil)
+			req.Host = "guid1-e2e.remote.poolpilot.eu"
+			if tc.bearer != "" {
+				req.Header.Set(BearerHeader, tc.bearer)
+			}
+			rec := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rec, req)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("got %d, want 403", rec.Code)
+			}
+			if got := strings.TrimSpace(rec.Body.String()); got != "forbidden" {
+				t.Fatalf("body = %q, want exactly %q (the app keys on it)", got, "forbidden")
+			}
+		})
+	}
+}
