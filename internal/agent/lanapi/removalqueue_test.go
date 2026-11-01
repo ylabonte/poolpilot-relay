@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/ylabonte/poolpilot-relay/internal/agent/state"
 )
@@ -97,5 +98,84 @@ func TestRevokeLastDeviceQueuesReportWhenCloudFails(t *testing.T) {
 	}
 	if got := pendingIDs(f.store.Get()); len(got) != 1 || got[0] != dev {
 		t.Fatalf("queue = %v, want [%s]", got, dev)
+	}
+}
+
+// A slow cloud costs DELETE /v1/devices/{id} at most RemovalReportTimeout,
+// and the report it cut off stays queued for the poller.
+func TestRevokeDeviceReportBoundedBySlowCloud(t *testing.T) {
+	f := newFixture(t)
+	tok1, _ := f.pairFirst(t)
+	_, dev2 := f.addDevice(t, goodInvite, "second phone")
+
+	f.srv.RemovalReportTimeout = 200 * time.Millisecond
+	f.revokePushStall.Store(true)
+	start := time.Now()
+	resp, raw := f.do(t, "DELETE", "/v1/devices/"+dev2, tok1, nil)
+	elapsed := time.Since(start)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("revoke with a slow cloud: HTTP %d %s, want 204", resp.StatusCode, raw)
+	}
+	if elapsed > 3*time.Second {
+		t.Errorf("revoke took %s against a stalled cloud, want about the 200ms report deadline", elapsed)
+	}
+	q := f.store.Get().PendingDeviceRemovals
+	if len(q) != 1 || q[0].DeviceID != dev2 || q[0].Attempts != 1 {
+		t.Errorf("queue after a timed-out report = %+v, want dev2 kept with one attempt", q)
+	}
+}
+
+// The handler attempts only the removal it just queued: older entries are
+// the poller's, so a long queue never lands on the request path.
+func TestRevokeDeviceAttemptsOnlyItsOwnEntry(t *testing.T) {
+	f := newFixture(t)
+	tok1, _ := f.pairFirst(t)
+	_, dev2 := f.addDevice(t, goodInvite, "second phone")
+	if err := f.store.Update(func(s *state.State) { s.QueueDeviceRemoval("dev-older", time.Now()) }); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp, raw := f.do(t, "DELETE", "/v1/devices/"+dev2, tok1, nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("revoke: HTTP %d %s", resp.StatusCode, raw)
+	}
+	if !f.pushRevoked(dev2) {
+		t.Errorf("the new removal was not reported")
+	}
+	if f.pushRevoked("dev-older") {
+		t.Errorf("the handler reported an older queued removal; that is the poller's job")
+	}
+	if got := pendingIDs(f.store.Get()); len(got) != 1 || got[0] != "dev-older" {
+		t.Errorf("queue = %v, want [dev-older]", got)
+	}
+}
+
+// A fresh enrolment replaces the cloud credentials and with them the queue:
+// removals owed by the old relay identity are never sent under the new one.
+func TestRepairClearsPendingRemovals(t *testing.T) {
+	f := newFixture(t)
+	tok1, dev1 := f.pairFirst(t)
+	_, dev2 := f.addDevice(t, goodInvite, "second phone")
+
+	f.revokePushStatus.Store(http.StatusBadGateway)
+	if resp, raw := f.do(t, "DELETE", "/v1/devices/"+dev2, tok1, nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("revoke dev2: HTTP %d %s", resp.StatusCode, raw)
+	}
+	if resp, raw := f.do(t, "DELETE", "/v1/devices/"+dev1, tok1, nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("revoke last device: HTTP %d %s", resp.StatusCode, raw)
+	}
+	if got := pendingIDs(f.store.Get()); len(got) != 2 {
+		t.Fatalf("queue before re-pair = %v, want both removals", got)
+	}
+
+	f.revokePushStatus.Store(0)
+	f.pairFirst(t)
+	if got := pendingIDs(f.store.Get()); len(got) != 0 {
+		t.Fatalf("queue after re-pair = %v, want empty", got)
+	}
+	if err := f.srv.Cloud.ReportDeviceRemovals(context.Background()); err != nil {
+		t.Fatalf("ReportDeviceRemovals: %v", err)
+	}
+	if f.pushRevoked(dev1) || f.pushRevoked(dev2) {
+		t.Errorf("an old identity's removal was sent under the new credentials")
 	}
 }

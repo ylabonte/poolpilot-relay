@@ -133,6 +133,9 @@ type fixture struct {
 	// revokePushStatus, when non-zero, makes POST /devices/revoke-push answer
 	// that status instead of recording the device_id and answering 200.
 	revokePushStatus atomic.Int64
+	// revokePushStall, when set, makes that route hang until the agent gives
+	// up on the request (or 10 s pass) — a slow, not a dead, cloud.
+	revokePushStall atomic.Bool
 
 	// releasedMu/releaseCalled/releaseAuth record whether POST /relay/release
 	// was hit by a factory reset, and the bearer it presented. releaseNotFound,
@@ -211,6 +214,14 @@ func newFixture(t *testing.T) *fixture {
 		if r.Method == http.MethodPost && r.URL.Path == "/devices/revoke-push" {
 			if r.Header.Get("Authorization") != "Bearer relay-frpc-token" {
 				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			if f.revokePushStall.Load() {
+				select {
+				case <-r.Context().Done():
+				case <-time.After(10 * time.Second):
+				}
+				w.WriteHeader(http.StatusServiceUnavailable)
 				return
 			}
 			if st := f.revokePushStatus.Load(); st != 0 {

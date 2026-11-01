@@ -245,3 +245,83 @@ func TestRemovalBackoffCaps(t *testing.T) {
 		t.Errorf("backoff(1000) = %s, want %s", got, removalBackoffMax)
 	}
 }
+
+// An entry queued under one relay identity is never sent under another: a
+// credential swap that left it behind makes the pass drop it unsent.
+func TestReportDeviceRemovalsNeverSendsUnderANewIdentity(t *testing.T) {
+	rc := newRemovalCloud(t)
+	st := newStore(t, rc.srv.URL)
+	c := New(st)
+	queueRemovals(t, st, c.now(), "dev-old-relay")
+	if err := st.Update(func(s *state.State) { s.Cloud.FrpcToken = "new-relay-token" }); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.ReportDeviceRemovals(context.Background()); err != nil {
+		t.Fatalf("pass: %v", err)
+	}
+	if got := rc.received(); len(got) != 0 {
+		t.Errorf("cloud received %v, want nothing under the new token", got)
+	}
+	if q := st.Get().PendingDeviceRemovals; len(q) != 0 {
+		t.Errorf("queue = %+v, want the stale-identity entry dropped", q)
+	}
+}
+
+// The entry records a hash of the credential, never the token itself.
+func TestQueuedRemovalCarriesTokenHashNotToken(t *testing.T) {
+	st := newStore(t, "https://cloud.example")
+	queueRemovals(t, st, time.Now(), "dev-x")
+	p := st.Get().PendingDeviceRemovals[0]
+	if p.CloudIdentity == "" || p.CloudIdentity == "relay-token" || p.CloudIdentity != st.Get().CloudIdentity() {
+		t.Errorf("CloudIdentity = %q, want the current identity hash", p.CloudIdentity)
+	}
+}
+
+// ReportDeviceRemoval sends only the named entry.
+func TestReportDeviceRemovalSendsOnlyThatEntry(t *testing.T) {
+	rc := newRemovalCloud(t)
+	st := newStore(t, rc.srv.URL)
+	c := New(st)
+	queueRemovals(t, st, c.now(), "dev-a", "dev-b")
+	if err := c.ReportDeviceRemoval(context.Background(), "dev-b"); err != nil {
+		t.Fatalf("ReportDeviceRemoval: %v", err)
+	}
+	if got := rc.received(); len(got) != 1 || got[0] != "dev-b" {
+		t.Errorf("cloud received %v, want only dev-b", got)
+	}
+	if q := st.Get().PendingDeviceRemovals; len(q) != 1 || q[0].DeviceID != "dev-a" {
+		t.Errorf("queue = %+v, want only dev-a", q)
+	}
+}
+
+// One poller pass is bounded in total, not just per request: against a
+// stalled cloud it returns near removalPassTimeout and keeps every entry.
+func TestReportDeviceRemovalsPassDeadline(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	defer close(release)
+	old := removalPassTimeout
+	removalPassTimeout = 200 * time.Millisecond
+	defer func() { removalPassTimeout = old }()
+
+	st := newStore(t, srv.URL)
+	c := New(st)
+	queueRemovals(t, st, c.now(), "dev-a", "dev-b", "dev-c")
+	start := time.Now()
+	if err := c.ReportDeviceRemovals(context.Background()); !errors.Is(err, ErrUnavailable) {
+		t.Errorf("err = %v, want ErrUnavailable", err)
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Errorf("pass took %s, want about the 200ms pass deadline", elapsed)
+	}
+	if q := st.Get().PendingDeviceRemovals; len(q) != 3 {
+		t.Errorf("queue = %+v, want all three kept", q)
+	}
+}
