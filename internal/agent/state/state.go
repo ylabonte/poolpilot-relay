@@ -71,6 +71,32 @@ const DefaultPath = "/var/lib/poolpilot-relay/state.json"
 // unbounded queue on a relay that lost internet for a month helps nobody.
 const OutboxLimit = 50
 
+// PendingRemovalLimit bounds the persisted queue of device-removal reports
+// (State.PendingDeviceRemovals) — keep the NEWEST entries. A household removes
+// a handful of phones over a relay's life; 50 unreported removals means the
+// cloud has been out of reach for a very long time, and the oldest of them
+// matter least (cloud.ReportDeviceRemovals also ages them out).
+const PendingRemovalLimit = 50
+
+// PendingDeviceRemoval is one device removal (DELETE /v1/devices/{id}) the
+// cloud has not confirmed yet. The relay owes the control plane exactly one
+// POST /devices/revoke-push per removed device: that report is what makes the
+// cloud drop this relay's link to the device's household entry (and, once no
+// link is left, the entry itself — membership, push tokens, shared Pro). It is
+// queued in the SAME Update that revokes the device, so a lost report (cloud
+// unreachable, timeout, 5xx) is retried by cloud.Client.ReportDeviceRemovals
+// on the poller's tick instead of being forgotten; see that method for which
+// answers end an entry.
+type PendingDeviceRemoval struct {
+	DeviceID  string    `json:"device_id"`
+	CreatedAt time.Time `json:"created_at"`
+	// Attempts counts the reports sent so far that did not settle the entry.
+	Attempts int `json:"attempts,omitempty"`
+	// NextAttemptAt is the earliest time the next report may go out (backoff).
+	// Zero means "due now" — the state a freshly queued entry starts in.
+	NextAttemptAt time.Time `json:"next_attempt_at,omitzero"`
+}
+
 // Device is one paired phone's LAN-API bearer credential. Only the SHA-256 of
 // the pairing token is stored; the plaintext is shown exactly once at pair time.
 // A device is active until it is revoked (RevokedAt set).
@@ -276,6 +302,28 @@ type State struct {
 	// it with everything else. Additive with omitempty, so an older document
 	// simply lacks it.
 	PollIntervalSeconds int `json:"poll_interval_seconds,omitempty"`
+	// PendingDeviceRemovals is the durable queue of device removals the cloud
+	// has not confirmed yet (see PendingDeviceRemoval). One entry per device
+	// id, appended by QueueDeviceRemoval in the revoking Update, removed by
+	// cloud.Client.ReportDeviceRemovals once the cloud settles it; capped at
+	// PendingRemovalLimit on every Update. Additive with omitempty, so an older
+	// document simply lacks it and needs no schema bump — and an older agent
+	// that does not know the field drops it on its next persist, which loses
+	// only the retry (the pre-queue behaviour), never anything else.
+	PendingDeviceRemovals []PendingDeviceRemoval `json:"pending_device_removals,omitempty"`
+}
+
+// QueueDeviceRemoval records that the cloud must still be told about the
+// removal of deviceID (see PendingDeviceRemoval). Call it inside the Update
+// that revokes the device. A device id already queued keeps its entry — its
+// age and backoff — rather than gaining a duplicate.
+func (s *State) QueueDeviceRemoval(deviceID string, now time.Time) {
+	for i := range s.PendingDeviceRemovals {
+		if s.PendingDeviceRemovals[i].DeviceID == deviceID {
+			return
+		}
+	}
+	s.PendingDeviceRemovals = append(s.PendingDeviceRemovals, PendingDeviceRemoval{DeviceID: deviceID, CreatedAt: now.UTC()})
 }
 
 // Paired reports whether at least one device is active (has never been revoked).
@@ -313,7 +361,9 @@ func (s State) TunnelParked() bool {
 // ResetHousehold is THE one place that decides what a relay forgets when the
 // control plane reports its household deleted (POST /relay/status → "deleted",
 // poolpilot-cloud#242). It drops everything that belonged to the household —
-// the cloud credentials and lifecycle (Cloud), every paired device, every
+// the cloud credentials and lifecycle (Cloud), every paired device and every
+// still-unreported device removal (PendingDeviceRemovals — the household
+// entries they would have unlinked died with the household), every
 // controller (their GUIDs died with the household; Controller also carries the
 // controller credentials, alert rules and alert state), the queued alert
 // outbox, and the ctrl-vhost session secret (invalidates any web session) —
@@ -334,6 +384,7 @@ func (s *State) ResetHousehold() {
 	s.Devices = nil
 	s.Controllers = nil
 	s.Outbox = nil
+	s.PendingDeviceRemovals = nil
 	s.CtrlSessionSecret = ""
 }
 
@@ -708,6 +759,7 @@ func (st *Store) Update(fn func(*State)) error {
 	fn(&next)
 	next.Version = Version
 	next.Outbox = capOutbox(next.Outbox)
+	next.PendingDeviceRemovals = capPendingRemovals(next.PendingDeviceRemovals)
 	prev := st.s
 	st.s = next
 	if err := st.persistLocked(); err != nil {
@@ -929,4 +981,17 @@ func capOutbox(q []wire.AlertRequest) []wire.AlertRequest {
 		return q
 	}
 	return q[len(q)-OutboxLimit:] // keep newest
+}
+
+// capPendingRemovals keeps the newest PendingRemovalLimit entries. Unlike the
+// alert outbox it logs what it drops: each dropped entry is a household entry
+// the cloud will keep until an owner removes it by hand.
+func capPendingRemovals(q []PendingDeviceRemoval) []PendingDeviceRemoval {
+	if len(q) <= PendingRemovalLimit {
+		return q
+	}
+	for _, p := range q[:len(q)-PendingRemovalLimit] {
+		slog.Warn("dropping unreported device removal: queue full", "device_id", p.DeviceID, "queued_at", p.CreatedAt, "limit", PendingRemovalLimit)
+	}
+	return q[len(q)-PendingRemovalLimit:]
 }

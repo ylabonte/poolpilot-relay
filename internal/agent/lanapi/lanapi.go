@@ -1014,6 +1014,14 @@ func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 				return // cross-revoke of the last owner refused — no mutation
 			}
 			doc.Devices[idx].RevokedAt = now
+			// Owe the cloud the removal report in the SAME commit as the
+			// revoke, so it survives a failed first attempt, a restart, or a
+			// power cut before the attempt below (see the SECURITY/PRIVACY
+			// comment after this Update). An un-enrolled relay has no cloud to
+			// tell.
+			if doc.Enrolled() {
+				doc.QueueDeviceRemoval(id, now)
+			}
 			// Revoking a device must also kill any ctrl-vhost web session it
 			// still holds (issue poolpilot-cloud#27). The pairing bearer dies with the row
 			// above, but a pp_ctrl cookie already sitting in that device's
@@ -1081,24 +1089,29 @@ func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 		// self-revoke are both the lost-phone flow just as much as unpairing is.
 		unlock()
 
-		// SECURITY/PRIVACY: best-effort only. The device's own bearer is already
-		// dead the moment this Update committed above — that IS the access
-		// revocation, and it does not depend on the cloud call below succeeding.
-		// If this call fails or the cloud is unreachable, the device's cloud
-		// side outlives it: its push tokens until APNs/FCM's own token
-		// expiry/unregister feedback, and its link to its household entry
-		// (app bearer, membership, shared Pro) until an owner removes that
-		// entry from the household's member list. Nothing here retries the
-		// report. None of that is a way back onto THIS relay — the LAN bearer
-		// above is what grants that, and it is gone. Failing the whole request
-		// over the cloud call would make a lost-phone revoke hostage to
-		// control-plane reachability, which is strictly worse.
+		// SECURITY/PRIVACY: the device's own bearer is already dead the moment
+		// this Update committed above — that IS the access revocation, and it
+		// does not depend on the cloud. What the cloud still has to hear is
+		// the removal report (POST /devices/revoke-push): it kills the phone's
+		// push tokens and drops this relay's link to its household entry
+		// (app bearer, membership, shared Pro). That report is DURABLE: the
+		// Update above queued it (state.PendingDeviceRemoval) together with
+		// the revoke, the call below is its immediate attempt, and anything
+		// that attempt cannot settle (cloud unreachable, timeout, 5xx, 403
+		// while the household is not entitled) is retried on the poller's
+		// tick with backoff until the cloud confirms it — see
+		// cloud.Client.ReportDeviceRemovals for which answers end an entry and
+		// for the age/size caps that bound the queue. Until it lands, the
+		// cloud side outlives the device; none of that is a way back onto
+		// THIS relay. The request never waits on the cloud's verdict: failing
+		// a lost-phone revoke over control-plane reachability would be
+		// strictly worse.
 		// WithoutCancel: the phone hanging up right after DELETE must not abort
 		// the cleanup mid-flight — the cloud client's own RequestTimeout still
 		// bounds each call, so this cannot hang the handler goroutine forever.
 		cleanupCtx := context.WithoutCancel(r.Context())
-		if err := s.Cloud.RevokePushForDevice(cleanupCtx, id); err != nil {
-			slog.Warn("cloud push revoke", "device_id", id, "err", err)
+		if err := s.Cloud.ReportDeviceRemovals(cleanupCtx); err != nil {
+			slog.Warn("cloud device removal report", "device_id", id, "err", err)
 		}
 
 		if remaining == 0 {
