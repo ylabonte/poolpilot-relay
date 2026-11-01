@@ -543,7 +543,7 @@ func (c *Client) ReportDeviceRemovals(ctx context.Context) error {
 		return nil
 	}
 	passCtx, cancel := context.WithTimeout(ctx, removalPassTimeout)
-	err := c.removalPass(passCtx, "")
+	err := c.removalPass(passCtx, removalPassOpts{})
 	cancel()
 	c.removalMu.Unlock()
 	if c.removalRerun.Swap(false) {
@@ -564,14 +564,48 @@ func (c *Client) ReportDeviceRemoval(ctx context.Context, deviceID string) error
 		return nil
 	}
 	defer c.removalMu.Unlock()
-	return c.removalPass(ctx, deviceID)
+	return c.removalPass(ctx, removalPassOpts{only: deviceID})
 }
 
-// removalPass is one pass under removalMu over every entry, or over the entry
-// for only when non-empty.
-func (c *Client) removalPass(ctx context.Context, only string) error {
+// FlushDeviceRemovals is the queue's last chance before the relay's cloud
+// credentials are replaced (lanapi's pairFirst, after a successful redeem and
+// BEFORE persisting the new token): it sends every queued entry once more
+// under the credentials still in the store — the OLD identity's, which is
+// the only one these entries may ever go out with — ignoring backoff and a
+// parked tunnel, since there will be no later attempt. The caller bounds it
+// with ctx's deadline and then discards whatever is left.
+//
+// It waits for a running pass to finish (polling, until ctx is done) rather
+// than skipping, because a skipped flush is a lost report; a pass that is
+// still running at the deadline makes the flush return ctx's error unsent.
+// It can never send under the new token: the token is not in the store yet,
+// and each entry goes out with the snapshot its identity was checked against.
+func (c *Client) FlushDeviceRemovals(ctx context.Context) error {
+	for !c.removalMu.TryLock() {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("%w: device removal flush: %v", ErrUnavailable, ctx.Err())
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	defer c.removalMu.Unlock()
+	return c.removalPass(ctx, removalPassOpts{flush: true})
+}
+
+// removalPassOpts selects what one removalPass covers.
+type removalPassOpts struct {
+	// only, when non-empty, limits the pass to that device id's entry.
+	only string
+	// flush sends every entry regardless of its backoff or a parked tunnel
+	// (FlushDeviceRemovals).
+	flush bool
+}
+
+// removalPass is one pass under removalMu over the entries opts selects.
+func (c *Client) removalPass(ctx context.Context, opts removalPassOpts) error {
+	only := opts.only
 	s := c.store.Get()
-	if len(s.PendingDeviceRemovals) == 0 || !s.Enrolled() || s.TunnelParked() {
+	if len(s.PendingDeviceRemovals) == 0 || !s.Enrolled() || (s.TunnelParked() && !opts.flush) {
 		return nil
 	}
 	identity := s.CloudIdentity()
@@ -604,7 +638,7 @@ func (c *Client) removalPass(ctx context.Context, only string) error {
 			}
 			continue
 		}
-		if now.Before(p.NextAttemptAt) {
+		if now.Before(p.NextAttemptAt) && !opts.flush {
 			continue
 		}
 		err := c.revokePush(ctx, s.Cloud, p.DeviceID)

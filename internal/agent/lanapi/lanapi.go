@@ -140,9 +140,11 @@ type Server struct {
 	ExitFn func()
 	// probeTimeout bounds the live controller probe in PUT /v1/controllers.
 	ProbeTimeout time.Duration
-	// RemovalReportTimeout bounds DELETE /v1/devices/{id}'s immediate attempt
-	// to report the removal to the cloud, in total; whatever it cannot settle
-	// in time stays queued for the poller. Zero → defaultRemovalReportTimeout.
+	// RemovalReportTimeout bounds, in total, each removal report the request
+	// path waits for: DELETE /v1/devices/{id}'s immediate attempt (whatever it
+	// cannot settle stays queued for the poller) and pairFirst's flush of the
+	// old identity's queue before a re-pair (whatever it cannot settle is
+	// discarded). Zero → defaultRemovalReportTimeout.
 	RemovalReportTimeout time.Duration
 
 	// ValidateLan gates a submitted lan_address (issue poolpilot-cloud#36 SSRF block). nil is
@@ -556,6 +558,19 @@ func (s *Server) pairFirst(w http.ResponseWriter, r *http.Request, req wire.Pair
 		return
 	}
 
+	// Last chance for removals the old identity still owes: the redeem just
+	// succeeded, so the cloud is reachable, and the old token is still the one
+	// in the store. One bounded flush under it (RemovalReportTimeout total);
+	// whatever it cannot settle is discarded by the Update below. The new
+	// token is not persisted until that Update, so the flush cannot use it.
+	if len(st.PendingDeviceRemovals) > 0 {
+		flushCtx, cancelFlush := context.WithTimeout(context.WithoutCancel(r.Context()), s.removalReportTimeout())
+		if err := s.Cloud.FlushDeviceRemovals(flushCtx); err != nil {
+			slog.Warn("flush device removal reports before re-pair", "err", err)
+		}
+		cancelFlush()
+	}
+
 	var discarded []state.PendingDeviceRemoval
 	err = s.Store.Update(func(doc *state.State) {
 		doc.Devices = append(doc.Devices, dev)
@@ -563,9 +578,10 @@ func (s *Server) pairFirst(w http.ResponseWriter, r *http.Request, req wire.Pair
 		// clears any parked lifecycle left from the previous household
 		// (poolpilot-cloud#242).
 		doc.Cloud = state.Cloud{BaseURL: s.CloudBaseURL, FrpcToken: res.FrpcToken, FRPS: res.FRPS}
-		// Unreported removals belong to the identity just replaced: the new
-		// relay must never send them (state.PendingDeviceRemoval.CloudIdentity),
-		// and the old token that could is gone. Discarding them is a real loss,
+		// Removals the flush above could not settle belong to the identity
+		// just replaced: the new relay must never send them
+		// (state.PendingDeviceRemoval.CloudIdentity), and the old token that
+		// could is gone after this Update. Discarding them is a real loss,
 		// logged at ERROR per entry below once the Update has persisted: each
 		// one's cloud entry stays in place and shows up as an extra row in the
 		// app's paired-devices list for the owner to remove.
@@ -1132,11 +1148,7 @@ func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 		// WithoutCancel: the phone hanging up right after DELETE must not abort
 		// the cleanup mid-flight; the deadline above still bounds it.
 		cleanupCtx := context.WithoutCancel(r.Context())
-		reportTimeout := s.RemovalReportTimeout
-		if reportTimeout <= 0 {
-			reportTimeout = defaultRemovalReportTimeout
-		}
-		reportCtx, cancelReport := context.WithTimeout(cleanupCtx, reportTimeout)
+		reportCtx, cancelReport := context.WithTimeout(cleanupCtx, s.removalReportTimeout())
 		if err := s.Cloud.ReportDeviceRemoval(reportCtx, id); err != nil {
 			slog.Warn("cloud device removal report", "device_id", id, "err", err)
 		}
@@ -1162,6 +1174,14 @@ func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 // for a healthy cloud round trip, short enough that a lost-phone revoke never
 // waits on an unhealthy one.
 const defaultRemovalReportTimeout = 5 * time.Second
+
+// removalReportTimeout is RemovalReportTimeout or its default.
+func (s *Server) removalReportTimeout() time.Duration {
+	if s.RemovalReportTimeout > 0 {
+		return s.RemovalReportTimeout
+	}
+	return defaultRemovalReportTimeout
+}
 
 // isLastActiveOwner reports whether devices[idx] is an active owner and no
 // OTHER active device is one — i.e. revoking it would leave the household
