@@ -34,7 +34,7 @@ nur Versionen mit gültiger Signatur.
 - **Auf Wunsch, aus der App.** Du willst nicht bis zur Nacht warten? Öffne das
   Relay in der PoolPilot-App und tippe auf **Jetzt aktualisieren** — ein
   wartendes Update installiert sich sofort. Das darf nur der
-  Haushalts-**Besitzer** (siehe unten).
+  Haushalts-**Eigentümer** (siehe unten).
 
 ## Updates steuern
 
@@ -53,12 +53,12 @@ automatische Updates**:
 Das ist die Einstellung, die die meisten wollen, weil sie das Gerät nie ohne
 Update-Möglichkeit zurücklässt.
 
-**Nur der Haushalts-Besitzer** kann den Schalter umlegen und auf **Jetzt
+**Nur der Haushalts-Eigentümer** kann den Schalter umlegen und auf **Jetzt
 aktualisieren** tippen. Jedes gekoppelte Telefon, auch das eines Mitglieds,
 sieht den Update-Status und kann das Relay nach einem Update suchen lassen; ein
 Mitglieds-Telefon, das den Schalter ändern oder ein Update installieren will,
 wird abgewiesen (siehe
-[Besitzer- und Mitglieds-Telefone](troubleshooting.md#besitzer--und-mitglieds-telefone)).
+[Eigentümer- und Mitglieds-Telefone](troubleshooting.md#eigentümer--und-mitglieds-telefone)).
 
 ### Am Gerät — vollständiges Abschalten
 

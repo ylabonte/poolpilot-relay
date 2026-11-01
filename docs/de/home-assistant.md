@@ -50,7 +50,7 @@ Zwei Einstellungen, im Reiter **Konfiguration** der App:
   Wechsel bei einem bereits gekoppelten Relay unterbricht daher den direkten
   LAN-Pfad, die App fällt auf den Cloud-Tunnel zurück, bis du neu koppelst. Ein
   erneutes Koppeln eines bereits gekoppelten Relays läuft über
-  Wiederherstellung/Einladung, nicht über frisches Koppeln: der **Besitzer**
+  Wiederherstellung/Einladung, nicht über frisches Koppeln: der **Eigentümer**
   koppelt mit dem einmaligen Wiederherstellungscode neu (siehe
   **Wiederherstellung / Fortgeschritten** unten), andere Handys über eine neue
   **Einladung**.

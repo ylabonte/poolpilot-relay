@@ -44,7 +44,7 @@ wieder anzuzeigen.
 ## `poolpilot-relay show-recovery`
 
 Zeigt einen **einmaligen Wiederherstellungscode**, mit dem ein Telefon die
-*Besitzer*-Rolle für den Haushalt dieses Relays zurückholen kann — zum Beispiel,
+*Eigentümer*-Rolle für den Haushalt dieses Relays zurückholen kann — zum Beispiel,
 wenn du den Zugriff von allen gekoppelten Geräten verloren hast. Wer diesen Befehl
 ausführen kann, hat bereits physischen/Root-Zugriff auf das Relay — genau darauf
 beruht diese Wiederherstellung.
