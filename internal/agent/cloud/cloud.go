@@ -82,8 +82,12 @@ type Client struct {
 	// caller leaves when it finds the lock taken — see SyncControllers' doc.
 	syncMu    sync.Mutex
 	syncRerun atomic.Bool
-	store     *state.Store
-	http      *http.Client
+	// removalMu / removalRerun make ReportDeviceRemovals single-flight the same
+	// way syncMu / syncRerun do for SyncControllers.
+	removalMu    sync.Mutex
+	removalRerun atomic.Bool
+	store        *state.Store
+	http         *http.Client
 	// now is the clock Drain judges alert staleness against. Defaults to
 	// time.Now; tests in this package (same package, not _test) override it
 	// directly rather than threading a parameter through every call site.
@@ -116,9 +120,14 @@ type RedeemResult struct {
 // a rogue relay is Piece A (the app verifies the relay's out-of-band
 // fingerprint + pins the LAN-API TLS, so the code only ever reaches the
 // verified relay) — see docs/pairing-trust.md.
-func (c *Client) Redeem(ctx context.Context, baseURL, code string) (RedeemResult, error) {
+//
+// deviceID is the relay-local id of the founding phone's device record, minted
+// by the caller before this call and persisted only on success. The cloud links
+// it to the app bearer that minted the code, so a later RevokePushForDevice for
+// that id can remove the household entry behind it (wire.EnrollRedeemRequest).
+func (c *Client) Redeem(ctx context.Context, baseURL, code, deviceID string) (RedeemResult, error) {
 	var out RedeemResult
-	body := map[string]string{"code": code, "agent_id": c.store.Get().AgentID}
+	body := wire.EnrollRedeemRequest{Code: code, AgentID: c.store.Get().AgentID, DeviceID: deviceID}
 	status, err := c.doJSON(ctx, http.MethodPost, baseURL+"/enroll/redeem", "", body, &out)
 	if err != nil {
 		return RedeemResult{}, err
@@ -415,21 +424,34 @@ func (c *Client) RevokeController(ctx context.Context, guid string) error {
 	}
 }
 
-// RevokePushForDevice best-effort revokes a phone's cloud-side push tokens
-// when the agent revokes that device (lost/stolen phone, D9). Bearer = the
-// stored frpc token, the SAME relay-authed credential RevokeController uses, so
-// the cloud scopes the revoke to this relay's own entitlement without the agent
-// needing to prove anything further about the device_id itself. The endpoint
-// is idempotent (a device_id with zero matching tokens still 200s), so unlike
-// RevokeController there is no special 404-as-success case here. The caller
-// (lanapi's deleteDevice) logs but does not fail the local revoke if this
-// call errors — see its SECURITY/PRIVACY comment for why best-effort suffices.
+// RevokePushForDevice sends ONE device-removal report to the cloud (POST
+// /devices/revoke-push): the cloud revokes the phone's push tokens and drops
+// this relay's link to its household entry, removing the entry (membership,
+// app bearer, shared Pro) once no link is left (wire.DevicePushRevokeRequest).
+// Bearer = the stored frpc token, the SAME relay-authed credential
+// RevokeController uses, so the cloud scopes the revoke to this relay's own
+// household without the agent needing to prove anything further about the
+// device_id itself. The endpoint is idempotent (a device_id with nothing left
+// to revoke still 200s).
+//
+// It is the transport only. Removals are reported through the durable queue
+// (state.PendingDeviceRemoval, ReportDeviceRemovals), which decides from the
+// status this returns whether an entry is settled or retried; the returned
+// error wraps the status (see removalStatus).
 func (c *Client) RevokePushForDevice(ctx context.Context, deviceID string) error {
 	s := c.store.Get()
 	if !s.Enrolled() {
 		return fmt.Errorf("%w: not enrolled", ErrRejected)
 	}
-	status, err := c.doJSON(ctx, http.MethodPost, s.Cloud.BaseURL+"/devices/revoke-push", s.Cloud.FrpcToken,
+	return c.revokePush(ctx, s.Cloud, deviceID)
+}
+
+// revokePush is RevokePushForDevice against explicit credentials: the removal
+// queue sends each entry with the credentials of the snapshot it checked the
+// entry's identity against, so a re-pair landing mid-request can never put an
+// old relay's device id under the new relay's token.
+func (c *Client) revokePush(ctx context.Context, creds state.Cloud, deviceID string) error {
+	status, err := c.doJSON(ctx, http.MethodPost, creds.BaseURL+"/devices/revoke-push", creds.FrpcToken,
 		map[string]string{"device_id": deviceID}, nil)
 	if err != nil {
 		return err
@@ -437,11 +459,250 @@ func (c *Client) RevokePushForDevice(ctx context.Context, deviceID string) error
 	switch {
 	case status >= 200 && status < 300:
 		return nil
+	case status == http.StatusForbidden:
+		return fmt.Errorf("%w: devices/revoke-push HTTP 403", ErrSubscriptionInactive)
+	case status == http.StatusUnauthorized, status == http.StatusRequestTimeout, status == http.StatusTooManyRequests:
+		return fmt.Errorf("%w: devices/revoke-push HTTP %d", ErrUnavailable, status)
 	case status >= 400 && status < 500:
 		return fmt.Errorf("%w: devices/revoke-push HTTP %d", ErrRejected, status)
 	default:
 		return fmt.Errorf("%w: devices/revoke-push HTTP %d", ErrUnavailable, status)
 	}
+}
+
+// Removal-report retry policy (ReportDeviceRemovals).
+const (
+	// RemovalMaxAge is how long an unconfirmed removal stays queued. After it
+	// the entry is dropped with a warning: the cloud keeps the household
+	// entry until an owner removes it by hand (the app's Paired devices list
+	// shows such leftovers) — the same
+	// outcome the pre-queue, fire-once report had on its first failure.
+	RemovalMaxAge = 30 * 24 * time.Hour
+	// removalBackoffBase / removalBackoffMax bound the backoff after a
+	// transient failure (transport error, timeout, 5xx, 401, 408, 429):
+	// base·2^(attempts-1), capped. The poller's tick is the clock, so the
+	// effective delay is rounded up to the next tick.
+	removalBackoffBase = time.Minute
+	removalBackoffMax  = time.Hour
+	// removalBackoffInactive is the delay after a 403 "subscription inactive":
+	// the control plane currently Pro-gates POST /devices/revoke-push
+	// (relayFromBearer), so a lapsed household's report cannot land until it
+	// is entitled again — or until the cloud lifts that gate for this route.
+	// Either way the answer is not terminal, but retrying it every minute
+	// would only repeat the refusal.
+	removalBackoffInactive = 6 * time.Hour
+)
+
+// removalPassTimeout bounds one whole ReportDeviceRemovals pass, on top of
+// each request's own RequestTimeout, so a slow cloud cannot hold the poller's
+// tick for queue-length × RequestTimeout. Entries the deadline cuts off stay
+// queued for the next tick. A var so tests can shorten it.
+var removalPassTimeout = time.Minute
+
+// ReportDeviceRemovals sends every due entry of the durable removal queue
+// (state.State.PendingDeviceRemovals) to the cloud and settles it by the
+// answer. It is the poller tick's retry path; lanapi's deleteDevice uses
+// ReportDeviceRemoval for its immediate attempt instead. Single-flight like
+// SyncControllers: a caller that finds a pass running records a rerun and
+// returns nil, and the running pass makes one more pass after it releases the
+// lock, so an entry queued mid-pass is still sent now rather than at the next
+// tick. Each pass is bounded in total by removalPassTimeout.
+//
+// Per entry:
+//   - queued under another cloud identity than the current one
+//     (state.PendingDeviceRemoval.CloudIdentity non-empty and different) →
+//     dropped unsent, logged at ERROR with its device id. Its device id
+//     belongs to a relay identity that no longer exists here; sending it with
+//     the new token would be wrong, and the old token is gone. The cloud entry
+//     behind it then remains and shows up as an extra row in the app's
+//     paired-devices list for the owner to remove. An entry with an EMPTY
+//     marker (queued before the field existed) counts as the current identity.
+//   - 2xx → reported; removed. The route is idempotent, so a repeat after a
+//     lost response is harmless.
+//   - 4xx other than 401/403/408/429 → removed with a warning. The cloud
+//     answers 400 only for a body it can never accept (bad JSON, missing or
+//     over-long device_id), and 404/405 means a control plane without the
+//     route — nothing a retry of the same request could change. An unknown
+//     device_id is NOT one of these: the cloud 200s it.
+//   - 403 "subscription inactive" → kept, next attempt after
+//     removalBackoffInactive (see that constant).
+//   - transport error, timeout, 5xx, 401, 408, 429 → kept, exponential
+//     backoff. A 401 is the lifecycle machinery's business (it parks the
+//     tunnel after repeated ones); the queue only waits.
+//   - older than RemovalMaxAge → dropped unattempted, with a warning.
+//
+// Each entry is sent with the credentials of the same snapshot its identity
+// was checked against, never re-read from the store mid-request.
+//
+// Nothing is sent while the agent is not enrolled or its tunnel is parked
+// (state.State.TunnelParked): every report would be refused. Entries are kept
+// and go out once the cloud is reachable and entitled again. Returns the
+// pass's first non-terminal error, or a persist error, so a caller can log it.
+func (c *Client) ReportDeviceRemovals(ctx context.Context) error {
+	if !c.removalMu.TryLock() {
+		c.removalRerun.Store(true)
+		return nil
+	}
+	passCtx, cancel := context.WithTimeout(ctx, removalPassTimeout)
+	err := c.removalPass(passCtx, removalPassOpts{})
+	cancel()
+	c.removalMu.Unlock()
+	if c.removalRerun.Swap(false) {
+		return c.ReportDeviceRemovals(ctx)
+	}
+	return err
+}
+
+// ReportDeviceRemoval is deleteDevice's immediate attempt: it sends ONLY the
+// queue entry for deviceID, by the same rules as ReportDeviceRemovals, and
+// leaves every other entry to the poller. The caller bounds it with ctx's
+// deadline. If a pass is already running it sends nothing and asks that pass
+// for a rerun, which picks the new entry up; it never waits for the lock, so
+// the request path cannot queue behind a slow pass.
+func (c *Client) ReportDeviceRemoval(ctx context.Context, deviceID string) error {
+	if !c.removalMu.TryLock() {
+		c.removalRerun.Store(true)
+		return nil
+	}
+	defer c.removalMu.Unlock()
+	return c.removalPass(ctx, removalPassOpts{only: deviceID})
+}
+
+// FlushDeviceRemovals is the queue's last chance before the relay's cloud
+// credentials are replaced (lanapi's pairFirst, after a successful redeem and
+// BEFORE persisting the new token): it sends every queued entry once more
+// under the credentials still in the store — the OLD identity's, which is
+// the only one these entries may ever go out with — ignoring backoff and a
+// parked tunnel, since there will be no later attempt. The caller bounds it
+// with ctx's deadline and then discards whatever is left.
+//
+// It waits for a running pass to finish (polling, until ctx is done) rather
+// than skipping, because a skipped flush is a lost report; a pass that is
+// still running at the deadline makes the flush return ctx's error unsent.
+// It can never send under the new token: the token is not in the store yet,
+// and each entry goes out with the snapshot its identity was checked against.
+func (c *Client) FlushDeviceRemovals(ctx context.Context) error {
+	for !c.removalMu.TryLock() {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("%w: device removal flush: %v", ErrUnavailable, ctx.Err())
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	defer c.removalMu.Unlock()
+	return c.removalPass(ctx, removalPassOpts{flush: true})
+}
+
+// removalPassOpts selects what one removalPass covers.
+type removalPassOpts struct {
+	// only, when non-empty, limits the pass to that device id's entry.
+	only string
+	// flush sends every entry regardless of its backoff or a parked tunnel
+	// (FlushDeviceRemovals).
+	flush bool
+}
+
+// removalPass is one pass under removalMu over the entries opts selects.
+func (c *Client) removalPass(ctx context.Context, opts removalPassOpts) error {
+	only := opts.only
+	s := c.store.Get()
+	if len(s.PendingDeviceRemovals) == 0 || !s.Enrolled() || (s.TunnelParked() && !opts.flush) {
+		return nil
+	}
+	identity := s.CloudIdentity()
+	var firstErr error
+	for _, p := range s.PendingDeviceRemovals {
+		if only != "" && p.DeviceID != only {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("%w: device removal pass cut off: %v", ErrUnavailable, err)
+			}
+			return firstErr
+		}
+		// An empty marker predates the field and counts as the current
+		// identity; only a non-empty, different one is stale.
+		if p.CloudIdentity != "" && p.CloudIdentity != identity {
+			slog.Error("discarding unreported device removal: queued under another cloud identity; its cloud entry remains for the owner to remove",
+				"device_id", p.DeviceID, "queued_at", p.CreatedAt, "attempts", p.Attempts)
+			if err := c.settleRemoval(p.DeviceID, nil); err != nil {
+				return err
+			}
+			continue
+		}
+		now := c.now()
+		if now.Sub(p.CreatedAt) > RemovalMaxAge {
+			slog.Warn("dropping unreported device removal: too old", "device_id", p.DeviceID, "queued_at", p.CreatedAt, "attempts", p.Attempts)
+			if err := c.settleRemoval(p.DeviceID, nil); err != nil {
+				return err
+			}
+			continue
+		}
+		if now.Before(p.NextAttemptAt) && !opts.flush {
+			continue
+		}
+		err := c.revokePush(ctx, s.Cloud, p.DeviceID)
+		switch {
+		case err == nil:
+			if err := c.settleRemoval(p.DeviceID, nil); err != nil {
+				return err
+			}
+		case errors.Is(err, ErrRejected):
+			slog.Warn("dropping device removal the cloud refused", "device_id", p.DeviceID, "err", err)
+			if err := c.settleRemoval(p.DeviceID, nil); err != nil {
+				return err
+			}
+		default:
+			delay := removalBackoff(p.Attempts + 1)
+			if errors.Is(err, ErrSubscriptionInactive) {
+				delay = removalBackoffInactive
+			}
+			next := c.now().Add(delay)
+			if perr := c.settleRemoval(p.DeviceID, func(q *state.PendingDeviceRemoval) {
+				q.Attempts++
+				q.NextAttemptAt = next
+			}); perr != nil {
+				return perr
+			}
+			if firstErr == nil {
+				firstErr = fmt.Errorf("device removal report deferred (device_id=%s, next=%s): %w", p.DeviceID, next.Format(time.RFC3339), err)
+			}
+		}
+	}
+	return firstErr
+}
+
+// settleRemoval removes the queue entry for deviceID (retry == nil) or applies
+// retry to it, against the CURRENT document — matched by device id, so an
+// entry queued or capped away while the request was in flight is never
+// clobbered by position.
+func (c *Client) settleRemoval(deviceID string, retry func(*state.PendingDeviceRemoval)) error {
+	if err := c.store.Update(func(st *state.State) {
+		for i := range st.PendingDeviceRemovals {
+			if st.PendingDeviceRemovals[i].DeviceID != deviceID {
+				continue
+			}
+			if retry != nil {
+				retry(&st.PendingDeviceRemovals[i])
+			} else {
+				st.PendingDeviceRemovals = append(st.PendingDeviceRemovals[:i], st.PendingDeviceRemovals[i+1:]...)
+			}
+			return
+		}
+	}); err != nil {
+		return fmt.Errorf("cloud: settle device removal: %w", err)
+	}
+	return nil
+}
+
+// removalBackoff is the delay before attempt n+1 after n transient failures.
+func removalBackoff(attempts int) time.Duration {
+	d := removalBackoffBase
+	for i := 1; i < attempts && d < removalBackoffMax; i++ {
+		d *= 2
+	}
+	return min(d, removalBackoffMax)
 }
 
 // Release best-effort releases this relay's cloud-side quota slot on a
@@ -493,8 +754,12 @@ func (c *Client) Release(ctx context.Context, baseURL, frpcToken string) error {
 // the cloud checks something strictly stronger and authenticated — the
 // frpc_token proves which household is asking, and an invite from a different
 // one is refused without being consumed.
-func (c *Client) BrokerVoucher(ctx context.Context, inviteCode string) (wire.DeviceVoucherResponse, error) {
-	return c.brokerVoucher(ctx, wire.DeviceVoucherRequest{InviteCode: inviteCode}, "invite")
+//
+// deviceID is the relay-local id the joining phone's device record will carry,
+// minted by the caller before this call: the cloud records it on the voucher so
+// the bearer it mints is linked to that device (wire.DeviceVoucherRequest).
+func (c *Client) BrokerVoucher(ctx context.Context, inviteCode, deviceID string) (wire.DeviceVoucherResponse, error) {
+	return c.brokerVoucher(ctx, wire.DeviceVoucherRequest{InviteCode: inviteCode, DeviceID: deviceID}, "invite")
 }
 
 // BrokerRecoveryVoucher is the RECOVERY half: no invite, and the voucher comes
@@ -507,8 +772,11 @@ func (c *Client) BrokerVoucher(ctx context.Context, inviteCode string) (wire.Dev
 // the operator's one-time recovery code first (internal/agent/recovery) — the
 // cloud cannot check it, so this method is exactly as strong as the caller's
 // discipline about calling it.
-func (c *Client) BrokerRecoveryVoucher(ctx context.Context) (wire.DeviceVoucherResponse, error) {
-	return c.brokerVoucher(ctx, wire.DeviceVoucherRequest{Recovery: true}, "recovery")
+//
+// deviceID links the minted owner bearer to the recovering phone's device
+// record, exactly as in BrokerVoucher.
+func (c *Client) BrokerRecoveryVoucher(ctx context.Context, deviceID string) (wire.DeviceVoucherResponse, error) {
+	return c.brokerVoucher(ctx, wire.DeviceVoucherRequest{Recovery: true, DeviceID: deviceID}, "recovery")
 }
 
 func (c *Client) brokerVoucher(ctx context.Context, body wire.DeviceVoucherRequest, what string) (wire.DeviceVoucherResponse, error) {

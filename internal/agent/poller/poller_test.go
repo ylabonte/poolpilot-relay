@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -718,5 +719,40 @@ func TestTickRetriesPendingControllerCloudSync(t *testing.T) {
 	p.tick(context.Background())
 	if len(puts) != 1 {
 		t.Errorf("a cleared flag must not be re-sent on the next tick: %v", puts)
+	}
+}
+
+// The tick is the retry path for a device-removal report the cloud has not
+// confirmed yet: it sends the queued device id even with no controller
+// configured, and dequeues it on the cloud's 200.
+func TestTickReportsPendingDeviceRemovals(t *testing.T) {
+	var got atomic.Value
+	cloudSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/devices/revoke-push" {
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			got.Store(body["device_id"])
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer cloudSrv.Close()
+	st, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Update(func(s *state.State) {
+		s.Cloud = state.Cloud{BaseURL: cloudSrv.URL, FrpcToken: "relay-token"}
+		s.QueueDeviceRemoval("dev-lost", time.Now())
+	}); err != nil {
+		t.Fatal(err)
+	}
+	New(st, cloud.New(st), time.Minute).tick(context.Background())
+	if v, _ := got.Load().(string); v != "dev-lost" {
+		t.Errorf("cloud received device_id %q, want dev-lost", v)
+	}
+	if q := st.Get().PendingDeviceRemovals; len(q) != 0 {
+		t.Errorf("queue after tick = %+v, want empty", q)
 	}
 }

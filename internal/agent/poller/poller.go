@@ -240,6 +240,12 @@ func (p *Poller) tick(ctx context.Context) {
 	if err := p.cloud.SyncControllers(ctx); err != nil {
 		slog.Debug("controller cloud sync deferred", "err", err)
 	}
+	// And for a device removal the cloud has not confirmed yet
+	// (state.State.PendingDeviceRemovals): a no-op unless something is queued
+	// and due.
+	if err := p.cloud.ReportDeviceRemovals(ctx); err != nil {
+		slog.Debug("device removal report deferred", "err", err)
+	}
 }
 
 // pollController polls one controller, evaluates its alert rules, persists its

@@ -466,7 +466,7 @@ func TestRelayCredentialsAreStrippedBeforeProxying(t *testing.T) {
 }
 
 // The body of a refused request is a cross-repo contract: the PoolPilot app
-// (poolpilot-app #1181/#1263) reads 403 + exactly "forbidden" as "this device's
+// (poolpilot-app #1181/#1265) reads 403 + exactly "forbidden" as "this device's
 // pairing was revoked", and must not confuse it with a controller's own 403.
 func TestRefusalBodyIsTheForbiddenContract(t *testing.T) {
 	backend := newFakeController()

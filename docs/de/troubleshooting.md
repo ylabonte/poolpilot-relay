@@ -123,6 +123,21 @@ Updates umschalten sowie Haushalts- und Werksreset. Fragt ein Mitglieds-Telefon
 eines davon an, antwortet die lokale API des Relays mit `403` und dem Fehlercode
 `owner_required`, und nichts ändert sich.
 
+Kein anderes Telefon kann das **letzte** Besitzer-Telefon entfernen. Versucht
+es ein Mitglieds-Telefon, erhält es `403` mit `owner_required` (siehe oben).
+Versuchen zwei Besitzer-Telefone im selben Moment, sich gegenseitig zu
+entfernen, erhält die zweite Anfrage `409` mit dem Fehlercode
+`last_owner_device`. In beiden Fällen ändert sich nichts. Selbst entfernen kann
+sich das letzte Besitzer-Telefon weiterhin. Ist es verloren, hol dir zuerst mit
+einem [Wiederherstellungscode](#besitzer-zugriff-verloren) die Besitzer-Rolle
+zurück und entferne dann das verlorene Telefon.
+
+Ein entferntes Telefon verliert den Zugriff auf das Relay sofort. Das Relay
+meldet die Entfernung außerdem an die PoolPilot-Cloud. Ist die Cloud in dem
+Moment nicht erreichbar, behält das Relay die Meldung und versucht es bei seinen
+regelmäßigen Kontakten weiter, bis die Cloud sie bestätigt, längstens 30 Tage;
+solange das Abo des Haushalts nicht aktiv ist, nur alle paar Stunden.
+
 Den Pool bedienen dürfen alle Telefone des Haushalts: Auch Mitglieder nutzen die
 eigene Weboberfläche der Steuerung samt der Einstellungen, die sie anbietet.
 Die Besitzer-Liste oben betrifft die haushaltsweite Konfiguration des Relays

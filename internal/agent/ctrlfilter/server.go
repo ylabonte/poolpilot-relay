@@ -89,7 +89,7 @@ type Server struct {
 const BearerHeader = "X-PoolPilot-Bearer"
 
 // forbiddenBody is the body of every 403 this filter itself returns. It is a
-// cross-repo contract: the PoolPilot app (poolpilot-app #1181/#1263) treats a
+// cross-repo contract: the PoolPilot app (poolpilot-app #1181/#1265) treats a
 // 403 whose trimmed body is exactly this text as "this device's pairing was
 // revoked" (and tells it apart from a controller's own relayed 403). Changing
 // it breaks that detection — coordinate with the app first.

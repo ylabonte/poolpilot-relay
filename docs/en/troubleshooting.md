@@ -114,6 +114,19 @@ installing updates or switching automatic updates, and the household and factory
 resets. A member phone that asks for one of these gets `403` with the error code
 `owner_required` from the Relay's local API, and nothing changes.
 
+No other phone can remove the **last** owner phone. A member phone that tries
+gets `403` with `owner_required` (see above). If two owner phones try to remove
+each other at the same moment, the second request gets `409` with the error
+code `last_owner_device`. In both cases nothing changes. The last owner phone
+can still remove itself. If it is lost, take the owner role back with a
+[recovery code](#lost-owner-access) first, then remove the lost phone.
+
+A removed phone loses access to the Relay at once. The Relay also reports the
+removal to the PoolPilot cloud. If the cloud cannot be reached at that moment,
+the Relay keeps the report and keeps retrying on its regular check-ins until
+the cloud confirms it, for up to 30 days; while the household's subscription is
+inactive, it retries only every few hours.
+
 Operating the pool stays with every household phone: members can use the
 controller's own web interface, including the settings it offers. The owner-only
 list above covers the Relay's own household-wide configuration, not the

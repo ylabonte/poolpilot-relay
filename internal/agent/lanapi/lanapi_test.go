@@ -91,8 +91,14 @@ type fixture struct {
 	// round trip.
 	brokerHoldMu sync.Mutex
 	brokerHold   func()
-	revokedMu    sync.Mutex
-	revoked      map[string]bool
+	// redeemDeviceIDs / voucherDeviceIDs record, in arrival order, the
+	// device_id each POST /enroll/redeem and POST /device-vouchers body
+	// carried — the id the cloud links the phone's app bearer to.
+	deviceIDsMu      sync.Mutex
+	redeemDeviceIDs  []string
+	voucherDeviceIDs []string
+	revokedMu        sync.Mutex
+	revoked          map[string]bool
 	// updated records, per guid, the last body the agent PUT to
 	// /controllers/{guid} (the dedup-HIT config refresh, issue
 	// poolpilot-cloud#99). updateRejects, when set, makes that route answer
@@ -124,6 +130,19 @@ type fixture struct {
 	// revoke-push (POST /devices/revoke-push), keyed by device_id.
 	revokedPushMu sync.Mutex
 	revokedPush   map[string]bool
+	// revokePushStatus, when non-zero, makes POST /devices/revoke-push answer
+	// that status instead of recording the device_id and answering 200.
+	revokePushStatus atomic.Int64
+	// revokePushStall, when set, makes that route hang until the agent gives
+	// up on the request (or 10 s pass) — a slow, not a dead, cloud.
+	revokePushStall atomic.Bool
+	// revokePushAuth records, per device_id, the bearer of the last
+	// revoke-push request that carried it, whatever the answer.
+	revokePushAuth map[string]string
+	// redeemToken, when set (string), is the frpc_token POST /enroll/redeem
+	// hands out instead of "relay-frpc-token" — a re-pair minting a new relay
+	// identity. revoke-push accepts both tokens.
+	redeemToken atomic.Value
 
 	// releasedMu/releaseCalled/releaseAuth record whether POST /relay/release
 	// was hit by a factory reset, and the bearer it presented. releaseNotFound,
@@ -179,7 +198,7 @@ func (f *fixture) controllerURLs(guid string) map[string]string {
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := &fixture{
-		notifier: &pairedRecorder{}, revoked: map[string]bool{}, revokedPush: map[string]bool{},
+		notifier: &pairedRecorder{}, revoked: map[string]bool{}, revokedPush: map[string]bool{}, revokePushAuth: map[string]string{},
 		updated: map[string]map[string]string{},
 	}
 
@@ -200,12 +219,29 @@ func newFixture(t *testing.T) *fixture {
 		// Relay-authed POST /devices/revoke-push — record and 200 (idempotent,
 		// mirrors the real cloud's contract).
 		if r.Method == http.MethodPost && r.URL.Path == "/devices/revoke-push" {
-			if r.Header.Get("Authorization") != "Bearer relay-frpc-token" {
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			auth := r.Header.Get("Authorization")
+			f.revokedPushMu.Lock()
+			f.revokePushAuth[body["device_id"]] = auth
+			f.revokedPushMu.Unlock()
+			newTok, _ := f.redeemToken.Load().(string)
+			if auth != "Bearer relay-frpc-token" && (newTok == "" || auth != "Bearer "+newTok) {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
-			var body map[string]string
-			_ = json.NewDecoder(r.Body).Decode(&body)
+			if f.revokePushStall.Load() {
+				select {
+				case <-r.Context().Done():
+				case <-time.After(3 * time.Second):
+				}
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			if st := f.revokePushStatus.Load(); st != 0 {
+				w.WriteHeader(int(st))
+				return
+			}
 			f.revokedPushMu.Lock()
 			f.revokedPush[body["device_id"]] = true
 			f.revokedPushMu.Unlock()
@@ -353,13 +389,20 @@ func newFixture(t *testing.T) *fixture {
 		case "/enroll/redeem":
 			var body map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&body)
+			f.deviceIDsMu.Lock()
+			f.redeemDeviceIDs = append(f.redeemDeviceIDs, body["device_id"])
+			f.deviceIDsMu.Unlock()
 			if body["code"] != "GOOD-CODE" {
 				w.WriteHeader(http.StatusGone)
 				_, _ = w.Write([]byte(`{"error":"code invalid, expired, or already used"}`))
 				return
 			}
+			frpcToken := "relay-frpc-token"
+			if tok, _ := f.redeemToken.Load().(string); tok != "" {
+				frpcToken = tok
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"frpc_token": "relay-frpc-token",
+				"frpc_token": frpcToken,
 				"frps": map[string]any{
 					"server_addr": "frps.example", "server_port": 7000,
 					"subdomain_host": "remote.example", "auth_token": "shared",
@@ -407,6 +450,9 @@ func newFixture(t *testing.T) *fixture {
 			}
 			var body wire.DeviceVoucherRequest
 			_ = json.NewDecoder(r.Body).Decode(&body)
+			f.deviceIDsMu.Lock()
+			f.voucherDeviceIDs = append(f.voucherDeviceIDs, body.DeviceID)
+			f.deviceIDsMu.Unlock()
 			// The cap is checked before the invite is consumed, so this arm sits
 			// ahead of the invite validation just like the real handler's does.
 			if f.voucherCapReached.Load() {

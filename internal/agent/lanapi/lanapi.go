@@ -140,6 +140,12 @@ type Server struct {
 	ExitFn func()
 	// probeTimeout bounds the live controller probe in PUT /v1/controllers.
 	ProbeTimeout time.Duration
+	// RemovalReportTimeout bounds, in total, each removal report the request
+	// path waits for: DELETE /v1/devices/{id}'s immediate attempt (whatever it
+	// cannot settle stays queued for the poller) and pairFirst's flush of the
+	// old identity's queue before a re-pair (whatever it cannot settle is
+	// discarded). Zero → defaultRemovalReportTimeout.
+	RemovalReportTimeout time.Duration
 
 	// ValidateLan gates a submitted lan_address (issue poolpilot-cloud#36 SSRF block). nil is
 	// the strict default (state.ValidateLanAddress — rejects loopback/link-
@@ -532,9 +538,17 @@ func (s *Server) pair(w http.ResponseWriter, r *http.Request) {
 
 // pairFirst enrolls the relay and pairs the first device by redeeming an enrollment
 // code, persisting the cloud credentials handed back at redeem.
+//
+// The device is minted BEFORE the redeem so its id can travel with it: the cloud
+// links that id to the founding phone's app bearer, which is what lets a later
+// DELETE /v1/devices/{id} (via revoke-push) remove the household entry too. It
+// is persisted only once the redeem succeeded; an id minted for a failed redeem
+// is simply dropped, and the cloud never stored it either.
 func (s *Server) pairFirst(w http.ResponseWriter, r *http.Request, req wire.PairRequest) {
 	st := s.Store.Get()
-	res, err := s.Cloud.Redeem(cloudCtx(r), s.CloudBaseURL, req.EnrollmentCode)
+	// The founding pairing creates the household, so its device is the owner.
+	token, dev := mintDevice(req.DeviceName, state.RoleOwner)
+	res, err := s.Cloud.Redeem(cloudCtx(r), s.CloudBaseURL, req.EnrollmentCode, dev.ID)
 	switch {
 	case errors.Is(err, cloud.ErrRejected):
 		writeErr(w, http.StatusGone, "code_rejected")
@@ -544,19 +558,44 @@ func (s *Server) pairFirst(w http.ResponseWriter, r *http.Request, req wire.Pair
 		return
 	}
 
-	// The founding pairing creates the household, so its device is the owner.
-	token, dev := mintDevice(req.DeviceName, state.RoleOwner)
+	// Last chance for removals the old identity still owes: the redeem just
+	// succeeded, so the cloud is reachable, and the old token is still the one
+	// in the store. One bounded flush under it (RemovalReportTimeout total);
+	// whatever it cannot settle is discarded by the Update below. The new
+	// token is not persisted until that Update, so the flush cannot use it.
+	if len(st.PendingDeviceRemovals) > 0 {
+		flushCtx, cancelFlush := context.WithTimeout(context.WithoutCancel(r.Context()), s.removalReportTimeout())
+		if err := s.Cloud.FlushDeviceRemovals(flushCtx); err != nil {
+			slog.Warn("flush device removal reports before re-pair", "err", err)
+		}
+		cancelFlush()
+	}
+
+	var discarded []state.PendingDeviceRemoval
 	err = s.Store.Update(func(doc *state.State) {
 		doc.Devices = append(doc.Devices, dev)
 		// The whole Cloud struct is replaced, not patched: a fresh token also
 		// clears any parked lifecycle left from the previous household
 		// (poolpilot-cloud#242).
 		doc.Cloud = state.Cloud{BaseURL: s.CloudBaseURL, FrpcToken: res.FrpcToken, FRPS: res.FRPS}
+		// Removals the flush above could not settle belong to the identity
+		// just replaced: the new relay must never send them
+		// (state.PendingDeviceRemoval.CloudIdentity), and the old token that
+		// could is gone after this Update. Discarding them is a real loss,
+		// logged at ERROR per entry below once the Update has persisted: each
+		// one's cloud entry stays in place and shows up as an extra row in the
+		// app's paired-devices list for the owner to remove.
+		discarded = doc.PendingDeviceRemovals
+		doc.PendingDeviceRemovals = nil
 	})
 	if err != nil {
 		slog.Error("persist pairing", "err", err)
 		writeErr(w, http.StatusInternalServerError, "persist_failed")
 		return
+	}
+	for _, p := range discarded {
+		slog.Error("discarding unreported device removal: the relay re-paired under a new cloud identity; its cloud entry remains for the owner to remove",
+			"device_id", p.DeviceID, "queued_at", p.CreatedAt, "attempts", p.Attempts)
 	}
 	if s.OnPaired != nil {
 		s.OnPaired.UpdatePaired(true)
@@ -583,8 +622,8 @@ func (s *Server) pairJoin(w http.ResponseWriter, r *http.Request, req wire.PairR
 		writeErr(w, http.StatusConflict, "not_paired")
 		return
 	}
-	s.pairWithVoucher(w, r, req, func(ctx context.Context) (wire.DeviceVoucherResponse, error) {
-		return s.Cloud.BrokerVoucher(ctx, req.InviteCode)
+	s.pairWithVoucher(w, r, req, func(ctx context.Context, deviceID string) (wire.DeviceVoucherResponse, error) {
+		return s.Cloud.BrokerVoucher(ctx, req.InviteCode, deviceID)
 	}, joinRole)
 }
 
@@ -622,8 +661,8 @@ func (s *Server) pairRecover(w http.ResponseWriter, r *http.Request, req wire.Pa
 		writeErr(w, http.StatusGone, "code_rejected")
 		return
 	}
-	s.pairWithVoucher(w, r, req, func(ctx context.Context) (wire.DeviceVoucherResponse, error) {
-		return s.Cloud.BrokerRecoveryVoucher(ctx)
+	s.pairWithVoucher(w, r, req, func(ctx context.Context, deviceID string) (wire.DeviceVoucherResponse, error) {
+		return s.Cloud.BrokerRecoveryVoucher(ctx, deviceID)
 	}, recoveryRole, window)
 }
 
@@ -652,11 +691,17 @@ func recoveryRole(wire.DeviceVoucherResponse) string { return state.RoleOwner }
 // would strand the operator behind a code that no longer works). That write is
 // also where the window is re-checked, making this function the enforcement
 // point for recovery single use rather than pairRecover's snapshot check.
+//
+// The device is minted BEFORE the broker call and its id handed to broker, so
+// the cloud can link the bearer the voucher mints to this device record (see
+// wire.DeviceVoucherRequest.DeviceID). Its role is only known once the voucher
+// is back, so it is filled in then. Nothing is persisted unless the broker
+// succeeds; an id minted for a failed broker is dropped and points at nothing.
 func (s *Server) pairWithVoucher(
 	w http.ResponseWriter,
 	r *http.Request,
 	req wire.PairRequest,
-	broker func(context.Context) (wire.DeviceVoucherResponse, error),
+	broker func(ctx context.Context, deviceID string) (wire.DeviceVoucherResponse, error),
 	roleFor func(wire.DeviceVoucherResponse) string,
 	consumedWindow ...int64,
 ) {
@@ -669,7 +714,8 @@ func (s *Server) pairWithVoucher(
 		writeErr(w, http.StatusConflict, "device_quota")
 		return
 	}
-	voucher, err := broker(cloudCtx(r))
+	token, dev := mintDevice(req.DeviceName, "")
+	voucher, err := broker(cloudCtx(r), dev.ID)
 	switch {
 	case errors.Is(err, cloud.ErrVoucherCapReached):
 		// The cloud's live-voucher cap, which it checks BEFORE consuming the
@@ -687,7 +733,7 @@ func (s *Server) pairWithVoucher(
 		return
 	}
 
-	token, dev := mintDevice(req.DeviceName, roleFor(voucher))
+	dev.Role = roleFor(voucher)
 	var overCap, windowSpent bool
 	err = s.Store.Update(func(doc *state.State) {
 		// Re-check the cap under the store lock: a concurrent add may have filled
@@ -919,8 +965,28 @@ func (s *Server) getDevices(w http.ResponseWriter, r *http.Request) {
 // revokes of two active devices both cleared the len==1 guard and fully unpaired
 // the agent remotely (defeating D9). On abort (404 or the tunnel last-device
 // guard) the closure leaves the document unmutated.
+//
+// Last-owner guard: revoking the household's LAST active owner device is
+// refused with 409 last_owner_device when the caller is a DIFFERENT device.
+// A revoke is also reported to the cloud, which drops this relay's link to the
+// device's household entry (wire.DevicePushRevokeRequest), so a cross-revoke
+// of the last owner would leave this relay with nobody who can administer it,
+// short of owner recovery at the relay's console. Removing yourself stays
+// allowed: a self-revoke of the last owner is a deliberate act by that owner,
+// as it always was. It ends only THIS relay's link to the phone's household
+// entry; the household membership itself ends only once the phone has no link
+// left to any relay of the household.
+//
+// In steady state the selfOrOwner gate already makes this unreachable — only
+// an owner may revoke another device, and an active owner caller means the
+// target is not the last one. What it closes is the race the gate's snapshot
+// cannot see: two owners revoking EACH OTHER concurrently both clear the gate,
+// and serialized in the Update below the second would revoke the last owner on
+// behalf of a caller the first just revoked. So, like the last-device guard,
+// it is evaluated inside the Update closure, against the document as it is.
 func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		callerID := deviceIDFromContext(r)
 		id := r.PathValue("id")
 		if id == "" {
 			writeErr(w, http.StatusBadRequest, "bad_id")
@@ -950,6 +1016,7 @@ func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 		var (
 			found        bool
 			blocked      bool
+			lastOwner    bool
 			remaining    int
 			removedGUIDs []string
 		)
@@ -977,7 +1044,19 @@ func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 				blocked = true
 				return // last-device revoke refused over the tunnel — no mutation
 			}
+			if id != callerID && isLastActiveOwner(doc.Devices, idx) {
+				lastOwner = true
+				return // cross-revoke of the last owner refused — no mutation
+			}
 			doc.Devices[idx].RevokedAt = now
+			// Owe the cloud the removal report in the SAME commit as the
+			// revoke, so it survives a failed first attempt, a restart, or a
+			// power cut before the attempt below (see the SECURITY/PRIVACY
+			// comment after this Update). An un-enrolled relay has no cloud to
+			// tell.
+			if doc.Enrolled() {
+				doc.QueueDeviceRemoval(id, now)
+			}
 			// Revoking a device must also kill any ctrl-vhost web session it
 			// still holds (issue poolpilot-cloud#27). The pairing bearer dies with the row
 			// above, but a pp_ctrl cookie already sitting in that device's
@@ -1019,6 +1098,10 @@ func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 			writeErr(w, http.StatusForbidden, "last_device_lan_only")
 			return
 		}
+		if lastOwner {
+			writeErr(w, http.StatusConflict, "last_owner_device")
+			return
+		}
 
 		// Make the secret drop effective on the RUNNING filter right now, not
 		// only at the next reconfigure — a lost phone must lose the controller
@@ -1041,22 +1124,35 @@ func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 		// self-revoke are both the lost-phone flow just as much as unpairing is.
 		unlock()
 
-		// SECURITY/PRIVACY: best-effort only. The device's own bearer is already
-		// dead the moment this Update committed above — that IS the access
-		// revocation, and it does not depend on the cloud call below succeeding.
-		// If this call fails or the cloud is unreachable, the worst case is a
-		// stale push token that outlives the device by one push cycle (closed by
-		// the next successful revoke-push, or by APNs/FCM's own token
-		// expiry/unregister feedback) — never a revoked device regaining access.
-		// Failing the whole request over it would make a lost-phone revoke
-		// hostage to control-plane reachability, which is strictly worse.
+		// SECURITY/PRIVACY: the device's own bearer is already dead the moment
+		// this Update committed above — that IS the access revocation, and it
+		// does not depend on the cloud. What the cloud still has to hear is
+		// the removal report (POST /devices/revoke-push): it kills the phone's
+		// push tokens and drops this relay's link to its household entry
+		// (app bearer, membership, shared Pro). That report is DURABLE: the
+		// Update above queued it (state.PendingDeviceRemoval) together with
+		// the revoke, the call below is its immediate attempt, and anything
+		// that attempt cannot settle (cloud unreachable, timeout, 5xx, 403
+		// while the household is not entitled) is retried on the poller's
+		// tick with backoff until the cloud confirms it — see
+		// cloud.Client.ReportDeviceRemovals for which answers end an entry and
+		// for the age/size caps that bound the queue. Until it lands, the
+		// cloud side outlives the device; none of that is a way back onto
+		// THIS relay. The request never waits on the cloud's verdict: failing
+		// a lost-phone revoke over control-plane reachability would be
+		// strictly worse.
+		// Only THIS removal is attempted here, under a hard total deadline
+		// (RemovalReportTimeout): the rest of the queue is the poller's, so a
+		// slow cloud costs this request at most that long, never the whole
+		// queue. A report the deadline cuts off stays queued.
 		// WithoutCancel: the phone hanging up right after DELETE must not abort
-		// the cleanup mid-flight — the cloud client's own RequestTimeout still
-		// bounds each call, so this cannot hang the handler goroutine forever.
+		// the cleanup mid-flight; the deadline above still bounds it.
 		cleanupCtx := context.WithoutCancel(r.Context())
-		if err := s.Cloud.RevokePushForDevice(cleanupCtx, id); err != nil {
-			slog.Warn("cloud push revoke", "device_id", id, "err", err)
+		reportCtx, cancelReport := context.WithTimeout(cleanupCtx, s.removalReportTimeout())
+		if err := s.Cloud.ReportDeviceRemoval(reportCtx, id); err != nil {
+			slog.Warn("cloud device removal report", "device_id", id, "err", err)
 		}
+		cancelReport()
 
 		if remaining == 0 {
 			for _, guid := range removedGUIDs {
@@ -1072,6 +1168,34 @@ func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// defaultRemovalReportTimeout is RemovalReportTimeout's default: long enough
+// for a healthy cloud round trip, short enough that a lost-phone revoke never
+// waits on an unhealthy one.
+const defaultRemovalReportTimeout = 5 * time.Second
+
+// removalReportTimeout is RemovalReportTimeout or its default.
+func (s *Server) removalReportTimeout() time.Duration {
+	if s.RemovalReportTimeout > 0 {
+		return s.RemovalReportTimeout
+	}
+	return defaultRemovalReportTimeout
+}
+
+// isLastActiveOwner reports whether devices[idx] is an active owner and no
+// OTHER active device is one — i.e. revoking it would leave the household
+// without an owner device on this relay.
+func isLastActiveOwner(devices []state.Device, idx int) bool {
+	if !devices[idx].IsOwner() || !devices[idx].RevokedAt.IsZero() {
+		return false
+	}
+	for i := range devices {
+		if i != idx && devices[i].RevokedAt.IsZero() && devices[i].IsOwner() {
+			return false
+		}
+	}
+	return true
 }
 
 // maxControllerLabelLen / maxControllerLanAddressLen mirror the control
