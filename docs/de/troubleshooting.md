@@ -133,14 +133,12 @@ einem [Wiederherstellungscode](#besitzer-zugriff-verloren) die Besitzer-Rolle
 zurück und entferne dann das verlorene Telefon.
 
 Ein entferntes Telefon verliert den Zugriff auf das Relay sofort. Das Relay
-meldet die Entfernung außerdem an die PoolPilot-Cloud, die daraufhin den Eintrag
-des Telefons im Haushalt entfernt (Mitgliedschaft, Push-Benachrichtigungen,
-geteiltes Pro), sofern das Telefon nicht noch mit einem anderen Relay des
-Haushalts gekoppelt ist. Ist die Cloud in dem Moment nicht erreichbar, behält
-das Relay die Meldung und schickt sie bei seinen regelmäßigen Kontakten erneut,
-bis die Cloud sie bestätigt, längstens 30 Tage. Solange das Abo des Haushalts
-nicht aktiv ist, versucht es das nur alle paar Stunden. Steht das Telefon danach
-noch in der Mitgliederliste des Haushalts, kann ein Besitzer es dort entfernen.
+meldet die Entfernung außerdem an die PoolPilot-Cloud. Ist die Cloud in dem
+Moment nicht erreichbar, behält das Relay die Meldung und versucht es bei seinen
+regelmäßigen Kontakten weiter, bis die Cloud sie bestätigt, längstens 30 Tage;
+solange das Abo des Haushalts nicht aktiv ist, nur alle paar Stunden. Steht das
+Telefon noch in der Mitgliederliste des Haushalts in der App, kann ein Besitzer
+es dort entfernen.
 
 Den Pool bedienen dürfen alle Telefone des Haushalts: Auch Mitglieder nutzen die
 eigene Weboberfläche der Steuerung samt der Einstellungen, die sie anbietet.
