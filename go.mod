@@ -4,6 +4,13 @@ go 1.26
 
 toolchain go1.27.3
 
+// Listen with plain TCP, not Multipath TCP. Go 1.24+ opens listeners as
+// MPTCP sockets by default; nothing that connects to the relay needs it
+// (the phone apps on the LAN and loopback frpc speak plain TCP) and MPTCP
+// listeners are the claimed remote-root path of CVE-2026-98432. Patched
+// host kernels remain the actual fix.
+godebug multipathtcp=0
+
 require (
 	aead.dev/minisign v0.3.0
 	github.com/brutella/dnssd v1.2.14
