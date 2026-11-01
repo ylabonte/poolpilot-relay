@@ -1148,9 +1148,6 @@ func (c *Client) popOutboxHead() error {
 	return nil
 }
 
-// doJSON sends a request (method) with an optional JSON body (nil in → no body)
-// and decodes a JSON response (when out != nil and the body parses). Returns
-// the HTTP status; transport failures map to ErrUnavailable.
 // cloudErrTooManyActiveBearers is the control plane's error literal for the
 // household's live-app-bearer cap (poolpilot-cloud internal/api: add-device,
 // redeem-voucher and, since poolpilot-cloud#278, /device-vouchers).
@@ -1161,16 +1158,21 @@ const cloudErrTooManyActiveBearers = "too many active bearers"
 // one and is not worth a Pi's memory.
 const maxErrorBodyBytes = 4 << 10
 
-// doJSON performs one control-plane call; see doJSONErrCode, which it wraps.
+// doJSON is doJSONErrCode without the error code, for the callers that read
+// the status alone.
 func (c *Client) doJSON(ctx context.Context, method, url, bearer string, in, out any) (int, error) {
 	status, _, err := c.doJSONErrCode(ctx, method, url, bearer, in, out)
 	return status, err
 }
 
-// doJSONErrCode is doJSON that also returns the control plane's error code:
-// the "error" field of a non-2xx {"error": "..."} body, or "" when the body is
-// absent, oversized or not that shape. Best effort by design — a caller must
-// treat "" as "no more than the status says", never as a verdict of its own.
+// doJSONErrCode sends a request (method) with an optional JSON body (nil in →
+// no body) and decodes a JSON response (when out != nil and the body parses).
+// Returns the HTTP status; transport failures map to ErrUnavailable.
+//
+// It also returns the control plane's error code: the "error" field of a
+// non-2xx {"error": "..."} body, or "" when the body is absent, oversized or
+// not that shape. Best effort by design — a caller must treat "" as "no more
+// than the status says", never as a verdict of its own.
 func (c *Client) doJSONErrCode(ctx context.Context, method, url, bearer string, in, out any) (int, string, error) {
 	var bodyReader io.Reader
 	if in != nil {
