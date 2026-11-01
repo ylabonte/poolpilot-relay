@@ -35,11 +35,12 @@ var (
 	ErrQuotaExceeded = errors.New("cloud controller quota exceeded")
 	// ErrSubscriptionInactive: the cloud refused because the entitlement is not
 	// active (HTTP 403 from relayFromBearer — the only source of 403 on the
-	// /controllers routes (GET, PUT, rotate) this sentinel is minted for; other
-	// relay-authed routes DO have their own 403s, e.g. /device-vouchers' "invite
-	// belongs to another household", so do not extend this mapping to them
-	// without checking). It is also minted for devices/revoke-push, where the
-	// only 403 is an admin-revoked household (relayFromBearerAnyTier). Distinct from the generic ErrRejected for the same
+	// /controllers routes (POST, GET, PUT, rotate) this sentinel is minted for;
+	// other relay-authed routes DO have their own 403s, e.g. /device-vouchers'
+	// "invite belongs to another household", so do not extend this mapping to
+	// them without checking). It is also minted for devices/revoke-push, where
+	// the only 403 is an admin-revoked household (relayFromBearerAnyTier).
+	// Distinct from the generic ErrRejected for the same
 	// reason ErrQuotaExceeded is: collapsing it loses the one fact the caller
 	// needs. A lapsed subscription is a routine business event in a
 	// subscription-gated product, it leaves cloud and agent perfectly
