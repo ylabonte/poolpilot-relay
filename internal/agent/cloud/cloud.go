@@ -541,8 +541,8 @@ var removalPassTimeout = time.Minute
 // though the cloud itself accepts them from any tier and refuses only an
 // admin-revoked household. Entries are kept and go out once the cloud is
 // reachable and the tunnel is unparked again (a re-pair flush is the
-// exception). Returns the
-// pass's first non-terminal error, or a persist error, so a caller can log it.
+// exception). Returns the pass's first non-terminal error, or a persist
+// error, so a caller can log it.
 func (c *Client) ReportDeviceRemovals(ctx context.Context) error {
 	if !c.removalMu.TryLock() {
 		c.removalRerun.Store(true)
