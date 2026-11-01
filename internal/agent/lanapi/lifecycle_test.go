@@ -210,3 +210,38 @@ func TestTunnelReapplyIsSerializedAcrossParkAndResume(t *testing.T) {
 		}
 	}
 }
+
+// poolpilot-relay#100: deleteDevice's immediate removal report goes out while
+// the relay is parked because its household lost Pro (lapsed), so the removed
+// phone's cloud entry goes with it; parked as unknown it stays queued.
+func TestDeleteDeviceReportsRemovalWhileParkedLapsed(t *testing.T) {
+	for _, tc := range []struct {
+		lifecycle, reason string
+		wantSent          bool
+	}{
+		{state.LifecycleSuspended, wire.RelayReasonLapsed, true},
+		{state.LifecycleUnknown, "", false},
+	} {
+		f := newFixture(t)
+		tok1, _ := f.pairFirst(t)
+		_, dev2 := f.addDevice(t, goodInvite, "second phone")
+		if err := f.store.Update(func(s *state.State) {
+			s.Cloud.Lifecycle, s.Cloud.LifecycleReason = tc.lifecycle, tc.reason
+		}); err != nil {
+			t.Fatal(err)
+		}
+		resp, raw := f.do(t, "DELETE", "/v1/devices/"+dev2, tok1, nil)
+		if resp.StatusCode != http.StatusNoContent {
+			t.Fatalf("%s/%s: revoke: HTTP %d %s, want 204", tc.lifecycle, tc.reason, resp.StatusCode, raw)
+		}
+		f.revokedPushMu.Lock()
+		sent := f.revokedPush[dev2]
+		f.revokedPushMu.Unlock()
+		if sent != tc.wantSent {
+			t.Errorf("%s/%s: removal report sent = %v, want %v", tc.lifecycle, tc.reason, sent, tc.wantSent)
+		}
+		if queued := len(f.store.Get().PendingDeviceRemovals); queued != map[bool]int{true: 0, false: 1}[tc.wantSent] {
+			t.Errorf("%s/%s: %d removals still queued", tc.lifecycle, tc.reason, queued)
+		}
+	}
+}

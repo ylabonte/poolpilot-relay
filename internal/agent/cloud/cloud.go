@@ -491,8 +491,11 @@ const (
 	// (relayFromBearerAnyTier), so a free or lapsed household is not refused;
 	// the only 403 left is "subscription revoked" for a household an admin
 	// revoked. That is not terminal (an admin can lift it), but retrying it
-	// every minute would only repeat the refusal. The name predates the
-	// cloud lifting the Pro gate on this route.
+	// every minute would only repeat the refusal. Since the agent holds the
+	// queue while it knows of a revoke (removalsHeld), this 403 only arrives
+	// when the revoke has not reached the agent yet, or from a control plane
+	// older than poolpilot-cloud#275. The name predates the cloud lifting the
+	// Pro gate on this route.
 	removalBackoffInactive = 6 * time.Hour
 )
 
@@ -537,13 +540,13 @@ var removalPassTimeout = time.Minute
 // Each entry is sent with the credentials of the same snapshot its identity
 // was checked against, never re-read from the store mid-request.
 //
-// Nothing is sent while the agent is not enrolled or its tunnel is parked
-// (state.State.TunnelParked): the agent holds reports while parked, even
-// though the cloud itself accepts them from any tier and refuses only an
-// admin-revoked household. Entries are kept and go out once the cloud is
-// reachable and the tunnel is unparked again (a re-pair flush is the
-// exception). Returns the pass's first non-terminal error, or a persist
-// error, so a caller can log it.
+// Nothing is sent while the agent is not enrolled, or while removalsHeld:
+// parked as unknown, or suspended as admin-revoked — every report would be
+// refused. A relay parked for a subscription reason (lapsed, free) still
+// reports: the cloud accepts the route from any tier. Held entries are kept
+// and go out once that changes (a re-pair flush is the exception). Returns
+// the pass's first non-terminal error, or a persist error, so a caller can
+// log it.
 func (c *Client) ReportDeviceRemovals(ctx context.Context) error {
 	if !c.removalMu.TryLock() {
 		c.removalRerun.Store(true)
@@ -603,16 +606,36 @@ func (c *Client) FlushDeviceRemovals(ctx context.Context) error {
 type removalPassOpts struct {
 	// only, when non-empty, limits the pass to that device id's entry.
 	only string
-	// flush sends every entry regardless of its backoff or a parked tunnel
+	// flush sends every entry regardless of its backoff or removalsHeld
 	// (FlushDeviceRemovals).
 	flush bool
+}
+
+// removalsHeld reports whether removal reports must wait although the relay is
+// enrolled. Removal is cleanup, and the cloud takes POST /devices/revoke-push
+// from a household of any tier, refusing only an admin-revoked one (403). So
+// of the parked states (state.State.TunnelParked) only two hold the queue:
+// LifecycleUnknown (the cloud did not recognise the token, so a report could
+// only bounce) and a suspension whose reason is RelayReasonRevoked. A
+// suspension for lapsed, free or any other reason does not: it is the
+// household that just lost Pro, and its removals must still reach the cloud.
+// This is the only park-time exception among the Pro-gated calls: Drain and
+// SyncControllers stay on TunnelParked.
+func removalsHeld(s state.State) bool {
+	switch s.Cloud.Lifecycle {
+	case state.LifecycleUnknown:
+		return true
+	case state.LifecycleSuspended:
+		return s.Cloud.LifecycleReason == wire.RelayReasonRevoked
+	}
+	return false
 }
 
 // removalPass is one pass under removalMu over the entries opts selects.
 func (c *Client) removalPass(ctx context.Context, opts removalPassOpts) error {
 	only := opts.only
 	s := c.store.Get()
-	if len(s.PendingDeviceRemovals) == 0 || !s.Enrolled() || (s.TunnelParked() && !opts.flush) {
+	if len(s.PendingDeviceRemovals) == 0 || !s.Enrolled() || (removalsHeld(s) && !opts.flush) {
 		return nil
 	}
 	identity := s.CloudIdentity()
@@ -895,7 +918,9 @@ func (c *Client) RelayStatus(ctx context.Context, baseURL, frpcToken string) (wi
 		case wire.RelayStateActive, wire.RelayStateSuspended, wire.RelayStateDeleted:
 			// Reason is informational, but it is persisted (Cloud.LifecycleReason),
 			// logged and echoed in /v1/status: keep only a documented value, so a
-			// misbehaving control plane cannot plant arbitrary text there.
+			// misbehaving control plane cannot plant arbitrary text there. The
+			// allow-list also makes an undocumented reason fail open: it reads as
+			// "", which removalsHeld does not hold, so removal reports still go out.
 			out.Reason = knownRelayReason(out.Reason)
 			return out, nil
 		default:

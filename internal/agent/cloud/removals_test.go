@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ylabonte/poolpilot-relay/internal/agent/state"
+	"github.com/ylabonte/poolpilot-relay/wire"
 )
 
 // removalCloud stubs POST /devices/revoke-push: it records each device_id it
@@ -183,29 +184,145 @@ func TestReportDeviceRemovalsDropsEntriesPastMaxAge(t *testing.T) {
 	}
 }
 
-// While parked or not enrolled nothing is sent and nothing is lost.
-func TestReportDeviceRemovalsHoldsWhileParkedOrUnenrolled(t *testing.T) {
+// park sets the relay's lifecycle as the lifecycle watcher would persist it.
+func park(t *testing.T, st *state.Store, lifecycle, reason string) {
+	t.Helper()
+	if err := st.Update(func(s *state.State) {
+		s.Cloud.Lifecycle, s.Cloud.LifecycleReason = lifecycle, reason
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// poolpilot-relay#100: a relay parked for a SUBSCRIPTION reason still reports
+// its removals — the cloud takes POST /devices/revoke-push from any tier, and
+// a household that lost Pro must still be able to remove a phone from its
+// cloud entry. Covers the poller's pass and deleteDevice's immediate report.
+func TestReportDeviceRemovalsSendWhileSuspendedForSubscription(t *testing.T) {
+	for _, reason := range []string{wire.RelayReasonLapsed, wire.RelayReasonFree, ""} {
+		rc := newRemovalCloud(t)
+		st := newStore(t, rc.srv.URL)
+		c := New(st)
+		queueRemovals(t, st, c.now(), "dev-a", "dev-b")
+		park(t, st, state.LifecycleSuspended, reason)
+		if !st.Get().TunnelParked() {
+			t.Fatalf("reason %q: precondition: tunnel parked", reason)
+		}
+		if err := c.ReportDeviceRemoval(context.Background(), "dev-b"); err != nil {
+			t.Fatalf("reason %q: immediate report: %v", reason, err)
+		}
+		if got := rc.received(); len(got) != 1 || got[0] != "dev-b" {
+			t.Fatalf("reason %q: after the immediate report the cloud received %v, want [dev-b]", reason, got)
+		}
+		if err := c.ReportDeviceRemovals(context.Background()); err != nil {
+			t.Fatalf("reason %q: poller pass: %v", reason, err)
+		}
+		if got := rc.received(); len(got) != 2 || got[1] != "dev-a" {
+			t.Errorf("reason %q: after the poller pass the cloud received %v, want [dev-b dev-a]", reason, got)
+		}
+		if q := st.Get().PendingDeviceRemovals; len(q) != 0 {
+			t.Errorf("reason %q: queue = %+v, want empty", reason, q)
+		}
+	}
+}
+
+// A 403 while parked-lapsed (an admin revoke the relay has not heard about
+// yet, or a control plane that still Pro-gates the route) keeps the entry
+// with the unchanged removalBackoffInactive delay.
+func TestReportDeviceRemovalsKeep403BackoffWhileSuspended(t *testing.T) {
 	rc := newRemovalCloud(t)
+	rc.status.Store(http.StatusForbidden)
 	st := newStore(t, rc.srv.URL)
 	c := New(st)
-	queueRemovals(t, st, c.now(), "dev-x")
-	if err := st.Update(func(s *state.State) { s.Cloud.Lifecycle = state.LifecycleSuspended }); err != nil {
-		t.Fatal(err)
+	t0 := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	now := clockAt(c, t0)
+	queueRemovals(t, st, t0, "dev-x")
+	park(t, st, state.LifecycleSuspended, wire.RelayReasonLapsed)
+	if err := c.ReportDeviceRemovals(context.Background()); !errors.Is(err, ErrSubscriptionInactive) {
+		t.Fatalf("err = %v, want ErrSubscriptionInactive", err)
 	}
+	q := st.Get().PendingDeviceRemovals
+	if len(q) != 1 || q[0].Attempts != 1 || !q[0].NextAttemptAt.Equal(t0.Add(removalBackoffInactive)) {
+		t.Fatalf("queue = %+v, want kept with next attempt at t0+%s", q, removalBackoffInactive)
+	}
+	*now = t0.Add(removalBackoffInactive - time.Second)
+	_ = c.ReportDeviceRemovals(context.Background())
+	if n := len(rc.received()); n != 1 {
+		t.Errorf("%d requests before the 403 backoff ran out, want 1", n)
+	}
+}
+
+// The real-world 403: the household was admin-revoked after the relay's last
+// /relay/status answer. The report bounces (403 → removalBackoffInactive);
+// once the watcher learns of the revoke (suspended + "revoked") the entry is
+// held — not sent, not re-attempted — even after its backoff has run out.
+func TestReportDeviceRemovalsHoldAfter403OnceRevokeIsKnown(t *testing.T) {
+	rc := newRemovalCloud(t)
+	rc.status.Store(http.StatusForbidden)
+	st := newStore(t, rc.srv.URL)
+	c := New(st)
+	t0 := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	now := clockAt(c, t0)
+	queueRemovals(t, st, t0, "dev-x")
+	park(t, st, state.LifecycleSuspended, wire.RelayReasonLapsed)
+	if err := c.ReportDeviceRemovals(context.Background()); !errors.Is(err, ErrSubscriptionInactive) {
+		t.Fatalf("err = %v, want ErrSubscriptionInactive", err)
+	}
+	if q := st.Get().PendingDeviceRemovals; len(q) != 1 || q[0].Attempts != 1 {
+		t.Fatalf("after the 403: queue = %+v, want one entry with 1 attempt", q)
+	}
+
+	park(t, st, state.LifecycleSuspended, wire.RelayReasonRevoked)
+	*now = t0.Add(removalBackoffInactive)
 	if err := c.ReportDeviceRemovals(context.Background()); err != nil {
-		t.Fatalf("parked pass: %v", err)
+		t.Fatalf("held pass: %v", err)
 	}
-	if err := st.Update(func(s *state.State) { s.Cloud = state.Cloud{} }); err != nil {
-		t.Fatal(err)
+	if err := c.ReportDeviceRemoval(context.Background(), "dev-x"); err != nil {
+		t.Fatalf("held immediate report: %v", err)
 	}
-	if err := c.ReportDeviceRemovals(context.Background()); err != nil {
-		t.Fatalf("unenrolled pass: %v", err)
+	if n := len(rc.received()); n != 1 {
+		t.Errorf("%d requests, want 1 (none once the revoke is known)", n)
 	}
-	if n := len(rc.received()); n != 0 {
-		t.Errorf("%d reports sent while parked/unenrolled, want 0", n)
+	if q := st.Get().PendingDeviceRemovals; len(q) != 1 || q[0].Attempts != 1 {
+		t.Errorf("queue = %+v, want the entry kept with its attempt count unchanged", q)
 	}
-	if q := st.Get().PendingDeviceRemovals; len(q) != 1 || q[0].Attempts != 0 {
-		t.Errorf("queue = %+v, want the entry kept untouched", q)
+}
+
+// Held: parked as UNKNOWN (the cloud did not recognise the token) or as
+// admin-REVOKED (the one household the route refuses), and not enrolled.
+// Nothing is sent, by the poller's pass or the immediate report, and nothing
+// is lost.
+func TestReportDeviceRemovalsHoldWhileUnknownRevokedOrUnenrolled(t *testing.T) {
+	cases := []struct {
+		name string
+		set  func(*state.State)
+	}{
+		{"unknown", func(s *state.State) { s.Cloud.Lifecycle, s.Cloud.LifecycleReason = state.LifecycleUnknown, "" }},
+		{"revoked", func(s *state.State) {
+			s.Cloud.Lifecycle, s.Cloud.LifecycleReason = state.LifecycleSuspended, wire.RelayReasonRevoked
+		}},
+		{"unenrolled", func(s *state.State) { s.Cloud = state.Cloud{} }},
+	}
+	for _, tc := range cases {
+		rc := newRemovalCloud(t)
+		st := newStore(t, rc.srv.URL)
+		c := New(st)
+		queueRemovals(t, st, c.now(), "dev-x")
+		if err := st.Update(tc.set); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.ReportDeviceRemoval(context.Background(), "dev-x"); err != nil {
+			t.Fatalf("%s: immediate report: %v", tc.name, err)
+		}
+		if err := c.ReportDeviceRemovals(context.Background()); err != nil {
+			t.Fatalf("%s: poller pass: %v", tc.name, err)
+		}
+		if n := len(rc.received()); n != 0 {
+			t.Errorf("%s: %d reports sent, want 0", tc.name, n)
+		}
+		if q := st.Get().PendingDeviceRemovals; len(q) != 1 || q[0].Attempts != 0 {
+			t.Errorf("%s: queue = %+v, want the entry kept untouched", tc.name, q)
+		}
 	}
 }
 

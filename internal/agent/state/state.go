@@ -176,7 +176,8 @@ type Cloud struct {
 	Lifecycle string `json:"lifecycle,omitempty"`
 	// LifecycleReason is the control plane's informational reason for a
 	// suspension ("lapsed" | "free" | "revoked"), or "" — shown in /v1/status's
-	// tunnel.last_error while parked, never used for a decision.
+	// tunnel.last_error while parked; the one decision on it is
+	// cloud.removalsHeld (hold device removal reports while "revoked").
 	LifecycleReason string `json:"lifecycle_reason,omitempty"`
 	// LifecycleSince is when the agent parked the tunnel.
 	LifecycleSince time.Time `json:"lifecycle_since,omitzero"`
