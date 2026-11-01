@@ -99,8 +99,9 @@ type PendingDeviceRemoval struct {
 	// the report must only ever go out with the SAME relay credential. The
 	// device id is relay-scoped, so a report sent under a newer identity (a
 	// re-pair mints a new relay) would name a device that relay never had.
-	// cloud.Client drops an entry whose marker no longer matches. A hash, never
-	// the token itself.
+	// cloud.Client drops an entry whose marker is set and no longer matches;
+	// an empty marker (an entry queued before this field existed) counts as
+	// the current identity. A hash, never the token itself.
 	CloudIdentity string `json:"cloud_identity,omitempty"`
 }
 
