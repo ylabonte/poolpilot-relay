@@ -1,8 +1,13 @@
 package lanapi
 
 import (
+	"bytes"
 	"context"
+	"io"
+	"log/slog"
 	"net/http"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -168,9 +173,31 @@ func TestRepairClearsPendingRemovals(t *testing.T) {
 	}
 
 	f.revokePushStatus.Store(0)
+	buf := &bytes.Buffer{}
+	var bufMu sync.Mutex
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(lockedWriter{&bufMu, buf}, nil)))
 	f.pairFirst(t)
+	slog.SetDefault(prev)
 	if got := pendingIDs(f.store.Get()); len(got) != 0 {
 		t.Fatalf("queue after re-pair = %v, want empty", got)
+	}
+	bufMu.Lock()
+	logs := buf.String()
+	bufMu.Unlock()
+	var errLines int
+	for _, line := range strings.Split(logs, "\n") {
+		if strings.Contains(line, `"level":"ERROR"`) && strings.Contains(line, "discarding unreported device removal") {
+			errLines++
+		}
+	}
+	for _, id := range []string{dev1, dev2} {
+		if !strings.Contains(logs, `"device_id":"`+id+`"`) {
+			t.Errorf("re-pair did not log the discarded removal of %q:\n%s", id, logs)
+		}
+	}
+	if errLines != 2 {
+		t.Errorf("ERROR lines for discarded removals = %d, want 2:\n%s", errLines, logs)
 	}
 	if err := f.srv.Cloud.ReportDeviceRemovals(context.Background()); err != nil {
 		t.Fatalf("ReportDeviceRemovals: %v", err)
@@ -178,4 +205,16 @@ func TestRepairClearsPendingRemovals(t *testing.T) {
 	if f.pushRevoked(dev1) || f.pushRevoked(dev2) {
 		t.Errorf("an old identity's removal was sent under the new credentials")
 	}
+}
+
+// lockedWriter serializes writes from the handler goroutines into one buffer.
+type lockedWriter struct {
+	mu *sync.Mutex
+	w  io.Writer
+}
+
+func (l lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }

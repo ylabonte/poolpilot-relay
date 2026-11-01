@@ -1,11 +1,14 @@
 package cloud
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -323,5 +326,74 @@ func TestReportDeviceRemovalsPassDeadline(t *testing.T) {
 	}
 	if q := st.Get().PendingDeviceRemovals; len(q) != 3 {
 		t.Errorf("queue = %+v, want all three kept", q)
+	}
+}
+
+// captureLogs routes the default slog logger into a buffer for the test.
+func captureLogs(t *testing.T) *syncBuffer {
+	t.Helper()
+	buf := &syncBuffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return buf
+}
+
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
+// The identity-mismatch drop is logged at ERROR with the device id: the cloud
+// entry it would have unlinked stays behind for the owner.
+func TestStaleIdentityDropLogsErrorWithDeviceID(t *testing.T) {
+	rc := newRemovalCloud(t)
+	st := newStore(t, rc.srv.URL)
+	c := New(st)
+	queueRemovals(t, st, c.now(), "dev-old-relay")
+	if err := st.Update(func(s *state.State) { s.Cloud.FrpcToken = "new-relay-token" }); err != nil {
+		t.Fatal(err)
+	}
+	logs := captureLogs(t)
+	if err := c.ReportDeviceRemovals(context.Background()); err != nil {
+		t.Fatalf("pass: %v", err)
+	}
+	out := logs.String()
+	if !strings.Contains(out, `"level":"ERROR"`) || !strings.Contains(out, `"device_id":"dev-old-relay"`) {
+		t.Errorf("want an ERROR log naming dev-old-relay, got:\n%s", out)
+	}
+}
+
+// An entry without a marker (queued before the field existed) counts as the
+// current identity: it is sent, not dropped.
+func TestEmptyIdentityEntryIsSentUnderTheCurrentIdentity(t *testing.T) {
+	rc := newRemovalCloud(t)
+	st := newStore(t, rc.srv.URL)
+	c := New(st)
+	if err := st.Update(func(s *state.State) {
+		s.PendingDeviceRemovals = append(s.PendingDeviceRemovals, state.PendingDeviceRemoval{DeviceID: "dev-legacy", CreatedAt: c.now()})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.ReportDeviceRemovals(context.Background()); err != nil {
+		t.Fatalf("pass: %v", err)
+	}
+	if got := rc.received(); len(got) != 1 || got[0] != "dev-legacy" {
+		t.Errorf("cloud received %v, want dev-legacy", got)
+	}
+	if q := st.Get().PendingDeviceRemovals; len(q) != 0 {
+		t.Errorf("queue = %+v, want empty after the 200", q)
 	}
 }
