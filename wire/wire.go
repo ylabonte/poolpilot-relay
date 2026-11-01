@@ -494,12 +494,16 @@ type AttestKeyRequest struct {
 // continuing to receive pool alerts on a device the owner no longer controls.
 // The call never gates the local revoke, but it is durable: the agent queues
 // the report in the same state commit as the revoke and retries it on its
-// poll tick, with backoff, until the cloud answers 2xx or a terminal 4xx
-// (400, 404, 405, 410); 401, 403, 408, 429, 5xx and transport errors are
-// retried, 403 ("subscription inactive" while the route is Pro-gated) after
-// a long delay. Entries older than 30 days, or beyond the newest 50, are
-// dropped with a log line (cloud.Client.ReportDeviceRemovals). Scoped to the calling relay's own entitlement — see
-// relayFromBearer — so this can never touch another entitlement's tokens.
+// poll tick, with backoff, until the cloud answers 2xx or a terminal 4xx,
+// which is any 4xx except 401, 403, 408 and 429 (the cloud sends 400 for a
+// body it cannot accept; 404/405 mean a control plane without the route).
+// 401, 408, 429, 5xx and transport errors are retried with backoff, 403
+// ("subscription inactive" while the route is Pro-gated) after a long delay.
+// Entries older than 30 days, or beyond the newest 50, are dropped with a log
+// line, and a re-pair flushes the queue once under the old credentials and
+// discards the rest (cloud.Client.ReportDeviceRemovals, FlushDeviceRemovals).
+// Scoped to the calling relay's own entitlement — see relayFromBearer — so
+// this can never touch another entitlement's tokens.
 // Idempotent: an unknown or already-invalidated device_id is still a 200.
 //
 // It is also the removal report for the device's cloud entry: the cloud drops
