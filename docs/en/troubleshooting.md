@@ -121,6 +121,16 @@ code `last_owner_device`. In both cases nothing changes. The last owner phone
 can still remove itself. If it is lost, take the owner role back with a
 [recovery code](#lost-owner-access) first, then remove the lost phone.
 
+A removed phone loses access to the Relay at once. The Relay also tells the
+PoolPilot cloud, which then removes that phone's entry from the household
+(membership, push notifications, shared Pro) unless the phone is still paired
+with another Relay of the household. If the cloud cannot be reached at that
+moment, the Relay keeps the report and sends it again on its regular check-ins
+until the cloud confirms it, for up to 30 days. While the household's
+subscription is inactive, it tries only every few hours. If the phone still
+shows up in the household's member list long after that, an owner can remove it
+there.
+
 Operating the pool stays with every household phone: members can use the
 controller's own web interface, including the settings it offers. The owner-only
 list above covers the Relay's own household-wide configuration, not the

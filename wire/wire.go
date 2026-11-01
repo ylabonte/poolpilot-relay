@@ -490,9 +490,15 @@ type AttestKeyRequest struct {
 
 // DevicePushRevokeRequest is POST /devices/revoke-push (relay bearer auth, like
 // /controllers): the lost-phone flow. When the agent revokes a device (D9),
-// it best-effort calls this so the removed phone's push tokens die with it,
-// rather than continuing to receive pool alerts on a device the owner no
-// longer controls. Scoped to the calling relay's own entitlement — see
+// it calls this so the removed phone's push tokens die with it, rather than
+// continuing to receive pool alerts on a device the owner no longer controls.
+// The call never gates the local revoke, but it is durable: the agent queues
+// the report in the same state commit as the revoke and retries it on its
+// poll tick, with backoff, until the cloud answers 2xx or a terminal 4xx
+// (400, 404, 405, 410); 401, 403, 408, 429, 5xx and transport errors are
+// retried, 403 ("subscription inactive" while the route is Pro-gated) after
+// a long delay. Entries older than 30 days, or beyond the newest 50, are
+// dropped with a log line (cloud.Client.ReportDeviceRemovals). Scoped to the calling relay's own entitlement — see
 // relayFromBearer — so this can never touch another entitlement's tokens.
 // Idempotent: an unknown or already-invalidated device_id is still a 200.
 //
