@@ -34,11 +34,12 @@ var (
 	// transient, and the two are indistinguishable on status alone.
 	ErrQuotaExceeded = errors.New("cloud controller quota exceeded")
 	// ErrSubscriptionInactive: the cloud refused because the entitlement is not
-	// active (HTTP 403 from relayFromBearer — the only source of 403 on the two
-	// /controllers routes this sentinel is minted for; other relay-authed
-	// routes DO have their own 403s, e.g. /device-vouchers' "invite belongs to
-	// another household", so do not extend this mapping to them without
-	// checking). Distinct from the generic ErrRejected for the same
+	// active (HTTP 403 from relayFromBearer — the only source of 403 on the
+	// /controllers routes (GET, PUT, rotate) this sentinel is minted for; other
+	// relay-authed routes DO have their own 403s, e.g. /device-vouchers' "invite
+	// belongs to another household", so do not extend this mapping to them
+	// without checking). It is also minted for devices/revoke-push, where the
+	// only 403 is an admin-revoked household (relayFromBearerAnyTier). Distinct from the generic ErrRejected for the same
 	// reason ErrQuotaExceeded is: collapsing it loses the one fact the caller
 	// needs. A lapsed subscription is a routine business event in a
 	// subscription-gated product, it leaves cloud and agent perfectly
@@ -525,8 +526,8 @@ var removalPassTimeout = time.Minute
 //     over-long device_id), and 404/405 means a control plane without the
 //     route — nothing a retry of the same request could change. An unknown
 //     device_id is NOT one of these: the cloud 200s it.
-//   - 403 ("subscription revoked", an admin-revoked household) → kept, next attempt after
-//     removalBackoffInactive (see that constant).
+//   - 403 ("subscription revoked": an admin-revoked household) → kept, next
+//     attempt after removalBackoffInactive (see that constant).
 //   - transport error, timeout, 5xx, 401, 408, 429 → kept, exponential
 //     backoff. A 401 is the lifecycle machinery's business (it parks the
 //     tunnel after repeated ones); the queue only waits.
@@ -536,8 +537,11 @@ var removalPassTimeout = time.Minute
 // was checked against, never re-read from the store mid-request.
 //
 // Nothing is sent while the agent is not enrolled or its tunnel is parked
-// (state.State.TunnelParked): every report would be refused. Entries are kept
-// and go out once the cloud is reachable and entitled again. Returns the
+// (state.State.TunnelParked): the agent holds reports while parked, even
+// though the cloud itself accepts them from any tier and refuses only an
+// admin-revoked household. Entries are kept and go out once the cloud is
+// reachable and the tunnel is unparked again (a re-pair flush is the
+// exception). Returns the
 // pass's first non-terminal error, or a persist error, so a caller can log it.
 func (c *Client) ReportDeviceRemovals(ctx context.Context) error {
 	if !c.removalMu.TryLock() {
