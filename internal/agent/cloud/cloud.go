@@ -619,8 +619,8 @@ type removalPassOpts struct {
 // only bounce) and a suspension whose reason is RelayReasonRevoked. A
 // suspension for lapsed, free or any other reason does not: it is the
 // household that just lost Pro, and its removals must still reach the cloud.
-// This is the only park-time exception: Drain, SyncControllers and every other
-// cloud call stay on TunnelParked.
+// This is the only park-time exception among the Pro-gated calls: Drain and
+// SyncControllers stay on TunnelParked.
 func removalsHeld(s state.State) bool {
 	switch s.Cloud.Lifecycle {
 	case state.LifecycleUnknown:
