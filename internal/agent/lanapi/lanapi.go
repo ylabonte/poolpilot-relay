@@ -935,10 +935,10 @@ func (s *Server) getDevices(w http.ResponseWriter, r *http.Request) {
 //
 // Last-owner guard: revoking the household's LAST active owner device is
 // refused with 409 last_owner_device when the caller is a DIFFERENT device.
-// Since a revoke also removes the cloud entry behind the device (its household
-// membership — the cloud resolves the device_id revoke-push reports), a
-// cross-revoke of the last owner would leave a household nobody can
-// administer, short of owner recovery at the relay's console. Leaving the
+// A revoke is also reported to the cloud, which drops this relay's link to the
+// device's household entry (wire.DevicePushRevokeRequest), so a cross-revoke
+// of the last owner would leave this relay with nobody who can administer it,
+// short of owner recovery at the relay's console. Leaving the
 // household yourself stays allowed: a self-revoke of the last owner is a
 // deliberate act by that owner, as it always was.
 //
@@ -1084,12 +1084,15 @@ func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 		// SECURITY/PRIVACY: best-effort only. The device's own bearer is already
 		// dead the moment this Update committed above — that IS the access
 		// revocation, and it does not depend on the cloud call below succeeding.
-		// If this call fails or the cloud is unreachable, the worst case is a
-		// stale push token that outlives the device by one push cycle (closed by
-		// the next successful revoke-push, or by APNs/FCM's own token
-		// expiry/unregister feedback) — never a revoked device regaining access.
-		// Failing the whole request over it would make a lost-phone revoke
-		// hostage to control-plane reachability, which is strictly worse.
+		// If this call fails or the cloud is unreachable, the device's cloud
+		// side outlives it: its push tokens until APNs/FCM's own token
+		// expiry/unregister feedback, and its link to its household entry
+		// (app bearer, membership, shared Pro) until an owner removes that
+		// entry from the household's member list. Nothing here retries the
+		// report. None of that is a way back onto THIS relay — the LAN bearer
+		// above is what grants that, and it is gone. Failing the whole request
+		// over the cloud call would make a lost-phone revoke hostage to
+		// control-plane reachability, which is strictly worse.
 		// WithoutCancel: the phone hanging up right after DELETE must not abort
 		// the cleanup mid-flight — the cloud client's own RequestTimeout still
 		// bounds each call, so this cannot hang the handler goroutine forever.

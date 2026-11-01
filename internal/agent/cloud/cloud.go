@@ -420,15 +420,17 @@ func (c *Client) RevokeController(ctx context.Context, guid string) error {
 	}
 }
 
-// RevokePushForDevice best-effort revokes a phone's cloud-side push tokens
-// when the agent revokes that device (lost/stolen phone, D9). Bearer = the
+// RevokePushForDevice best-effort reports a device removal to the cloud when
+// the agent revokes that device (lost/stolen phone, D9): the cloud revokes the
+// phone's push tokens and drops this relay's link to its app bearer, retiring
+// the bearer once no link is left (wire.DevicePushRevokeRequest). Bearer = the
 // stored frpc token, the SAME relay-authed credential RevokeController uses, so
 // the cloud scopes the revoke to this relay's own entitlement without the agent
 // needing to prove anything further about the device_id itself. The endpoint
 // is idempotent (a device_id with zero matching tokens still 200s), so unlike
 // RevokeController there is no special 404-as-success case here. The caller
 // (lanapi's deleteDevice) logs but does not fail the local revoke if this
-// call errors — see its SECURITY/PRIVACY comment for why best-effort suffices.
+// call errors — see its SECURITY/PRIVACY comment for the trade-off.
 func (c *Client) RevokePushForDevice(ctx context.Context, deviceID string) error {
 	s := c.store.Get()
 	if !s.Enrolled() {
