@@ -140,7 +140,7 @@ func TestReportDeviceRemovalsSettlesOnTerminalAnswers(t *testing.T) {
 
 func TestReportDeviceRemovalsKeepsRetryableAnswers(t *testing.T) {
 	cases := map[int]time.Duration{
-		http.StatusForbidden:           removalBackoffInactive, // Pro-gated route, lapsed household
+		http.StatusForbidden:           removalBackoffInactive, // "subscription revoked" (admin-revoked household)
 		http.StatusUnauthorized:        removalBackoffBase,
 		http.StatusRequestTimeout:      removalBackoffBase,
 		http.StatusTooManyRequests:     removalBackoffBase,

@@ -34,11 +34,13 @@ var (
 	// transient, and the two are indistinguishable on status alone.
 	ErrQuotaExceeded = errors.New("cloud controller quota exceeded")
 	// ErrSubscriptionInactive: the cloud refused because the entitlement is not
-	// active (HTTP 403 from relayFromBearer — the only source of 403 on the two
-	// /controllers routes this sentinel is minted for; other relay-authed
-	// routes DO have their own 403s, e.g. /device-vouchers' "invite belongs to
-	// another household", so do not extend this mapping to them without
-	// checking). Distinct from the generic ErrRejected for the same
+	// active (HTTP 403 from relayFromBearer — the only source of 403 on the
+	// /controllers routes (POST, GET, PUT, rotate) this sentinel is minted for;
+	// other relay-authed routes DO have their own 403s, e.g. /device-vouchers'
+	// "invite belongs to another household", so do not extend this mapping to
+	// them without checking). It is also minted for devices/revoke-push, where
+	// the only 403 is an admin-revoked household (relayFromBearerAnyTier).
+	// Distinct from the generic ErrRejected for the same
 	// reason ErrQuotaExceeded is: collapsing it loses the one fact the caller
 	// needs. A lapsed subscription is a routine business event in a
 	// subscription-gated product, it leaves cloud and agent perfectly
@@ -484,12 +486,16 @@ const (
 	// effective delay is rounded up to the next tick.
 	removalBackoffBase = time.Minute
 	removalBackoffMax  = time.Hour
-	// removalBackoffInactive is the delay after a 403 "subscription inactive":
-	// the control plane currently Pro-gates POST /devices/revoke-push
-	// (relayFromBearer), so a lapsed household's report cannot land until it
-	// is entitled again — or until the cloud lifts that gate for this route.
-	// Either way the answer is not terminal, but retrying it every minute
-	// would only repeat the refusal.
+	// removalBackoffInactive is the delay after a 403 on the removal report.
+	// The control plane accepts POST /devices/revoke-push from any tier
+	// (relayFromBearerAnyTier), so a free or lapsed household is not refused;
+	// the only 403 left is "subscription revoked" for a household an admin
+	// revoked. That is not terminal (an admin can lift it), but retrying it
+	// every minute would only repeat the refusal. Since the agent holds the
+	// queue while it knows of a revoke (removalsHeld), this 403 only arrives
+	// when the revoke has not reached the agent yet, or from a control plane
+	// older than poolpilot-cloud#275. The name predates the cloud lifting the
+	// Pro gate on this route.
 	removalBackoffInactive = 6 * time.Hour
 )
 
@@ -524,8 +530,8 @@ var removalPassTimeout = time.Minute
 //     over-long device_id), and 404/405 means a control plane without the
 //     route — nothing a retry of the same request could change. An unknown
 //     device_id is NOT one of these: the cloud 200s it.
-//   - 403 "subscription inactive" → kept, next attempt after
-//     removalBackoffInactive (see that constant).
+//   - 403 ("subscription revoked": an admin-revoked household) → kept, next
+//     attempt after removalBackoffInactive (see that constant).
 //   - transport error, timeout, 5xx, 401, 408, 429 → kept, exponential
 //     backoff. A 401 is the lifecycle machinery's business (it parks the
 //     tunnel after repeated ones); the queue only waits.
@@ -538,8 +544,9 @@ var removalPassTimeout = time.Minute
 // parked as unknown, or suspended as admin-revoked — every report would be
 // refused. A relay parked for a subscription reason (lapsed, free) still
 // reports: the cloud accepts the route from any tier. Held entries are kept
-// and go out once that changes. Returns the pass's first non-terminal error,
-// or a persist error, so a caller can log it.
+// and go out once that changes (a re-pair flush is the exception). Returns
+// the pass's first non-terminal error, or a persist error, so a caller can
+// log it.
 func (c *Client) ReportDeviceRemovals(ctx context.Context) error {
 	if !c.removalMu.TryLock() {
 		c.removalRerun.Store(true)
