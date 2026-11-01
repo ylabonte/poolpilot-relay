@@ -145,9 +145,9 @@ rights on the Relay, pair it with a recovery code.
 
 ## The household is at its device limit
 
-A household can have at most 11 phones signed in at once. When it is full, the
-Relay refuses to pair another phone, whether it joins with an invite or takes
-the owner role back with a recovery code. The app is told so with `409` and the
+A household can have your own device plus up to 10 more signed in at once. When
+it is full, the Relay refuses to pair another phone, whether it joins with an
+invite or takes the owner role back with a recovery code. The app is told so with `409` and the
 error code `household_device_quota`. Nothing is paired and nothing is used up:
 neither the invite code nor the recovery code, which works until it expires.
 The limit is checked before the invite code itself, so a mistyped or expired

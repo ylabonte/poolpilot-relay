@@ -158,9 +158,9 @@ bekommen, koppel es mit einem Wiederherstellungscode.
 
 ## Der Haushalt hat sein Geräte-Limit erreicht
 
-In einem Haushalt können höchstens 11 Telefone gleichzeitig angemeldet sein. Ist
-er voll, koppelt das Relay kein weiteres Telefon – weder per Einladung noch mit
-einem Wiederherstellungscode für die Besitzer-Rolle. Die App erhält dann `409`
+In einem Haushalt können dein eigenes Gerät plus bis zu 10 weitere gleichzeitig
+angemeldet sein. Ist er voll, koppelt das Relay kein weiteres Telefon – weder
+per Einladung noch mit einem Wiederherstellungscode für die Besitzer-Rolle. Die App erhält dann `409`
 mit dem Fehlercode `household_device_quota`. Es wird nichts gekoppelt und nichts
 verbraucht – weder der Einladungscode noch der Wiederherstellungscode, der bis
 zu seinem Ablauf gilt. Das Limit wird vor dem

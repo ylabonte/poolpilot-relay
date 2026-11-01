@@ -52,9 +52,10 @@ const DefaultTunnelListen = "127.0.0.1:8480"
 // DeviceCap bounds the number of ACTIVE (non-revoked) devices per agent. A
 // lost/reset phone is revoked, freeing a slot, so this only stops runaway
 // growth — the constant-time bearer check in authed loops over the active set.
-// 11 = the owner's phone plus ten more (owner decision), so "share with up
-// to 10 devices" holds with the owner counted on top. The cloud's household
-// cap moves to 11 alongside, in its own change.
+// 11 = the owner's device + 10 (owner decision). User-facing text never says
+// 11: it says "your own device plus up to 10 more", because a bare "10" was
+// read as "the owner plus 10". The cloud's household cap moves to 11
+// alongside, in its own change.
 const DeviceCap = 11
 
 // ctxKey namespaces this package's request-context values.

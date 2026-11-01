@@ -11,7 +11,7 @@ depends on your controller:
 | Control your pool at home over Wi‑Fi | works without the Relay | works without the Relay | works without the Relay |
 | Control your pool while you're away | ✓ with the Relay | built in | built in |
 | Push to your phone when something's off | ✓ with the Relay | ✓ with the Relay | built in\* |
-| Share your pool with your family — Pro features included, up to 10 devices, iPhone and Android mixed | ✓ with the Relay | ✓ with the Relay | ✓ with the Relay |
+| Share your pool with your family — Pro features included, your own device plus up to 10 more, iPhone and Android mixed | ✓ with the Relay | ✓ with the Relay | ✓ with the Relay |
 
 \* Free in PoolPilot — the Relay can optionally take it over.
 
