@@ -397,3 +397,61 @@ func TestEmptyIdentityEntryIsSentUnderTheCurrentIdentity(t *testing.T) {
 		t.Errorf("queue = %+v, want empty after the 200", q)
 	}
 }
+
+// The handler's immediate report and the poller's pass overlap: an immediate
+// report arriving while a pass is running returns at once, unsent, and the
+// running pass's rerun sends it.
+func TestImmediateReportDuringRunningPassIsSentByTheRerun(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var mu sync.Mutex
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		got = append(got, body["device_id"])
+		mu.Unlock()
+		if body["device_id"] == "dev-a" {
+			close(entered)
+			<-release
+		}
+		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	}))
+	defer srv.Close()
+	st := newStore(t, srv.URL)
+	c := New(st)
+	queueRemovals(t, st, c.now(), "dev-a")
+
+	passDone := make(chan error, 1)
+	go func() { passDone <- c.ReportDeviceRemovals(context.Background()) }()
+	<-entered // the pass is now inside dev-a's request, holding the lock
+
+	queueRemovals(t, st, c.now(), "dev-b")
+	start := time.Now()
+	if err := c.ReportDeviceRemoval(context.Background(), "dev-b"); err != nil {
+		t.Fatalf("immediate report: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("immediate report waited %s for the running pass, want an immediate return", elapsed)
+	}
+	mu.Lock()
+	sentEarly := len(got)
+	mu.Unlock()
+	if sentEarly != 1 {
+		t.Errorf("requests before the pass finished = %d, want 1 (the immediate report sends nothing itself)", sentEarly)
+	}
+
+	close(release)
+	if err := <-passDone; err != nil {
+		t.Fatalf("pass: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 2 || got[1] != "dev-b" {
+		t.Errorf("cloud received %v, want dev-a then dev-b (from the rerun)", got)
+	}
+	if q := st.Get().PendingDeviceRemovals; len(q) != 0 {
+		t.Errorf("queue = %+v, want empty", q)
+	}
+}
