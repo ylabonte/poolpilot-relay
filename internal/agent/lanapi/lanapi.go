@@ -932,8 +932,26 @@ func (s *Server) getDevices(w http.ResponseWriter, r *http.Request) {
 // revokes of two active devices both cleared the len==1 guard and fully unpaired
 // the agent remotely (defeating D9). On abort (404 or the tunnel last-device
 // guard) the closure leaves the document unmutated.
+//
+// Last-owner guard: revoking the household's LAST active owner device is
+// refused with 409 last_owner_device when the caller is a DIFFERENT device.
+// Since a revoke also removes the cloud entry behind the device (its household
+// membership — the cloud resolves the device_id revoke-push reports), a
+// cross-revoke of the last owner would leave a household nobody can
+// administer, short of owner recovery at the relay's console. Leaving the
+// household yourself stays allowed: a self-revoke of the last owner is a
+// deliberate act by that owner, as it always was.
+//
+// In steady state the selfOrOwner gate already makes this unreachable — only
+// an owner may revoke another device, and an active owner caller means the
+// target is not the last one. What it closes is the race the gate's snapshot
+// cannot see: two owners revoking EACH OTHER concurrently both clear the gate,
+// and serialized in the Update below the second would revoke the last owner on
+// behalf of a caller the first just revoked. So, like the last-device guard,
+// it is evaluated inside the Update closure, against the document as it is.
 func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		callerID := deviceIDFromContext(r)
 		id := r.PathValue("id")
 		if id == "" {
 			writeErr(w, http.StatusBadRequest, "bad_id")
@@ -963,6 +981,7 @@ func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 		var (
 			found        bool
 			blocked      bool
+			lastOwner    bool
 			remaining    int
 			removedGUIDs []string
 		)
@@ -989,6 +1008,10 @@ func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 			if tunnelLeg && remaining == 0 {
 				blocked = true
 				return // last-device revoke refused over the tunnel — no mutation
+			}
+			if id != callerID && isLastActiveOwner(doc.Devices, idx) {
+				lastOwner = true
+				return // cross-revoke of the last owner refused — no mutation
 			}
 			doc.Devices[idx].RevokedAt = now
 			// Revoking a device must also kill any ctrl-vhost web session it
@@ -1030,6 +1053,10 @@ func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 		}
 		if blocked {
 			writeErr(w, http.StatusForbidden, "last_device_lan_only")
+			return
+		}
+		if lastOwner {
+			writeErr(w, http.StatusConflict, "last_owner_device")
 			return
 		}
 
@@ -1085,6 +1112,21 @@ func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// isLastActiveOwner reports whether devices[idx] is an active owner and no
+// OTHER active device is one — i.e. revoking it would leave the household
+// without an owner device on this relay.
+func isLastActiveOwner(devices []state.Device, idx int) bool {
+	if !devices[idx].IsOwner() || !devices[idx].RevokedAt.IsZero() {
+		return false
+	}
+	for i := range devices {
+		if i != idx && devices[i].RevokedAt.IsZero() && devices[i].IsOwner() {
+			return false
+		}
+	}
+	return true
 }
 
 // maxControllerLabelLen / maxControllerLanAddressLen mirror the control

@@ -114,6 +114,12 @@ installing updates or switching automatic updates, and the household and factory
 resets. A member phone that asks for one of these gets `403` with the error code
 `owner_required` from the Relay's local API, and nothing changes.
 
+The Relay always keeps at least one owner phone: the **last** owner phone can
+remove itself, but no other phone can remove it. Such a request gets `409` with
+the error code `last_owner_device`, and nothing changes. If the last owner phone
+is lost, take the owner role back with a [recovery code](#lost-owner-access)
+first, then remove the lost phone.
+
 Operating the pool stays with every household phone: members can use the
 controller's own web interface, including the settings it offers. The owner-only
 list above covers the Relay's own household-wide configuration, not the

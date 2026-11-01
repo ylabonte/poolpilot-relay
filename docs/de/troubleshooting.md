@@ -123,6 +123,13 @@ Updates umschalten sowie Haushalts- und Werksreset. Fragt ein Mitglieds-Telefon
 eines davon an, antwortet die lokale API des Relays mit `403` und dem Fehlercode
 `owner_required`, und nichts ändert sich.
 
+Das Relay behält immer mindestens ein Besitzer-Telefon: Das **letzte**
+Besitzer-Telefon kann sich selbst entfernen, aber kein anderes Telefon kann es
+entfernen. Eine solche Anfrage erhält `409` mit dem Fehlercode
+`last_owner_device`, und nichts ändert sich. Ist das letzte Besitzer-Telefon
+verloren, hol dir zuerst mit einem [Wiederherstellungscode](#besitzer-zugriff-verloren)
+die Besitzer-Rolle zurück und entferne dann das verlorene Telefon.
+
 Den Pool bedienen dürfen alle Telefone des Haushalts: Auch Mitglieder nutzen die
 eigene Weboberfläche der Steuerung samt der Einstellungen, die sie anbietet.
 Die Besitzer-Liste oben betrifft die haushaltsweite Konfiguration des Relays
