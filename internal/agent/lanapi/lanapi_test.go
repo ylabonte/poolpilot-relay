@@ -136,6 +136,13 @@ type fixture struct {
 	// revokePushStall, when set, makes that route hang until the agent gives
 	// up on the request (or 10 s pass) — a slow, not a dead, cloud.
 	revokePushStall atomic.Bool
+	// revokePushAuth records, per device_id, the bearer of the last
+	// revoke-push request that carried it, whatever the answer.
+	revokePushAuth map[string]string
+	// redeemToken, when set (string), is the frpc_token POST /enroll/redeem
+	// hands out instead of "relay-frpc-token" — a re-pair minting a new relay
+	// identity. revoke-push accepts both tokens.
+	redeemToken atomic.Value
 
 	// releasedMu/releaseCalled/releaseAuth record whether POST /relay/release
 	// was hit by a factory reset, and the bearer it presented. releaseNotFound,
@@ -191,7 +198,7 @@ func (f *fixture) controllerURLs(guid string) map[string]string {
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := &fixture{
-		notifier: &pairedRecorder{}, revoked: map[string]bool{}, revokedPush: map[string]bool{},
+		notifier: &pairedRecorder{}, revoked: map[string]bool{}, revokedPush: map[string]bool{}, revokePushAuth: map[string]string{},
 		updated: map[string]map[string]string{},
 	}
 
@@ -212,14 +219,21 @@ func newFixture(t *testing.T) *fixture {
 		// Relay-authed POST /devices/revoke-push — record and 200 (idempotent,
 		// mirrors the real cloud's contract).
 		if r.Method == http.MethodPost && r.URL.Path == "/devices/revoke-push" {
-			if r.Header.Get("Authorization") != "Bearer relay-frpc-token" {
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			auth := r.Header.Get("Authorization")
+			f.revokedPushMu.Lock()
+			f.revokePushAuth[body["device_id"]] = auth
+			f.revokedPushMu.Unlock()
+			newTok, _ := f.redeemToken.Load().(string)
+			if auth != "Bearer relay-frpc-token" && (newTok == "" || auth != "Bearer "+newTok) {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
 			if f.revokePushStall.Load() {
 				select {
 				case <-r.Context().Done():
-				case <-time.After(10 * time.Second):
+				case <-time.After(3 * time.Second):
 				}
 				w.WriteHeader(http.StatusServiceUnavailable)
 				return
@@ -228,8 +242,6 @@ func newFixture(t *testing.T) *fixture {
 				w.WriteHeader(int(st))
 				return
 			}
-			var body map[string]string
-			_ = json.NewDecoder(r.Body).Decode(&body)
 			f.revokedPushMu.Lock()
 			f.revokedPush[body["device_id"]] = true
 			f.revokedPushMu.Unlock()
@@ -385,8 +397,12 @@ func newFixture(t *testing.T) *fixture {
 				_, _ = w.Write([]byte(`{"error":"code invalid, expired, or already used"}`))
 				return
 			}
+			frpcToken := "relay-frpc-token"
+			if tok, _ := f.redeemToken.Load().(string); tok != "" {
+				frpcToken = tok
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"frpc_token": "relay-frpc-token",
+				"frpc_token": frpcToken,
 				"frps": map[string]any{
 					"server_addr": "frps.example", "server_port": 7000,
 					"subdomain_host": "remote.example", "auth_token": "shared",

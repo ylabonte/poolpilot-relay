@@ -154,13 +154,13 @@ func TestRevokeDeviceAttemptsOnlyItsOwnEntry(t *testing.T) {
 	}
 }
 
-// A fresh enrolment replaces the cloud credentials and with them the queue:
-// removals owed by the old relay identity are never sent under the new one.
-func TestRepairClearsPendingRemovals(t *testing.T) {
-	f := newFixture(t)
+// queueTwoRemovalsAndUnpair pairs, adds a second phone, and removes both
+// while the cloud answers 502, so both removals are queued and the relay is
+// unpaired but still holds its (old) cloud credentials.
+func queueTwoRemovalsAndUnpair(t *testing.T, f *fixture) (string, string) {
+	t.Helper()
 	tok1, dev1 := f.pairFirst(t)
 	_, dev2 := f.addDevice(t, goodInvite, "second phone")
-
 	f.revokePushStatus.Store(http.StatusBadGateway)
 	if resp, raw := f.do(t, "DELETE", "/v1/devices/"+dev2, tok1, nil); resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("revoke dev2: HTTP %d %s", resp.StatusCode, raw)
@@ -171,20 +171,82 @@ func TestRepairClearsPendingRemovals(t *testing.T) {
 	if got := pendingIDs(f.store.Get()); len(got) != 2 {
 		t.Fatalf("queue before re-pair = %v, want both removals", got)
 	}
+	return dev1, dev2
+}
+
+// captureLogs routes the default slog logger into a buffer until the
+// returned stop is called, which yields what was logged.
+func captureLogs() (stop func() string) {
+	buf := &bytes.Buffer{}
+	var mu sync.Mutex
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(lockedWriter{&mu, buf}, nil)))
+	return func() string {
+		slog.SetDefault(prev)
+		mu.Lock()
+		defer mu.Unlock()
+		return buf.String()
+	}
+}
+
+// Before a re-pair swaps the credentials, the queue gets one flush under the
+// OLD token — the redeem just proved the cloud reachable — and nothing goes
+// out under the new one.
+func TestRepairFlushesPendingRemovalsUnderTheOldToken(t *testing.T) {
+	f := newFixture(t)
+	dev1, dev2 := queueTwoRemovalsAndUnpair(t, f)
 
 	f.revokePushStatus.Store(0)
-	buf := &bytes.Buffer{}
-	var bufMu sync.Mutex
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(lockedWriter{&bufMu, buf}, nil)))
+	f.redeemToken.Store("new-relay-token")
+	stop := captureLogs()
 	f.pairFirst(t)
-	slog.SetDefault(prev)
+	logs := stop()
+
+	for _, id := range []string{dev1, dev2} {
+		if !f.pushRevoked(id) {
+			t.Errorf("the re-pair flush did not report %q", id)
+		}
+		f.revokedPushMu.Lock()
+		auth := f.revokePushAuth[id]
+		f.revokedPushMu.Unlock()
+		if auth != "Bearer relay-frpc-token" {
+			t.Errorf("%q reported with %q, want the OLD token", id, auth)
+		}
+	}
+	if got := pendingIDs(f.store.Get()); len(got) != 0 {
+		t.Errorf("queue after re-pair = %v, want empty", got)
+	}
+	if strings.Contains(logs, "discarding unreported device removal") {
+		t.Errorf("flushed removals were logged as discarded:\n%s", logs)
+	}
+	if f.store.Get().Cloud.FrpcToken != "new-relay-token" {
+		t.Errorf("re-pair did not persist the new token")
+	}
+}
+
+// A flush that cannot settle within its deadline leaves pairing on time; what
+// is left is discarded with an ERROR line per device and never sent under the
+// new credentials.
+func TestRepairDiscardsWhatTheFlushCannotSettle(t *testing.T) {
+	f := newFixture(t)
+	dev1, dev2 := queueTwoRemovalsAndUnpair(t, f)
+
+	f.srv.RemovalReportTimeout = 200 * time.Millisecond
+	f.revokePushStatus.Store(0)
+	f.revokePushStall.Store(true)
+	f.redeemToken.Store("new-relay-token")
+	stop := captureLogs()
+	start := time.Now()
+	f.pairFirst(t)
+	elapsed := time.Since(start)
+	logs := stop()
+
+	if elapsed > 2*time.Second {
+		t.Errorf("re-pair took %s against a stalled cloud, want about the 200ms flush deadline", elapsed)
+	}
 	if got := pendingIDs(f.store.Get()); len(got) != 0 {
 		t.Fatalf("queue after re-pair = %v, want empty", got)
 	}
-	bufMu.Lock()
-	logs := buf.String()
-	bufMu.Unlock()
 	var errLines int
 	for _, line := range strings.Split(logs, "\n") {
 		if strings.Contains(line, `"level":"ERROR"`) && strings.Contains(line, "discarding unreported device removal") {
@@ -199,11 +261,17 @@ func TestRepairClearsPendingRemovals(t *testing.T) {
 	if errLines != 2 {
 		t.Errorf("ERROR lines for discarded removals = %d, want 2:\n%s", errLines, logs)
 	}
+
+	f.revokePushStall.Store(false)
 	if err := f.srv.Cloud.ReportDeviceRemovals(context.Background()); err != nil {
 		t.Fatalf("ReportDeviceRemovals: %v", err)
 	}
-	if f.pushRevoked(dev1) || f.pushRevoked(dev2) {
-		t.Errorf("an old identity's removal was sent under the new credentials")
+	f.revokedPushMu.Lock()
+	defer f.revokedPushMu.Unlock()
+	for _, id := range []string{dev1, dev2} {
+		if f.revokePushAuth[id] == "Bearer new-relay-token" {
+			t.Errorf("%q was sent under the new credentials", id)
+		}
 	}
 }
 
