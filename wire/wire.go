@@ -1168,7 +1168,8 @@ type InviteMintResponse struct {
 // id, find the household entry behind it. Optional: an older relay omits it,
 // and a voucher without it mints a bearer with no link — which the cloud
 // counts as a legacy pairing (poolpilot-cloud#281), so that phone may report
-// its relay device itself via AppBearerRelayDeviceRequest. It is
+// its relay device itself via AppBearerRelayDeviceRequest — on any relay where
+// it does not already hold a ceremony link. It is
 // an opaque, relay-scoped label, not a credential — it authorizes nothing, and
 // the cloud must only ever look it up under the relay that sent it.
 //
@@ -1289,7 +1290,8 @@ type EnrollRedeemRequest struct {
 // them, or is an older relay still in the field), plus add-device rotations
 // of such a bearer. Since poolpilot-cloud#281 that includes pairings made
 // through an older relay after the link existed, not only those made before
-// it; the cloud refuses a bearer that is not a legacy pairing. The request
+// it; the cloud refuses a bearer that is not a legacy pairing, or one that
+// already holds a ceremony link on that relay. The request
 // shape is unchanged. Planned for
 // removal 6–12 months after it ships, once those pairings have aged out.
 //
