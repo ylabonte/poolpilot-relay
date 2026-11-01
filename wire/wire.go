@@ -495,6 +495,13 @@ type AttestKeyRequest struct {
 // longer controls. Scoped to the calling relay's own entitlement — see
 // relayFromBearer — so this can never touch another entitlement's tokens.
 // Idempotent: an unknown or already-invalidated device_id is still a 200.
+//
+// It is also the removal report for the device's cloud entry: the cloud drops
+// the calling relay's link for this device_id and retires the linked bearer
+// (membership, push, shared Pro) once it has no link left — see "Household:
+// linking a paired device to its cloud entry". A device with no link (an
+// older relay, a phone that never self-reported) only loses its push tokens,
+// as before.
 type DevicePushRevokeRequest struct {
 	DeviceID string `json:"device_id"`
 }
@@ -889,17 +896,27 @@ type MemberDeviceInfo struct {
 	// the UI can label "this device" and warn before an owner revokes or demotes
 	// itself. Mirrors DeviceInfo.Current on the agent's own device list.
 	Current bool `json:"current"`
-	// RelayID + RelayDeviceID name the relay device record this bearer is
-	// linked to (see "Household: linking a paired device to
-	// its cloud entry"): the relay that paired it and the
-	// relay-local device id it paired it under — the same id that relay lists
-	// in GET /v1/devices and answers as DeviceInfo.DeviceID. Lets the app match a
-	// household entry to a "Paired devices" entry. Both absent for a bearer
-	// with no link (paired by an older relay and not yet self-reported via
-	// POST /app-bearer/relay-device, or minted outside a relay ceremony).
-	// Opaque, relay-scoped labels; neither identifies a person.
-	RelayID       string `json:"relay_id,omitempty"`
-	RelayDeviceID string `json:"relay_device_id,omitempty"`
+	// RelayDevices lists the relay device records this bearer is linked to
+	// (see "Household: linking a paired device to its cloud entry"): one entry
+	// per relay that paired this phone. A LIST because one bearer can be
+	// behind several relays' devices — an owner's bearer mints the enrollment
+	// code for every relay it adds to the household, so each relay's founding
+	// device links to the same bearer. Lets the app match a household entry to
+	// a "Paired devices" entry. Absent for a bearer with no link (paired by an
+	// older relay and not yet self-reported via POST /app-bearer/relay-device,
+	// or minted outside a relay ceremony).
+	RelayDevices []MemberRelayDevice `json:"relay_devices,omitempty"`
+}
+
+// MemberRelayDevice is one link between an app bearer and a relay's device
+// record: the relay (RelayID, the control plane's opaque relay row id — the
+// same id MemberInfo.RelayIDs and CloudControllerInfo.RelayID carry) and the
+// relay-local device id it paired the phone under (the id that relay lists in
+// GET /v1/devices as DeviceInfo.DeviceID). Opaque, relay-scoped labels;
+// neither identifies a person.
+type MemberRelayDevice struct {
+	RelayID       string `json:"relay_id"`
+	RelayDeviceID string `json:"relay_device_id"`
 }
 
 // MemberInfo is one PERSON of the household — a role, a per-relay scope, and
@@ -1187,18 +1204,26 @@ type AppBearerVoucherRedeemRequest struct {
 
 // ---- Household: linking a paired device to its cloud entry ----
 //
-// In one paragraph: every phone paired with a relay holds two
-// identities — the relay's local device record (state.Device, its id the
-// PairResponse.DeviceID) and a cloud app bearer (its household membership,
-// push registrations and shared Pro). Removing the device under the relay's
-// "Paired devices" (DELETE /v1/devices/{id}) must also remove the cloud entry,
-// and the relay already reports the removal by device id
-// (POST /devices/revoke-push {"device_id"}). What was missing is the cloud
-// knowing which bearer that id belongs to. The relay therefore sends the id it
-// is about to persist on every ceremony that hands a phone a bearer:
-// DeviceVoucherRequest.DeviceID (invite join, owner recovery) and
-// EnrollRedeemRequest.DeviceID (the founding pairing). Phones paired before
-// this existed self-report theirs via AppBearerRelayDeviceRequest.
+// Every phone paired with a relay holds two identities: the relay's local
+// device record (state.Device, its id the PairResponse.DeviceID) and a cloud
+// app bearer (its household membership, push registrations and shared Pro).
+// Removing the device under the relay's "Paired devices" (DELETE
+// /v1/devices/{id}) must also clean up the cloud side, and the relay already
+// reports the removal by device id (POST /devices/revoke-push, see
+// DevicePushRevokeRequest). What was missing is the cloud knowing which bearer
+// that id belongs to. The relay therefore sends the id it is about to persist
+// on every ceremony that hands a phone a bearer: DeviceVoucherRequest.DeviceID
+// (invite join, owner recovery) and EnrollRedeemRequest.DeviceID (the founding
+// pairing). Phones paired before this existed self-report theirs via
+// AppBearerRelayDeviceRequest.
+//
+// The cloud keys a link by (relay, device id) — never by device id alone — and
+// one bearer can hold several links: an owner's bearer mints the enrollment
+// code for every relay it adds to the household, so every relay's founding
+// device links to that same bearer. A removal reported by one relay therefore
+// removes THAT relay's link; the bearer itself (with its membership) is retired
+// only once it has no link left, so removing a phone from relay B never logs it
+// out of relay A.
 
 // EnrollRedeemRequest is POST /enroll/redeem (unauthenticated — the one-time
 // enrollment code is the authorization): the relay redeems the code the
@@ -1219,8 +1244,15 @@ type EnrollRedeemRequest struct {
 
 // AppBearerRelayDeviceRequest is POST /app-bearer/relay-device (app-bearer
 // auth): the calling phone reports the relay-local device id it was paired
-// under (its PairResponse.DeviceID), so the cloud can link its bearer to that
-// relay device the way a fresh ceremony now does at broker / redeem time.
+// under on one relay (its PairResponse.DeviceID there), so the cloud can link
+// its bearer to that relay device the way a fresh ceremony now does at
+// broker / redeem time. RelayID names the relay — the control plane's relay
+// row id, as the app learns it from POST /controllers/list
+// (CloudControllerInfo.RelayID) — because the bearer is household-wide and the
+// household can have several relays; the cloud must refuse a relay that is not
+// in the caller's household. A phone paired with several relays calls it once
+// per relay. A repeated call for the same relay replaces that relay's link; it
+// never touches the bearer's links to other relays.
 //
 // TRANSITIONAL: it exists only for phones paired before the relay sent
 // DeviceVoucherRequest.DeviceID / EnrollRedeemRequest.DeviceID. Planned for
@@ -1230,6 +1262,7 @@ type EnrollRedeemRequest struct {
 // scoped to the caller's own household and relay — never as proof of anything,
 // and never as a way to reach another bearer's link.
 type AppBearerRelayDeviceRequest struct {
+	RelayID       string `json:"relay_id"`
 	RelayDeviceID string `json:"relay_device_id"`
 }
 

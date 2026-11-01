@@ -2,6 +2,7 @@ package wire
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 )
 
@@ -45,8 +46,11 @@ func TestDeviceLinkFieldsAreOmitEmptyAndRoundTrip(t *testing.T) {
 			name:    "MemberDeviceInfo",
 			empty:   MemberDeviceInfo{BearerID: "b1", CreatedAt: "2026-11-01T00:00:00Z"},
 			emptyIs: `{"bearer_id":"b1","created_at":"2026-11-01T00:00:00Z","current":false}`,
-			full:    MemberDeviceInfo{BearerID: "b1", CreatedAt: "2026-11-01T00:00:00Z", RelayID: "r1", RelayDeviceID: "dev-1"},
-			fullIs:  `{"bearer_id":"b1","created_at":"2026-11-01T00:00:00Z","current":false,"relay_id":"r1","relay_device_id":"dev-1"}`,
+			full: MemberDeviceInfo{BearerID: "b1", CreatedAt: "2026-11-01T00:00:00Z", RelayDevices: []MemberRelayDevice{
+				{RelayID: "r1", RelayDeviceID: "dev-1"}, {RelayID: "r2", RelayDeviceID: "dev-9"},
+			}},
+			fullIs: `{"bearer_id":"b1","created_at":"2026-11-01T00:00:00Z","current":false,` +
+				`"relay_devices":[{"relay_id":"r1","relay_device_id":"dev-1"},{"relay_id":"r2","relay_device_id":"dev-9"}]}`,
 			decode: func(b []byte) (any, error) {
 				var v MemberDeviceInfo
 				err := json.Unmarshal(b, &v)
@@ -56,9 +60,9 @@ func TestDeviceLinkFieldsAreOmitEmptyAndRoundTrip(t *testing.T) {
 		{
 			name:    "AppBearerRelayDeviceRequest",
 			empty:   AppBearerRelayDeviceRequest{},
-			emptyIs: `{"relay_device_id":""}`, // required field: not omitempty
-			full:    AppBearerRelayDeviceRequest{RelayDeviceID: "dev-1"},
-			fullIs:  `{"relay_device_id":"dev-1"}`,
+			emptyIs: `{"relay_id":"","relay_device_id":""}`, // required fields: not omitempty
+			full:    AppBearerRelayDeviceRequest{RelayID: "r1", RelayDeviceID: "dev-1"},
+			fullIs:  `{"relay_id":"r1","relay_device_id":"dev-1"}`,
 			decode: func(b []byte) (any, error) {
 				var v AppBearerRelayDeviceRequest
 				err := json.Unmarshal(b, &v)
@@ -83,7 +87,7 @@ func TestDeviceLinkFieldsAreOmitEmptyAndRoundTrip(t *testing.T) {
 				if err != nil {
 					t.Fatalf("unmarshal: %v", err)
 				}
-				if back != tc.v {
+				if !reflect.DeepEqual(back, tc.v) {
 					t.Errorf("round trip = %+v, want %+v", back, tc.v)
 				}
 			}
