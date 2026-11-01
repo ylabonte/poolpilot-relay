@@ -756,3 +756,47 @@ func TestTickReportsPendingDeviceRemovals(t *testing.T) {
 		t.Errorf("queue after tick = %+v, want empty", q)
 	}
 }
+
+// poolpilot-relay#100: a relay parked because its household lost Pro (lapsed)
+// still sends its queued removal report on the tick — and ONLY that: the
+// outbox and the controller sync stay held while parked.
+func TestParkedLapsedTickReportsRemovalsAndNothingElse(t *testing.T) {
+	var mu sync.Mutex
+	var paths []string
+	cloudSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer cloudSrv.Close()
+	st, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Update(func(s *state.State) {
+		s.Cloud = state.Cloud{
+			BaseURL: cloudSrv.URL, FrpcToken: "relay-token",
+			Lifecycle: state.LifecycleSuspended, LifecycleReason: wire.RelayReasonLapsed,
+		}
+		s.Outbox = []wire.AlertRequest{{RuleID: "r1", Transition: wire.TransitionEnter, OccurredAt: time.Now().UTC().Format(time.RFC3339)}}
+		// 127.0.0.1:1 refuses at once: the poll fails fast and is not under test.
+		s.Controllers = []state.Controller{{GUID: "g1", LanAddress: "127.0.0.1:1", CloudSyncPending: true}}
+		s.QueueDeviceRemoval("dev-lost", time.Now())
+	}); err != nil {
+		t.Fatal(err)
+	}
+	New(st, cloud.New(st), time.Minute).tick(context.Background())
+	mu.Lock()
+	defer mu.Unlock()
+	if len(paths) != 1 || paths[0] != "POST /devices/revoke-push" {
+		t.Fatalf("cloud calls while parked-lapsed = %v, want only POST /devices/revoke-push", paths)
+	}
+	got := st.Get()
+	if len(got.PendingDeviceRemovals) != 0 {
+		t.Errorf("removal queue = %+v, want empty", got.PendingDeviceRemovals)
+	}
+	if len(got.Outbox) != 1 || !got.Controllers[0].CloudSyncPending {
+		t.Errorf("parked relay must keep its outbox and sync flag: outbox=%d sync=%v", len(got.Outbox), got.Controllers[0].CloudSyncPending)
+	}
+}

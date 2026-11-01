@@ -502,6 +502,9 @@ type AttestKeyRequest struct {
 // Entries older than 30 days, or beyond the newest 50, are dropped with a log
 // line, and a re-pair flushes the queue once under the old credentials and
 // discards the rest (cloud.Client.ReportDeviceRemovals, FlushDeviceRemovals).
+// A parked tunnel holds the queue only when the relay is parked as unknown or
+// as admin-revoked (RelayReasonRevoked); a household suspended as lapsed or
+// free still reports its removals.
 // Scoped to the calling relay's own entitlement — see relayFromBearer — so
 // this can never touch another entitlement's tokens.
 // Idempotent: an unknown or already-invalidated device_id is still a 200.
@@ -1442,7 +1445,8 @@ type PollIntervalRequest struct {
 // recognise reads as "no signal" (the agent changes nothing), so a newer
 // control plane may add states without breaking older agents. Reason is
 // machine-readable detail (RelayReason*), informational only: no agent
-// decision may depend on it beyond logging and the parked-tunnel status text.
+// decision may depend on it beyond logging, the parked-tunnel status text, and
+// holding device removal reports while "revoked" (DevicePushRevokeRequest).
 //
 // Only a 200 carrying this body is a signal. A 401 means the control plane
 // knows neither the token nor a tombstone for it — never destructive on its

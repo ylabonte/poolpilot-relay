@@ -534,10 +534,12 @@ var removalPassTimeout = time.Minute
 // Each entry is sent with the credentials of the same snapshot its identity
 // was checked against, never re-read from the store mid-request.
 //
-// Nothing is sent while the agent is not enrolled or its tunnel is parked
-// (state.State.TunnelParked): every report would be refused. Entries are kept
-// and go out once the cloud is reachable and entitled again. Returns the
-// pass's first non-terminal error, or a persist error, so a caller can log it.
+// Nothing is sent while the agent is not enrolled, or while removalsHeld:
+// parked as unknown, or suspended as admin-revoked — every report would be
+// refused. A relay parked for a subscription reason (lapsed, free) still
+// reports: the cloud accepts the route from any tier. Held entries are kept
+// and go out once that changes. Returns the pass's first non-terminal error,
+// or a persist error, so a caller can log it.
 func (c *Client) ReportDeviceRemovals(ctx context.Context) error {
 	if !c.removalMu.TryLock() {
 		c.removalRerun.Store(true)
@@ -597,16 +599,36 @@ func (c *Client) FlushDeviceRemovals(ctx context.Context) error {
 type removalPassOpts struct {
 	// only, when non-empty, limits the pass to that device id's entry.
 	only string
-	// flush sends every entry regardless of its backoff or a parked tunnel
+	// flush sends every entry regardless of its backoff or removalsHeld
 	// (FlushDeviceRemovals).
 	flush bool
+}
+
+// removalsHeld reports whether removal reports must wait although the relay is
+// enrolled. Removal is cleanup, and the cloud takes POST /devices/revoke-push
+// from a household of any tier, refusing only an admin-revoked one (403). So
+// of the parked states (state.State.TunnelParked) only two hold the queue:
+// LifecycleUnknown (the cloud did not recognise the token, so a report could
+// only bounce) and a suspension whose reason is RelayReasonRevoked. A
+// suspension for lapsed, free or any other reason does not: it is the
+// household that just lost Pro, and its removals must still reach the cloud.
+// This is the only park-time exception: Drain, SyncControllers and every other
+// cloud call stay on TunnelParked.
+func removalsHeld(s state.State) bool {
+	switch s.Cloud.Lifecycle {
+	case state.LifecycleUnknown:
+		return true
+	case state.LifecycleSuspended:
+		return s.Cloud.LifecycleReason == wire.RelayReasonRevoked
+	}
+	return false
 }
 
 // removalPass is one pass under removalMu over the entries opts selects.
 func (c *Client) removalPass(ctx context.Context, opts removalPassOpts) error {
 	only := opts.only
 	s := c.store.Get()
-	if len(s.PendingDeviceRemovals) == 0 || !s.Enrolled() || (s.TunnelParked() && !opts.flush) {
+	if len(s.PendingDeviceRemovals) == 0 || !s.Enrolled() || (removalsHeld(s) && !opts.flush) {
 		return nil
 	}
 	identity := s.CloudIdentity()
