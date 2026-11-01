@@ -1133,7 +1133,7 @@ func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 		// Update above queued it (state.PendingDeviceRemoval) together with
 		// the revoke, the call below is its immediate attempt, and anything
 		// that attempt cannot settle (cloud unreachable, timeout, 5xx, 403
-		// while the household is not entitled) is retried on the poller's
+		// while the household is admin-revoked) is retried on the poller's
 		// tick with backoff until the cloud confirms it — see
 		// cloud.Client.ReportDeviceRemovals for which answers end an entry and
 		// for the age/size caps that bound the queue. Until it lands, the
