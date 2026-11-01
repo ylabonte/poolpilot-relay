@@ -116,9 +116,14 @@ type RedeemResult struct {
 // a rogue relay is Piece A (the app verifies the relay's out-of-band
 // fingerprint + pins the LAN-API TLS, so the code only ever reaches the
 // verified relay) — see docs/pairing-trust.md.
-func (c *Client) Redeem(ctx context.Context, baseURL, code string) (RedeemResult, error) {
+//
+// deviceID is the relay-local id of the founding phone's device record, minted
+// by the caller before this call and persisted only on success. The cloud links
+// it to the app bearer that minted the code, so a later RevokePushForDevice for
+// that id can remove the household entry behind it (wire.EnrollRedeemRequest).
+func (c *Client) Redeem(ctx context.Context, baseURL, code, deviceID string) (RedeemResult, error) {
 	var out RedeemResult
-	body := map[string]string{"code": code, "agent_id": c.store.Get().AgentID}
+	body := wire.EnrollRedeemRequest{Code: code, AgentID: c.store.Get().AgentID, DeviceID: deviceID}
 	status, err := c.doJSON(ctx, http.MethodPost, baseURL+"/enroll/redeem", "", body, &out)
 	if err != nil {
 		return RedeemResult{}, err
@@ -493,8 +498,12 @@ func (c *Client) Release(ctx context.Context, baseURL, frpcToken string) error {
 // the cloud checks something strictly stronger and authenticated — the
 // frpc_token proves which household is asking, and an invite from a different
 // one is refused without being consumed.
-func (c *Client) BrokerVoucher(ctx context.Context, inviteCode string) (wire.DeviceVoucherResponse, error) {
-	return c.brokerVoucher(ctx, wire.DeviceVoucherRequest{InviteCode: inviteCode}, "invite")
+//
+// deviceID is the relay-local id the joining phone's device record will carry,
+// minted by the caller before this call: the cloud records it on the voucher so
+// the bearer it mints is linked to that device (wire.DeviceVoucherRequest).
+func (c *Client) BrokerVoucher(ctx context.Context, inviteCode, deviceID string) (wire.DeviceVoucherResponse, error) {
+	return c.brokerVoucher(ctx, wire.DeviceVoucherRequest{InviteCode: inviteCode, DeviceID: deviceID}, "invite")
 }
 
 // BrokerRecoveryVoucher is the RECOVERY half: no invite, and the voucher comes
@@ -507,8 +516,11 @@ func (c *Client) BrokerVoucher(ctx context.Context, inviteCode string) (wire.Dev
 // the operator's one-time recovery code first (internal/agent/recovery) — the
 // cloud cannot check it, so this method is exactly as strong as the caller's
 // discipline about calling it.
-func (c *Client) BrokerRecoveryVoucher(ctx context.Context) (wire.DeviceVoucherResponse, error) {
-	return c.brokerVoucher(ctx, wire.DeviceVoucherRequest{Recovery: true}, "recovery")
+//
+// deviceID links the minted owner bearer to the recovering phone's device
+// record, exactly as in BrokerVoucher.
+func (c *Client) BrokerRecoveryVoucher(ctx context.Context, deviceID string) (wire.DeviceVoucherResponse, error) {
+	return c.brokerVoucher(ctx, wire.DeviceVoucherRequest{Recovery: true, DeviceID: deviceID}, "recovery")
 }
 
 func (c *Client) brokerVoucher(ctx context.Context, body wire.DeviceVoucherRequest, what string) (wire.DeviceVoucherResponse, error) {

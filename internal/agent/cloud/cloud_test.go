@@ -69,7 +69,7 @@ func TestRedeemHappyPath(t *testing.T) {
 	defer srv.Close()
 
 	c := New(newStore(t, ""))
-	res, err := c.Redeem(context.Background(), srv.URL, "AAAA-BBBB")
+	res, err := c.Redeem(context.Background(), srv.URL, "AAAA-BBBB", "dev-1")
 	if err != nil {
 		t.Fatalf("Redeem: %v", err)
 	}
@@ -83,11 +83,12 @@ func TestRedeemHappyPath(t *testing.T) {
 // agent_id (state.State.AgentID) in the body, so the cloud can bind an
 // intercepted-code check to this specific relay at redeem time.
 func TestRedeemSendsAgentID(t *testing.T) {
-	var gotAgentID string
+	var gotAgentID, gotDeviceID string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]string
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		gotAgentID = body["agent_id"]
+		gotDeviceID = body["device_id"]
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"frpc_token": "tok123",
 			"frps": map[string]any{
@@ -104,11 +105,14 @@ func TestRedeemSendsAgentID(t *testing.T) {
 		t.Fatal("test precondition: state.Open must mint a non-empty AgentID")
 	}
 	c := New(st)
-	if _, err := c.Redeem(context.Background(), srv.URL, "AAAA-BBBB"); err != nil {
+	if _, err := c.Redeem(context.Background(), srv.URL, "AAAA-BBBB", "dev-1"); err != nil {
 		t.Fatalf("Redeem: %v", err)
 	}
 	if gotAgentID != wantAgentID {
 		t.Errorf("agent_id sent = %q, want %q (this relay's own AgentID)", gotAgentID, wantAgentID)
+	}
+	if gotDeviceID != "dev-1" {
+		t.Errorf("device_id sent = %q, want dev-1 (the founding device's id, for the cloud link)", gotDeviceID)
 	}
 }
 
@@ -120,10 +124,10 @@ func TestRedeemErrors(t *testing.T) {
 	defer srv.Close()
 
 	c := New(newStore(t, ""))
-	if _, err := c.Redeem(context.Background(), srv.URL, "BAD"); !errors.Is(err, ErrRejected) {
+	if _, err := c.Redeem(context.Background(), srv.URL, "BAD", "dev-1"); !errors.Is(err, ErrRejected) {
 		t.Errorf("410 must map to ErrRejected, got %v", err)
 	}
-	if _, err := c.Redeem(context.Background(), "http://127.0.0.1:1", "X"); !errors.Is(err, ErrUnavailable) {
+	if _, err := c.Redeem(context.Background(), "http://127.0.0.1:1", "X", "dev-1"); !errors.Is(err, ErrUnavailable) {
 		t.Errorf("transport failure must map to ErrUnavailable, got %v", err)
 	}
 }
@@ -866,14 +870,14 @@ func TestBrokerVoucherSendsTheInviteUnderTheRelayBearer(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := New(newStore(t, srv.URL)).BrokerVoucher(context.Background(), "INV1-CODE")
+	got, err := New(newStore(t, srv.URL)).BrokerVoucher(context.Background(), "INV1-CODE", "dev-1")
 	if err != nil {
 		t.Fatalf("BrokerVoucher: %v", err)
 	}
 	if gotAuth != "Bearer relay-token" {
 		t.Errorf("auth = %q, want the stored relay bearer", gotAuth)
 	}
-	if gotBody.InviteCode != "INV1-CODE" || gotBody.Recovery {
+	if gotBody.InviteCode != "INV1-CODE" || gotBody.Recovery || gotBody.DeviceID != "dev-1" {
 		t.Errorf("body = %+v, want the invite mode only", gotBody)
 	}
 	if got.Voucher != "vch-1" || got.Role != "member" {
@@ -893,12 +897,15 @@ func TestBrokerRecoveryVoucherAsksForRecoveryOnly(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := New(newStore(t, srv.URL)).BrokerRecoveryVoucher(context.Background())
+	got, err := New(newStore(t, srv.URL)).BrokerRecoveryVoucher(context.Background(), "dev-1")
 	if err != nil {
 		t.Fatalf("BrokerRecoveryVoucher: %v", err)
 	}
 	if raw["recovery"] != true {
 		t.Errorf("body = %+v, want recovery:true", raw)
+	}
+	if raw["device_id"] != "dev-1" {
+		t.Errorf("body = %+v, want device_id:dev-1 (links the owner bearer to the device)", raw)
 	}
 	if _, present := raw["invite_code"]; present {
 		t.Errorf("body carried an invite_code in the recovery mode: %+v", raw)
@@ -937,7 +944,7 @@ func TestBrokerVoucherStatusMapping(t *testing.T) {
 				w.WriteHeader(tc.status)
 			}))
 			defer srv.Close()
-			_, err := New(newStore(t, srv.URL)).BrokerVoucher(context.Background(), "INV1-CODE")
+			_, err := New(newStore(t, srv.URL)).BrokerVoucher(context.Background(), "INV1-CODE", "dev-1")
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("HTTP %d mapped to %v, want %v", tc.status, err, tc.want)
 			}
@@ -956,10 +963,10 @@ func TestBrokerVoucherRefusesWhenNotEnrolled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("state.Open: %v", err)
 	}
-	if _, err := New(st).BrokerVoucher(context.Background(), "INV1-CODE"); !errors.Is(err, ErrRejected) {
+	if _, err := New(st).BrokerVoucher(context.Background(), "INV1-CODE", "dev-1"); !errors.Is(err, ErrRejected) {
 		t.Fatalf("err = %v, want ErrRejected", err)
 	}
-	if _, err := New(st).BrokerRecoveryVoucher(context.Background()); !errors.Is(err, ErrRejected) {
+	if _, err := New(st).BrokerRecoveryVoucher(context.Background(), "dev-1"); !errors.Is(err, ErrRejected) {
 		t.Fatalf("err = %v, want ErrRejected", err)
 	}
 }
@@ -1351,7 +1358,7 @@ func TestRequestsSendTheRelayUserAgent(t *testing.T) {
 		})
 	}))
 	defer srv.Close()
-	if _, err := New(newStore(t, "")).Redeem(context.Background(), srv.URL, "AAAA-BBBB"); err != nil {
+	if _, err := New(newStore(t, "")).Redeem(context.Background(), srv.URL, "AAAA-BBBB", "dev-1"); err != nil {
 		t.Fatalf("Redeem: %v", err)
 	}
 	if want := useragent.String(); got != want {

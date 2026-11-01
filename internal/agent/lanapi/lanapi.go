@@ -532,9 +532,17 @@ func (s *Server) pair(w http.ResponseWriter, r *http.Request) {
 
 // pairFirst enrolls the relay and pairs the first device by redeeming an enrollment
 // code, persisting the cloud credentials handed back at redeem.
+//
+// The device is minted BEFORE the redeem so its id can travel with it: the cloud
+// links that id to the founding phone's app bearer, which is what lets a later
+// DELETE /v1/devices/{id} (via revoke-push) remove the household entry too. It
+// is persisted only once the redeem succeeded; an id minted for a failed redeem
+// is simply dropped, and the cloud never stored it either.
 func (s *Server) pairFirst(w http.ResponseWriter, r *http.Request, req wire.PairRequest) {
 	st := s.Store.Get()
-	res, err := s.Cloud.Redeem(cloudCtx(r), s.CloudBaseURL, req.EnrollmentCode)
+	// The founding pairing creates the household, so its device is the owner.
+	token, dev := mintDevice(req.DeviceName, state.RoleOwner)
+	res, err := s.Cloud.Redeem(cloudCtx(r), s.CloudBaseURL, req.EnrollmentCode, dev.ID)
 	switch {
 	case errors.Is(err, cloud.ErrRejected):
 		writeErr(w, http.StatusGone, "code_rejected")
@@ -544,8 +552,6 @@ func (s *Server) pairFirst(w http.ResponseWriter, r *http.Request, req wire.Pair
 		return
 	}
 
-	// The founding pairing creates the household, so its device is the owner.
-	token, dev := mintDevice(req.DeviceName, state.RoleOwner)
 	err = s.Store.Update(func(doc *state.State) {
 		doc.Devices = append(doc.Devices, dev)
 		// The whole Cloud struct is replaced, not patched: a fresh token also
@@ -583,8 +589,8 @@ func (s *Server) pairJoin(w http.ResponseWriter, r *http.Request, req wire.PairR
 		writeErr(w, http.StatusConflict, "not_paired")
 		return
 	}
-	s.pairWithVoucher(w, r, req, func(ctx context.Context) (wire.DeviceVoucherResponse, error) {
-		return s.Cloud.BrokerVoucher(ctx, req.InviteCode)
+	s.pairWithVoucher(w, r, req, func(ctx context.Context, deviceID string) (wire.DeviceVoucherResponse, error) {
+		return s.Cloud.BrokerVoucher(ctx, req.InviteCode, deviceID)
 	}, joinRole)
 }
 
@@ -622,8 +628,8 @@ func (s *Server) pairRecover(w http.ResponseWriter, r *http.Request, req wire.Pa
 		writeErr(w, http.StatusGone, "code_rejected")
 		return
 	}
-	s.pairWithVoucher(w, r, req, func(ctx context.Context) (wire.DeviceVoucherResponse, error) {
-		return s.Cloud.BrokerRecoveryVoucher(ctx)
+	s.pairWithVoucher(w, r, req, func(ctx context.Context, deviceID string) (wire.DeviceVoucherResponse, error) {
+		return s.Cloud.BrokerRecoveryVoucher(ctx, deviceID)
 	}, recoveryRole, window)
 }
 
@@ -652,11 +658,17 @@ func recoveryRole(wire.DeviceVoucherResponse) string { return state.RoleOwner }
 // would strand the operator behind a code that no longer works). That write is
 // also where the window is re-checked, making this function the enforcement
 // point for recovery single use rather than pairRecover's snapshot check.
+//
+// The device is minted BEFORE the broker call and its id handed to broker, so
+// the cloud can link the bearer the voucher mints to this device record (see
+// wire.DeviceVoucherRequest.DeviceID). Its role is only known once the voucher
+// is back, so it is filled in then. Nothing is persisted unless the broker
+// succeeds; an id minted for a failed broker is dropped and points at nothing.
 func (s *Server) pairWithVoucher(
 	w http.ResponseWriter,
 	r *http.Request,
 	req wire.PairRequest,
-	broker func(context.Context) (wire.DeviceVoucherResponse, error),
+	broker func(ctx context.Context, deviceID string) (wire.DeviceVoucherResponse, error),
 	roleFor func(wire.DeviceVoucherResponse) string,
 	consumedWindow ...int64,
 ) {
@@ -669,7 +681,8 @@ func (s *Server) pairWithVoucher(
 		writeErr(w, http.StatusConflict, "device_quota")
 		return
 	}
-	voucher, err := broker(cloudCtx(r))
+	token, dev := mintDevice(req.DeviceName, "")
+	voucher, err := broker(cloudCtx(r), dev.ID)
 	switch {
 	case errors.Is(err, cloud.ErrVoucherCapReached):
 		// The cloud's live-voucher cap, which it checks BEFORE consuming the
@@ -687,7 +700,7 @@ func (s *Server) pairWithVoucher(
 		return
 	}
 
-	token, dev := mintDevice(req.DeviceName, roleFor(voucher))
+	dev.Role = roleFor(voucher)
 	var overCap, windowSpent bool
 	err = s.Store.Update(func(doc *state.State) {
 		// Re-check the cap under the store lock: a concurrent add may have filled

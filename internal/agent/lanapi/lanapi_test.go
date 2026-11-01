@@ -91,8 +91,14 @@ type fixture struct {
 	// round trip.
 	brokerHoldMu sync.Mutex
 	brokerHold   func()
-	revokedMu    sync.Mutex
-	revoked      map[string]bool
+	// redeemDeviceIDs / voucherDeviceIDs record, in arrival order, the
+	// device_id each POST /enroll/redeem and POST /device-vouchers body
+	// carried — the id the cloud links the phone's app bearer to.
+	deviceIDsMu      sync.Mutex
+	redeemDeviceIDs  []string
+	voucherDeviceIDs []string
+	revokedMu        sync.Mutex
+	revoked          map[string]bool
 	// updated records, per guid, the last body the agent PUT to
 	// /controllers/{guid} (the dedup-HIT config refresh, issue
 	// poolpilot-cloud#99). updateRejects, when set, makes that route answer
@@ -353,6 +359,9 @@ func newFixture(t *testing.T) *fixture {
 		case "/enroll/redeem":
 			var body map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&body)
+			f.deviceIDsMu.Lock()
+			f.redeemDeviceIDs = append(f.redeemDeviceIDs, body["device_id"])
+			f.deviceIDsMu.Unlock()
 			if body["code"] != "GOOD-CODE" {
 				w.WriteHeader(http.StatusGone)
 				_, _ = w.Write([]byte(`{"error":"code invalid, expired, or already used"}`))
@@ -407,6 +416,9 @@ func newFixture(t *testing.T) *fixture {
 			}
 			var body wire.DeviceVoucherRequest
 			_ = json.NewDecoder(r.Body).Decode(&body)
+			f.deviceIDsMu.Lock()
+			f.voucherDeviceIDs = append(f.voucherDeviceIDs, body.DeviceID)
+			f.deviceIDsMu.Unlock()
 			// The cap is checked before the invite is consumed, so this arm sits
 			// ahead of the invite validation just like the real handler's does.
 			if f.voucherCapReached.Load() {
