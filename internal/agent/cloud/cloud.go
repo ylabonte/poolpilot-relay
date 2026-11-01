@@ -443,7 +443,15 @@ func (c *Client) RevokePushForDevice(ctx context.Context, deviceID string) error
 	if !s.Enrolled() {
 		return fmt.Errorf("%w: not enrolled", ErrRejected)
 	}
-	status, err := c.doJSON(ctx, http.MethodPost, s.Cloud.BaseURL+"/devices/revoke-push", s.Cloud.FrpcToken,
+	return c.revokePush(ctx, s.Cloud, deviceID)
+}
+
+// revokePush is RevokePushForDevice against explicit credentials: the removal
+// queue sends each entry with the credentials of the snapshot it checked the
+// entry's identity against, so a re-pair landing mid-request can never put an
+// old relay's device id under the new relay's token.
+func (c *Client) revokePush(ctx context.Context, creds state.Cloud, deviceID string) error {
+	status, err := c.doJSON(ctx, http.MethodPost, creds.BaseURL+"/devices/revoke-push", creds.FrpcToken,
 		map[string]string{"device_id": deviceID}, nil)
 	if err != nil {
 		return err
@@ -500,6 +508,11 @@ var removalPassTimeout = time.Minute
 // tick. Each pass is bounded in total by removalPassTimeout.
 //
 // Per entry:
+//   - queued under another cloud identity than the current one
+//     (state.PendingDeviceRemoval.CloudIdentity) → dropped unsent, with a
+//     warning. Its device id belongs to a relay identity that no longer
+//     exists here; sending it with the new token would be wrong, and the old
+//     token is gone.
 //   - 2xx → reported; removed. The route is idempotent, so a repeat after a
 //     lost response is harmless.
 //   - 4xx other than 401/403/408/429 → removed with a warning. The cloud
@@ -513,6 +526,9 @@ var removalPassTimeout = time.Minute
 //     backoff. A 401 is the lifecycle machinery's business (it parks the
 //     tunnel after repeated ones); the queue only waits.
 //   - older than RemovalMaxAge → dropped unattempted, with a warning.
+//
+// Each entry is sent with the credentials of the same snapshot its identity
+// was checked against, never re-read from the store mid-request.
 //
 // Nothing is sent while the agent is not enrolled or its tunnel is parked
 // (state.State.TunnelParked): every report would be refused. Entries are kept
@@ -555,6 +571,7 @@ func (c *Client) removalPass(ctx context.Context, only string) error {
 	if len(s.PendingDeviceRemovals) == 0 || !s.Enrolled() || s.TunnelParked() {
 		return nil
 	}
+	identity := s.CloudIdentity()
 	var firstErr error
 	for _, p := range s.PendingDeviceRemovals {
 		if only != "" && p.DeviceID != only {
@@ -565,6 +582,13 @@ func (c *Client) removalPass(ctx context.Context, only string) error {
 				firstErr = fmt.Errorf("%w: device removal pass cut off: %v", ErrUnavailable, err)
 			}
 			return firstErr
+		}
+		if p.CloudIdentity != identity {
+			slog.Warn("dropping unreported device removal: queued under another cloud identity", "device_id", p.DeviceID, "queued_at", p.CreatedAt)
+			if err := c.settleRemoval(p.DeviceID, nil); err != nil {
+				return err
+			}
+			continue
 		}
 		now := c.now()
 		if now.Sub(p.CreatedAt) > RemovalMaxAge {
@@ -577,7 +601,7 @@ func (c *Client) removalPass(ctx context.Context, only string) error {
 		if now.Before(p.NextAttemptAt) {
 			continue
 		}
-		err := c.RevokePushForDevice(ctx, p.DeviceID)
+		err := c.revokePush(ctx, s.Cloud, p.DeviceID)
 		switch {
 		case err == nil:
 			if err := c.settleRemoval(p.DeviceID, nil); err != nil {

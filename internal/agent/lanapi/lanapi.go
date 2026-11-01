@@ -562,6 +562,9 @@ func (s *Server) pairFirst(w http.ResponseWriter, r *http.Request, req wire.Pair
 		// clears any parked lifecycle left from the previous household
 		// (poolpilot-cloud#242).
 		doc.Cloud = state.Cloud{BaseURL: s.CloudBaseURL, FrpcToken: res.FrpcToken, FRPS: res.FRPS}
+		// Unreported removals belong to the identity just replaced: the new
+		// relay must never send them (state.PendingDeviceRemoval.CloudIdentity).
+		doc.PendingDeviceRemovals = nil
 	})
 	if err != nil {
 		slog.Error("persist pairing", "err", err)

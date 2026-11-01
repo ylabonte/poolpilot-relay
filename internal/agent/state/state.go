@@ -95,6 +95,23 @@ type PendingDeviceRemoval struct {
 	// NextAttemptAt is the earliest time the next report may go out (backoff).
 	// Zero means "due now" — the state a freshly queued entry starts in.
 	NextAttemptAt time.Time `json:"next_attempt_at,omitzero"`
+	// CloudIdentity is the State.CloudIdentity the removal was queued under:
+	// the report must only ever go out with the SAME relay credential. The
+	// device id is relay-scoped, so a report sent under a newer identity (a
+	// re-pair mints a new relay) would name a device that relay never had.
+	// cloud.Client drops an entry whose marker no longer matches. A hash, never
+	// the token itself.
+	CloudIdentity string `json:"cloud_identity,omitempty"`
+}
+
+// CloudIdentity identifies the relay's current cloud credential without
+// carrying it: the SHA-256 (hex) of Cloud.FrpcToken, or "" when not enrolled.
+// A new enrolment mints a new token and therefore a new identity.
+func (s State) CloudIdentity() string {
+	if !s.Enrolled() {
+		return ""
+	}
+	return idgen.HashToken(s.Cloud.FrpcToken)
 }
 
 // Device is one paired phone's LAN-API bearer credential. Only the SHA-256 of
@@ -315,15 +332,22 @@ type State struct {
 
 // QueueDeviceRemoval records that the cloud must still be told about the
 // removal of deviceID (see PendingDeviceRemoval). Call it inside the Update
-// that revokes the device. A device id already queued keeps its entry — its
-// age and backoff — rather than gaining a duplicate.
+// that revokes the device; the entry is bound to the current cloud identity
+// (see PendingDeviceRemoval.CloudIdentity). A device id already queued keeps
+// its entry — its age and backoff — rather than gaining a duplicate.
+//
+// Whatever replaces the cloud credentials (pairFirst's fresh enrolment,
+// ResetHousehold) must clear the queue in the same Update: its entries belong
+// to the identity being replaced.
 func (s *State) QueueDeviceRemoval(deviceID string, now time.Time) {
 	for i := range s.PendingDeviceRemovals {
 		if s.PendingDeviceRemovals[i].DeviceID == deviceID {
 			return
 		}
 	}
-	s.PendingDeviceRemovals = append(s.PendingDeviceRemovals, PendingDeviceRemoval{DeviceID: deviceID, CreatedAt: now.UTC()})
+	s.PendingDeviceRemovals = append(s.PendingDeviceRemovals, PendingDeviceRemoval{
+		DeviceID: deviceID, CreatedAt: now.UTC(), CloudIdentity: s.CloudIdentity(),
+	})
 }
 
 // Paired reports whether at least one device is active (has never been revoked).
