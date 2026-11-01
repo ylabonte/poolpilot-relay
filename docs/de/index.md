@@ -11,7 +11,7 @@ von deiner Steuerung ab:
 | Pool zu Hause im WLAN steuern | geht ohne Relay | geht ohne Relay | geht ohne Relay |
 | Pool von unterwegs steuern | ✓ mit Relay | kann sie schon | kann sie schon |
 | Push aufs Handy, wenn etwas nicht stimmt | ✓ mit Relay | ✓ mit Relay | kann sie schon\* |
-| Pool mit der Familie teilen — inkl. Pro-Funktionen, bis zu 10 Geräte, iPhone und Android gemischt | ✓ mit Relay | ✓ mit Relay | ✓ mit Relay |
+| Pool mit der Familie teilen — inkl. Pro-Funktionen, dein eigenes Gerät plus bis zu 10 weitere, iPhone und Android gemischt | ✓ mit Relay | ✓ mit Relay | ✓ mit Relay |
 
 \* Kostenlos in PoolPilot — das Relay kann es optional übernehmen.
 

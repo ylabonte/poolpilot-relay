@@ -16,7 +16,7 @@ Linux-Installation bzw. `/data/state.json` in der
 | Was | Hinweise |
 | --- | --- |
 | Die TLS-Identität des Relays | Sein Schlüsselpaar. Daraus ergibt sich der Fingerabdruck, den du beim Koppeln siehst. |
-| Gekoppelte Telefone | Ein Name, die Haushaltsrolle (Besitzer oder Mitglied) und ein **Hash** des Zugangstokens jedes Telefons, nie das Token selbst. |
+| Gekoppelte Telefone | Ein Name, die Haushaltsrolle (Eigentümer oder Mitglied) und ein **Hash** des Zugangstokens jedes Telefons, nie das Token selbst. |
 | Deine Poolsteuerungen | Adresse, Name und Typ — und **Benutzername und Passwort** der Steuerung. |
 | Alarmregeln | Was einen Push auslösen soll, dazu eine kurze Warteschlange noch nicht zugestellter Alarme. |
 | Tunnel-Zugangsdaten | Was das Relay braucht, um sich am PoolPilot-Tunnelserver anzumelden. |

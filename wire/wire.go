@@ -1166,9 +1166,20 @@ type InviteMintResponse struct {
 // cloud entry" below). It is what lets
 // POST /devices/revoke-push, which already reports a removed device by this
 // id, find the household entry behind it. Optional: an older relay omits it,
-// and a voucher without it simply mints an unlinked bearer, as before. It is
+// and a voucher without it mints a bearer with no link — which the cloud
+// counts as a legacy pairing (poolpilot-cloud#281), so that phone may report
+// its relay device itself via AppBearerRelayDeviceRequest — on any relay where
+// it does not already hold a ceremony link. It is
 // an opaque, relay-scoped label, not a credential — it authorizes nothing, and
 // the cloud must only ever look it up under the relay that sent it.
+//
+// Two refusals leave the invite (or the recovery code) UNCONSUMED, and both
+// are 409s told apart by their {"error": ...} body: "too many live vouchers"
+// (this relay holds its live vouchers — transient, minutes) and "too many
+// active bearers" (the household holds its maximum of live app bearers,
+// poolpilot-cloud#278 — lasting until a device is removed). A relay up to
+// v0.12.0 reads both as the first; later ones answer the phone with distinct
+// LAN codes (voucher_quota, household_device_quota).
 type DeviceVoucherRequest struct {
 	InviteCode string `json:"invite_code,omitempty"`
 	Recovery   bool   `json:"recovery,omitempty"`
@@ -1229,8 +1240,12 @@ type AppBearerVoucherRedeemRequest struct {
 // that id belongs to. The relay therefore sends the id it is about to persist
 // on every ceremony that hands a phone a bearer: DeviceVoucherRequest.DeviceID
 // (invite join, owner recovery) and EnrollRedeemRequest.DeviceID (the founding
-// pairing). Phones paired before this existed self-report theirs via
-// AppBearerRelayDeviceRequest.
+// pairing). A bearer that got no device id this way is a legacy pairing and
+// may self-report its relay device via AppBearerRelayDeviceRequest: one paired
+// before the relay sent the id, one paired through a relay that still does
+// not (an older relay — the cloud has counted these since
+// poolpilot-cloud#281), and an add-device rotation of either (it inherits
+// its parent bearer's standing).
 //
 // The cloud keys a link by (relay, device id) — never by device id alone — and
 // one bearer can hold several links: an owner's bearer mints the enrollment
@@ -1269,8 +1284,15 @@ type EnrollRedeemRequest struct {
 // per relay. A repeated call for the same relay replaces that relay's link; it
 // never touches the bearer's links to other relays.
 //
-// TRANSITIONAL: it exists only for phones paired before the relay sent
-// DeviceVoucherRequest.DeviceID / EnrollRedeemRequest.DeviceID. Planned for
+// TRANSITIONAL: it exists only for legacy pairings — bearers minted without
+// a relay device id, because the relay did not send
+// DeviceVoucherRequest.DeviceID / EnrollRedeemRequest.DeviceID (it predates
+// them, or is an older relay still in the field), plus add-device rotations
+// of such a bearer. Since poolpilot-cloud#281 that includes pairings made
+// through an older relay after the link existed, not only those made before
+// it; the cloud refuses a bearer that is not a legacy pairing, or one that
+// already holds a ceremony link on that relay. The request
+// shape is unchanged. Planned for
 // removal 6–12 months after it ships, once those pairings have aged out.
 //
 // Known gap, accepted for a transitional route: a relay with no controller

@@ -84,6 +84,11 @@ type fixture struct {
 	// invite. Transient (vouchers expire in minutes) and it leaves the code
 	// alive, so it must not surface as the code being dead.
 	voucherCapReached atomic.Bool
+	// householdCapReached, when set, makes POST /device-vouchers answer 409
+	// "too many active bearers" — the household's device cap
+	// (poolpilot-cloud#278), also checked before the invite is consumed, but
+	// lasting until a device is removed.
+	householdCapReached atomic.Bool
 	// brokerHold, when set, runs inside the /device-vouchers stub while the
 	// request is still in flight. It is how a test holds several pairings inside
 	// the broker call at once — which is where the real race window lives, since
@@ -455,6 +460,11 @@ func newFixture(t *testing.T) *fixture {
 			f.deviceIDsMu.Unlock()
 			// The cap is checked before the invite is consumed, so this arm sits
 			// ahead of the invite validation just like the real handler's does.
+			if f.householdCapReached.Load() {
+				w.WriteHeader(http.StatusConflict)
+				_, _ = w.Write([]byte(`{"error":"too many active bearers"}`))
+				return
+			}
 			if f.voucherCapReached.Load() {
 				w.WriteHeader(http.StatusConflict)
 				_, _ = w.Write([]byte(`{"error":"too many live vouchers"}`))
@@ -856,6 +866,12 @@ func TestSecondPairingRejectedCode(t *testing.T) {
 // The active-device cap stops runaway growth (a lost/reset phone is revoked to
 // free a slot). The over-cap add is refused 409 device_quota.
 func TestDeviceQuota(t *testing.T) {
+	// Owner decision: the owner's device + 10. Pinned here so a change
+	// to the constant is a deliberate one, made together with the docs that
+	// state it (docs/{en,de}/troubleshooting.md) and the cloud's household cap.
+	if DeviceCap != 11 {
+		t.Fatalf("DeviceCap = %d, want 11 (owner + 10)", DeviceCap)
+	}
 	f := newFixture(t)
 	f.pairFirst(t) // device 1
 	// Fill up to the cap.

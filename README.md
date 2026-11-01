@@ -20,7 +20,7 @@ Ein kleines Programm für zu Hause, das deine Poolsteuerung mit der
 | Pool zu Hause im WLAN steuern | geht ohne Relay | geht ohne Relay | geht ohne Relay |
 | Pool von unterwegs steuern | ✓ mit Relay | kann sie schon | kann sie schon |
 | Push aufs Handy, wenn etwas nicht stimmt | ✓ mit Relay | ✓ mit Relay | kann sie schon\* |
-| Pool mit der Familie teilen — inkl. Pro-Funktionen, bis zu 10 Geräte, iPhone und Android gemischt | ✓ mit Relay | ✓ mit Relay | ✓ mit Relay |
+| Pool mit der Familie teilen — inkl. Pro-Funktionen, dein eigenes Gerät plus bis zu 10 weitere, iPhone und Android gemischt | ✓ mit Relay | ✓ mit Relay | ✓ mit Relay |
 
 \* Kostenlos in PoolPilot — das Relay kann es optional übernehmen.
 
@@ -97,7 +97,7 @@ A small program for your home that connects your pool controller to the
 | Control your pool at home over Wi‑Fi | works without the Relay | works without the Relay | works without the Relay |
 | Control your pool while you're away | ✓ with the Relay | built in | built in |
 | Push to your phone when something's off | ✓ with the Relay | ✓ with the Relay | built in\* |
-| Share your pool with your family — Pro features included, up to 10 devices, iPhone and Android mixed | ✓ with the Relay | ✓ with the Relay | ✓ with the Relay |
+| Share your pool with your family — Pro features included, your own device plus up to 10 more, iPhone and Android mixed | ✓ with the Relay | ✓ with the Relay | ✓ with the Relay |
 
 \* Free in PoolPilot — the Relay can optionally take it over.
 

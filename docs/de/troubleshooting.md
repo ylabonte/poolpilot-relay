@@ -104,32 +104,32 @@ den ausgegebenen Link auf dem Telefon oder tippe den Fingerabdruck in die
 manuelle Eingabe der App. Der Befehl ist schreibgeschützt und jederzeit
 gefahrlos aufrufbar.
 
-## Besitzer- und Mitglieds-Telefone
+## Eigentümer- und Mitglieds-Telefone
 
 Jedes mit dem Relay gekoppelte Telefon hat eine Haushaltsrolle, die beim Koppeln
 festgelegt wird:
 
-- **Besitzer**: das Telefon, das das Relay eingerichtet hat, und ein Telefon,
-  das die Besitzer-Rolle mit einem [Wiederherstellungscode](#besitzer-zugriff-verloren)
+- **Eigentümer**: das Telefon, das das Relay eingerichtet hat, und ein Telefon,
+  das die Eigentümer-Rolle mit einem [Wiederherstellungscode](#eigentümer-zugriff-verloren)
   zurückgeholt hat.
-- **Mitglied**: ein Telefon, das mit einer Einladung des Besitzers beigetreten ist.
+- **Mitglied**: ein Telefon, das mit einer Einladung des Eigentümers beigetreten ist.
 
 Beide sehen den Pool, seine Messwerte, Warnungen und die eigene Weboberfläche
 der Steuerung, und beide können **sich selbst** vom Relay entfernen. Das Relay
-selbst ändern dürfen nur Besitzer: Steuerungen hinzufügen, ändern oder
+selbst ändern dürfen nur Eigentümer: Steuerungen hinzufügen, ändern oder
 entfernen, den Fernzugriffs-Link einer Steuerung erneuern, Warnregeln ändern,
 ein **anderes** Telefon entfernen, Updates installieren oder automatische
 Updates umschalten sowie Haushalts- und Werksreset. Fragt ein Mitglieds-Telefon
 eines davon an, antwortet die lokale API des Relays mit `403` und dem Fehlercode
 `owner_required`, und nichts ändert sich.
 
-Kein anderes Telefon kann das **letzte** Besitzer-Telefon entfernen. Versucht
+Kein anderes Telefon kann das **letzte** Eigentümer-Telefon entfernen. Versucht
 es ein Mitglieds-Telefon, erhält es `403` mit `owner_required` (siehe oben).
-Versuchen zwei Besitzer-Telefone im selben Moment, sich gegenseitig zu
+Versuchen zwei Eigentümer-Telefone im selben Moment, sich gegenseitig zu
 entfernen, erhält die zweite Anfrage `409` mit dem Fehlercode
 `last_owner_device`. In beiden Fällen ändert sich nichts. Selbst entfernen kann
-sich das letzte Besitzer-Telefon weiterhin. Ist es verloren, hol dir zuerst mit
-einem [Wiederherstellungscode](#besitzer-zugriff-verloren) die Besitzer-Rolle
+sich das letzte Eigentümer-Telefon weiterhin. Ist es verloren, hol dir zuerst mit
+einem [Wiederherstellungscode](#eigentümer-zugriff-verloren) die Eigentümer-Rolle
 zurück und entferne dann das verlorene Telefon.
 
 Ein entferntes Telefon verliert den Zugriff auf das Relay sofort. Das Relay
@@ -140,27 +140,55 @@ solange das Abo des Haushalts nicht aktiv ist, nur alle paar Stunden.
 
 Den Pool bedienen dürfen alle Telefone des Haushalts: Auch Mitglieder nutzen die
 eigene Weboberfläche der Steuerung samt der Einstellungen, die sie anbietet.
-Die Besitzer-Liste oben betrifft die haushaltsweite Konfiguration des Relays
+Die Eigentümer-Liste oben betrifft die haushaltsweite Konfiguration des Relays
 selbst, nicht die Einstellungen der Steuerung.
 
 Telefone, die gekoppelt wurden, bevor das Relay Rollen gespeichert hat, bekommen
 ihre Rolle einmalig beim ersten Start mit dieser Version: Das Telefon, das das
 Relay eingerichtet hat, und jedes Telefon, dessen Herkunft das Relay nicht
-sicher erkennen kann, werden Besitzer; ein Telefon, das erkennbar später per
+sicher erkennen kann, werden Eigentümer; ein Telefon, das erkennbar später per
 Einladung beigetreten ist, wird Mitglied. Hat ein Telefon die falsche Rolle, kann
-ein Besitzer es entfernen und neu einladen oder die Besitzer-Rolle mit einem
+ein Eigentümer es entfernen und neu einladen oder die Eigentümer-Rolle mit einem
 Wiederherstellungscode zurückholen (unten).
 
 Die Rolle auf dem Relay wird beim Koppeln festgelegt. Wer in den
 Haushaltseinstellungen der App befördert oder herabgestuft wird, behält auf dem
-Relay seine Rolle; soll ein Mitglieds-Telefon auf dem Relay Besitzer-Rechte
+Relay seine Rolle; soll ein Mitglieds-Telefon auf dem Relay Eigentümer-Rechte
 bekommen, koppel es mit einem Wiederherstellungscode.
 
-## Besitzer-Zugriff verloren
+## Der Haushalt hat sein Geräte-Limit erreicht
 
-Wenn kein Telefon mehr als Haushalts-Besitzer agieren kann, erzeuge am Gerät
+In einem Haushalt können dein eigenes Gerät plus bis zu 10 weitere gleichzeitig
+angemeldet sein. Ist er voll, koppelt das Relay kein weiteres Telefon – weder
+per Einladung noch mit einem Wiederherstellungscode für die Eigentümer-Rolle. Die App erhält dann `409`
+mit dem Fehlercode `household_device_quota`. Es wird nichts gekoppelt und nichts
+verbraucht – weder der Einladungscode noch der Wiederherstellungscode, der bis
+zu seinem Ablauf gilt. Das Limit wird vor dem
+Einladungscode selbst geprüft, daher bekommt auch eine vertippte oder
+abgelaufene Einladung diese Antwort und wird erst als solche abgelehnt, wenn
+wieder Platz ist.
+
+Um Platz zu schaffen, entfernt ein Eigentümer in der App unter
+**PoolPilot Relay → Gekoppelte Geräte** ein Telefon, das nicht mehr genutzt
+wird, oder ein Mitglied meldet sich auf einem Telefon ab, das es nicht mehr
+braucht. Danach mit demselben Code erneut koppeln.
+
+Holst du dir die Eigentümer-Rolle zurück, weil kein Eigentümer-Telefon mehr übrig
+ist, kann niemand für dich ein anderes Telefon entfernen: Ein Mitglied muss sich
+auf einem Telefon abmelden, das es nicht mehr braucht. Kann das auch kein
+Mitglied (die übrigen Telefone wurden zurückgesetzt oder deinstalliert, ohne
+sich abzumelden), siehe [Immer noch hängen?](#immer-noch-hängen). Dass die
+Eigentümer-Wiederherstellung auch am Limit gelingt, ist als Korrektur geplant.
+
+Relays bis v0.12.0 antworten in diesem Fall stattdessen mit `409 voucher_quota`,
+worauf die App rät, ein paar Minuten zu warten und es mit demselben Code erneut
+zu versuchen. Warten hilft auch dort nicht: Erst Platz schaffen.
+
+## Eigentümer-Zugriff verloren
+
+Wenn kein Telefon mehr als Haushalts-Eigentümer agieren kann, erzeuge am Gerät
 einen einmaligen Wiederherstellungscode und scanne ihn mit dem Telefon, das der
-Besitzer werden soll:
+Eigentümer werden soll:
 
 ```bash
 sudo poolpilot-relay show-recovery
@@ -190,7 +218,7 @@ curl -fsSL https://get.poolpilot.eu/install.sh | bash
 ## Werksreset
 
 Du kannst ein Relay aus der PoolPilot-App auf Werkseinstellungen zurücksetzen —
-**nur vom Telefon des Besitzers und nur zu Hause im selben Netzwerk wie das
+**nur vom Telefon des Eigentümers und nur zu Hause im selben Netzwerk wie das
 Relay**. Über den Fernzugriffs-Tunnel und von einem Mitglieds-Telefon lehnt das
 Relay einen Werksreset ab. Das löscht Kopplung und Identität, und der Agent
 startet mit einer frischen neu (systemd fährt ihn sofort wieder hoch). Danach

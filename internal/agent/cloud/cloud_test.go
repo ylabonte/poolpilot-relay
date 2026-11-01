@@ -955,6 +955,59 @@ func TestBrokerVoucherStatusMapping(t *testing.T) {
 	}
 }
 
+// TestBrokerVoucherConflictBodyMapping pins how the two cloud 409s on
+// /device-vouchers are told apart (poolpilot-cloud#278). Both leave the code
+// alive, but only the live-voucher cap clears by itself: the household device
+// cap needs a device removed first, so reading it as the voucher cap would
+// tell the user to wait for something waiting never fixes. Any body that is
+// not the household-cap literal — the voucher cap's own, none, or garbage —
+// must keep today's reading.
+func TestBrokerVoucherConflictBodyMapping(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		body    string
+		want    error
+		notWant []error
+	}{
+		{"household device cap", `{"error":"too many active bearers"}`, ErrHouseholdDeviceCap, []error{ErrVoucherCapReached, ErrRejected}},
+		{"live-voucher cap", `{"error":"too many live vouchers"}`, ErrVoucherCapReached, []error{ErrHouseholdDeviceCap, ErrRejected}},
+		{"no body", ``, ErrVoucherCapReached, []error{ErrHouseholdDeviceCap}},
+		{"not json", `<html>conflict</html>`, ErrVoucherCapReached, []error{ErrHouseholdDeviceCap}},
+		{"unknown literal", `{"error":"something new"}`, ErrVoucherCapReached, []error{ErrHouseholdDeviceCap}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusConflict)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+			for _, call := range []struct {
+				mode string
+				run  func(*Client) error
+			}{
+				{"invite", func(c *Client) error {
+					_, err := c.BrokerVoucher(context.Background(), "INV1-CODE", "dev-1")
+					return err
+				}},
+				{"recovery", func(c *Client) error {
+					_, err := c.BrokerRecoveryVoucher(context.Background(), "dev-1")
+					return err
+				}},
+			} {
+				err := call.run(New(newStore(t, srv.URL)))
+				if !errors.Is(err, tc.want) {
+					t.Fatalf("%s: 409 %q mapped to %v, want %v", call.mode, tc.body, err, tc.want)
+				}
+				for _, nw := range tc.notWant {
+					if errors.Is(err, nw) {
+						t.Fatalf("%s: 409 %q also read as %v", call.mode, tc.body, nw)
+					}
+				}
+			}
+		})
+	}
+}
+
 // TestBrokerVoucherRefusesWhenNotEnrolled: without a frpc token there is no
 // credential to present, so this must fail locally rather than firing a
 // guaranteed-401 request at the control plane.

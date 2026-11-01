@@ -52,7 +52,11 @@ const DefaultTunnelListen = "127.0.0.1:8480"
 // DeviceCap bounds the number of ACTIVE (non-revoked) devices per agent. A
 // lost/reset phone is revoked, freeing a slot, so this only stops runaway
 // growth — the constant-time bearer check in authed loops over the active set.
-const DeviceCap = 10
+// 11 = the owner's device + 10 (owner decision). User-facing text never says
+// 11: it says "your own device plus up to 10 more", because a bare "10" was
+// read as "the owner plus 10". The cloud's household cap moves to 11
+// alongside, in its own change.
+const DeviceCap = 11
 
 // ctxKey namespaces this package's request-context values.
 type ctxKey int
@@ -717,6 +721,16 @@ func (s *Server) pairWithVoucher(
 	token, dev := mintDevice(req.DeviceName, "")
 	voucher, err := broker(cloudCtx(r), dev.ID)
 	switch {
+	case errors.Is(err, cloud.ErrHouseholdDeviceCap):
+		// The HOUSEHOLD is at its cloud device cap (poolpilot-cloud#278), which
+		// the cloud checks before consuming the invite. Nothing is persisted
+		// here either (this returns before the Update below, so no device row
+		// and no spent recovery window): the phone is not paired, and the code
+		// is still good. Its own code, not voucher_quota — waiting will not
+		// clear it — and not device_quota, which is THIS relay's own cap and
+		// names a different list to remove from.
+		writeErr(w, http.StatusConflict, "household_device_quota")
+		return
 	case errors.Is(err, cloud.ErrVoucherCapReached):
 		// The cloud's live-voucher cap, which it checks BEFORE consuming the
 		// invite — so unlike every other refusal on this path the code survives.
