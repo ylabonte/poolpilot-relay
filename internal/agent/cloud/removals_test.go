@@ -252,6 +252,42 @@ func TestReportDeviceRemovalsKeep403BackoffWhileSuspended(t *testing.T) {
 	}
 }
 
+// The real-world 403: the household was admin-revoked after the relay's last
+// /relay/status answer. The report bounces (403 → removalBackoffInactive);
+// once the watcher learns of the revoke (suspended + "revoked") the entry is
+// held — not sent, not re-attempted — even after its backoff has run out.
+func TestReportDeviceRemovalsHoldAfter403OnceRevokeIsKnown(t *testing.T) {
+	rc := newRemovalCloud(t)
+	rc.status.Store(http.StatusForbidden)
+	st := newStore(t, rc.srv.URL)
+	c := New(st)
+	t0 := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	now := clockAt(c, t0)
+	queueRemovals(t, st, t0, "dev-x")
+	park(t, st, state.LifecycleSuspended, wire.RelayReasonLapsed)
+	if err := c.ReportDeviceRemovals(context.Background()); !errors.Is(err, ErrSubscriptionInactive) {
+		t.Fatalf("err = %v, want ErrSubscriptionInactive", err)
+	}
+	if q := st.Get().PendingDeviceRemovals; len(q) != 1 || q[0].Attempts != 1 {
+		t.Fatalf("after the 403: queue = %+v, want one entry with 1 attempt", q)
+	}
+
+	park(t, st, state.LifecycleSuspended, wire.RelayReasonRevoked)
+	*now = t0.Add(removalBackoffInactive)
+	if err := c.ReportDeviceRemovals(context.Background()); err != nil {
+		t.Fatalf("held pass: %v", err)
+	}
+	if err := c.ReportDeviceRemoval(context.Background(), "dev-x"); err != nil {
+		t.Fatalf("held immediate report: %v", err)
+	}
+	if n := len(rc.received()); n != 1 {
+		t.Errorf("%d requests, want 1 (none once the revoke is known)", n)
+	}
+	if q := st.Get().PendingDeviceRemovals; len(q) != 1 || q[0].Attempts != 1 {
+		t.Errorf("queue = %+v, want the entry kept with its attempt count unchanged", q)
+	}
+}
+
 // Held: parked as UNKNOWN (the cloud did not recognise the token) or as
 // admin-REVOKED (the one household the route refuses), and not enrolled.
 // Nothing is sent, by the poller's pass or the immediate report, and nothing
