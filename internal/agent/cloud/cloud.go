@@ -510,9 +510,11 @@ var removalPassTimeout = time.Minute
 // Per entry:
 //   - queued under another cloud identity than the current one
 //     (state.PendingDeviceRemoval.CloudIdentity non-empty and different) →
-//     dropped unsent, with a warning. Its device id belongs to a relay
-//     identity that no longer exists here; sending it with the new token
-//     would be wrong, and the old token is gone. An entry with an EMPTY
+//     dropped unsent, logged at ERROR with its device id. Its device id
+//     belongs to a relay identity that no longer exists here; sending it with
+//     the new token would be wrong, and the old token is gone. The cloud entry
+//     behind it then remains and shows up as an extra row in the app's
+//     paired-devices list for the owner to remove. An entry with an EMPTY
 //     marker (queued before the field existed) counts as the current identity.
 //   - 2xx → reported; removed. The route is idempotent, so a repeat after a
 //     lost response is harmless.
@@ -587,7 +589,8 @@ func (c *Client) removalPass(ctx context.Context, only string) error {
 		// An empty marker predates the field and counts as the current
 		// identity; only a non-empty, different one is stale.
 		if p.CloudIdentity != "" && p.CloudIdentity != identity {
-			slog.Warn("dropping unreported device removal: queued under another cloud identity", "device_id", p.DeviceID, "queued_at", p.CreatedAt)
+			slog.Error("discarding unreported device removal: queued under another cloud identity; its cloud entry remains for the owner to remove",
+				"device_id", p.DeviceID, "queued_at", p.CreatedAt, "attempts", p.Attempts)
 			if err := c.settleRemoval(p.DeviceID, nil); err != nil {
 				return err
 			}

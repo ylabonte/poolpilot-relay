@@ -556,6 +556,7 @@ func (s *Server) pairFirst(w http.ResponseWriter, r *http.Request, req wire.Pair
 		return
 	}
 
+	var discarded []state.PendingDeviceRemoval
 	err = s.Store.Update(func(doc *state.State) {
 		doc.Devices = append(doc.Devices, dev)
 		// The whole Cloud struct is replaced, not patched: a fresh token also
@@ -563,13 +564,22 @@ func (s *Server) pairFirst(w http.ResponseWriter, r *http.Request, req wire.Pair
 		// (poolpilot-cloud#242).
 		doc.Cloud = state.Cloud{BaseURL: s.CloudBaseURL, FrpcToken: res.FrpcToken, FRPS: res.FRPS}
 		// Unreported removals belong to the identity just replaced: the new
-		// relay must never send them (state.PendingDeviceRemoval.CloudIdentity).
+		// relay must never send them (state.PendingDeviceRemoval.CloudIdentity),
+		// and the old token that could is gone. Discarding them is a real loss,
+		// logged at ERROR per entry below once the Update has persisted: each
+		// one's cloud entry stays in place and shows up as an extra row in the
+		// app's paired-devices list for the owner to remove.
+		discarded = doc.PendingDeviceRemovals
 		doc.PendingDeviceRemovals = nil
 	})
 	if err != nil {
 		slog.Error("persist pairing", "err", err)
 		writeErr(w, http.StatusInternalServerError, "persist_failed")
 		return
+	}
+	for _, p := range discarded {
+		slog.Error("discarding unreported device removal: the relay re-paired under a new cloud identity; its cloud entry remains for the owner to remove",
+			"device_id", p.DeviceID, "queued_at", p.CreatedAt, "attempts", p.Attempts)
 	}
 	if s.OnPaired != nil {
 		s.OnPaired.UpdatePaired(true)
