@@ -21,6 +21,15 @@
 //	anything else (404 from an older control plane, 429, 5xx, transport)
 //	          → no signal: change nothing, re-ask with backoff.
 //
+// "Down" means any headline state but "connected" — including "disabled",
+// which the tunnel reports while its frp service runs with no proxy to serve
+// (no controller has its end-to-end URLs yet, or the cloud runs with
+// E2E_ENABLED off; poolpilot-relay#83). That is deliberate: without a proxy
+// there is no other signal that frps refuses the login, so such a relay keeps
+// asking (backed off to activeBackoffMax) and is still parked when its
+// household lapses. The "active" answer is then logged as "no end-to-end
+// proxy to serve", not as a tunnel that is down.
+//
 // A relay with NO tunnel (no registered controller) is asked about too, in
 // probe mode (no strikes): about once a day on the watcher's own schedule
 // (idleProbeEvery), and whenever the updater's /update-check is answered 401
@@ -295,7 +304,11 @@ func (w *Watcher) ask(ctx context.Context, st state.State, now time.Time) {
 		// current state anyway (cheap; a no-op when it already matches), so a
 		// tunnel left with a stale config by any path heals itself here
 		// instead of only being logged.
-		slog.Info("relay lifecycle: control plane reports the relay active; tunnel still down, re-applying its config")
+		if w.o.TunnelState() == "disabled" {
+			slog.Info("relay lifecycle: control plane reports the relay active; no end-to-end proxy to serve yet (E2E URLs not delivered), re-applying the tunnel config")
+		} else {
+			slog.Info("relay lifecycle: control plane reports the relay active; tunnel still down, re-applying its config")
+		}
 		w.reconfigure()
 		w.schedule(now, activeBackoffMin, activeBackoffMax)
 	case resp.State == wire.RelayStateSuspended:
