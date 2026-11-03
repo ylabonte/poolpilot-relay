@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"log"
 	"log/slog"
 	"os"
@@ -246,21 +247,37 @@ func TestResolveMDNSVerbose(t *testing.T) {
 	})
 }
 
-// Every loopback listener the agent binds is off-limits for the HA lan_port —
-// the E2E TLS listener (poolpilot-relay#80) included, defaults and overrides
-// alike.
+// The HA lan_port must stay off the E2E TLS listener (poolpilot-relay#80),
+// defaults and overrides alike, and off the two retired loopback ports, which
+// stay reserved so an upgrade does not move a paired relay off 8443.
 func TestReservedLoopbackPortsIncludeE2E(t *testing.T) {
-	t.Setenv("TUNNEL_LISTEN", "")
-	t.Setenv("CTRL_FILTER_LISTEN", "")
 	t.Setenv("E2E_LISTEN", "")
 	if got := reservedLoopbackPorts(); !slices.Equal(got, []int{8480, 8481, 8482}) {
 		t.Errorf("defaults = %v, want [8480 8481 8482]", got)
 	}
 	t.Setenv("E2E_LISTEN", "127.0.0.1:9482")
-	if got := reservedLoopbackPorts(); !slices.Contains(got, 9482) {
-		t.Errorf("override = %v, want it to contain 9482", got)
+	if got := reservedLoopbackPorts(); !slices.Equal(got, []int{8480, 8481, 9482}) {
+		t.Errorf("override = %v, want [8480 8481 9482]", got)
 	}
 	if got := resolveLanListen(writeOptions(t, `{"lan_port": 9482}`), reservedLoopbackPorts()...); got != lanapi.DefaultListen {
 		t.Errorf("lan_port on the E2E port = %q, want the default %q", got, lanapi.DefaultListen)
+	}
+	for _, p := range retiredLoopbackPorts {
+		opts := writeOptions(t, fmt.Sprintf(`{"lan_port": %d}`, p))
+		if got := resolveLanListen(opts, reservedLoopbackPorts()...); got != lanapi.DefaultListen {
+			t.Errorf("lan_port on retired port %d = %q, want the default %q", p, got, lanapi.DefaultListen)
+		}
+	}
+}
+
+// The retired listeners' env vars are ignored: they no longer move what is
+// reserved.
+func TestRetiredListenerEnvIgnored(t *testing.T) {
+	t.Setenv("E2E_LISTEN", "")
+	t.Setenv("TUNNEL_LISTEN", "127.0.0.1:9480")
+	t.Setenv("CTRL_FILTER_LISTEN", "127.0.0.1:9481")
+	got := reservedLoopbackPorts()
+	if !slices.Equal(got, []int{8480, 8481, 8482}) {
+		t.Errorf("reserved = %v, want [8480 8481 8482]", got)
 	}
 }

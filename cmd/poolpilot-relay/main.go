@@ -11,15 +11,6 @@
 //	HA_OPTIONS       path to the Home Assistant Supervisor options file (JSON);
 //	                 when set (and LAN_LISTEN is not), its `lan_port` sets the LAN
 //	                 API port so the app's port is settable from the HA UI
-//	TUNNEL_LISTEN    loopback HTTP bind the legacy frp api proxy forwarded to
-//	                 (default 127.0.0.1:8480) — the tunneled LAN API. No proxy
-//	                 forwards here since poolpilot-relay#83
-//	CTRL_FILTER_LISTEN loopback HTTP bind the legacy ctrl-<GUID> frp proxies
-//	                 forwarded to (default 127.0.0.1:8481) — the authenticated,
-//	                 credential-gated proxy (poolpilot-cloud#27) standing in front of
-//	                 every controller's real address. No proxy forwards here
-//	                 since poolpilot-relay#83; the E2E listener mounts the same
-//	                 gate in process
 //	E2E_LISTEN       loopback TLS bind every end-to-end https frp proxy
 //	                 forwards to (default 127.0.0.1:8482; poolpilot-relay#80).
 //	                 Serves the existing LAN certificate (same SPKI pin as the
@@ -68,6 +59,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -241,8 +233,8 @@ func run() error {
 	})
 	// Resolve the LAN API bind once, then feed both the listener and the mDNS
 	// record from it so the advertised port can never diverge from the bind. A
-	// Home Assistant lan_port option (if any) must not land on a port the agent
-	// already uses for its loopback frp proxies.
+	// Home Assistant lan_port option (if any) must not land on a reserved
+	// loopback port (see reservedLoopbackPorts).
 	lanListen := resolveLanListen(os.Getenv("HA_OPTIONS"), reservedLoopbackPorts()...)
 	// Quiet the dnssd library's own INFO chatter (harmless RFC 6762 sanitize
 	// notices) by default; MDNS_VERBOSE_LOGS / the HA `mdns_verbose_logs` option
@@ -258,7 +250,7 @@ func run() error {
 	// ctrlFilter is the poolpilot-cloud#27 authenticated tunnel gate in front
 	// of every controller; the E2E listener mounts its handler — see
 	// lanapi.ReconfigureTunnel and package ctrlfilter.
-	ctrlFilter := &ctrlfilter.Server{Addr: ctrlfilter.Listen()}
+	ctrlFilter := &ctrlfilter.Server{}
 
 	// The Home Assistant app sets RESTART_ON_RESET=1 so a factory reset restarts
 	// the agent in-process (see the wg.Wait tail and runLoop) instead of exiting;
@@ -278,7 +270,6 @@ func run() error {
 		Fingerprint:  fingerprint,
 		Cert:         cert,
 		Addr:         lanListen,
-		TunnelAddr:   lanapi.TunnelListen(),
 		E2EAddr:      e2e.Listen(),
 		CtrlFilter:   ctrlFilter,
 		CloudBaseURL: cloudBaseURL,
@@ -348,8 +339,6 @@ func run() error {
 	// poller panic must not take the tunnel down. Everything stops on ctx.
 	var wg sync.WaitGroup
 	supervise(ctx, &wg, "lanapi", api.Run)
-	supervise(ctx, &wg, "lanapi-tunnel", api.RunTunnelListener)
-	supervise(ctx, &wg, "ctrlfilter", ctrlFilter.Run)
 	supervise(ctx, &wg, "e2e", e2eServer.Run)
 	// After the boot-time resume above: fills in E2E URLs the cloud did not
 	// hand out at registration, hourly while any is missing.
@@ -458,11 +447,21 @@ func bootHasRegisteredController(st state.State) bool {
 	return false
 }
 
-// reservedLoopbackPorts is every loopback port the agent binds for its frp
-// proxies — the tunneled LAN API, the controller filter and the E2E TLS
-// listener — which a Home Assistant lan_port must not collide with.
+// retiredLoopbackPorts are the default ports of the two loopback listeners
+// the agent no longer binds: the tunneled LAN API (8480) and the controller
+// filter (8481), which only the legacy http frp proxies forwarded to. Before
+// they were removed, a Home Assistant lan_port on either was refused and the
+// relay kept the default 8443. They stay reserved for good: a stale lan_port
+// of 8480/8481 can sit in a Home Assistant options file indefinitely, and
+// accepting it on any later upgrade would move the LAN API off 8443 and strand
+// the phones paired on it without their direct LAN link.
+var retiredLoopbackPorts = []int{8480, 8481}
+
+// reservedLoopbackPorts is every port a Home Assistant lan_port must not
+// collide with: the E2E TLS listener every frp proxy forwards to, plus the
+// retiredLoopbackPorts.
 func reservedLoopbackPorts() []int {
-	return []int{lanPort(lanapi.TunnelListen()), lanPort(ctrlfilter.Listen()), lanPort(e2e.Listen())}
+	return append(slices.Clone(retiredLoopbackPorts), lanPort(e2e.Listen()))
 }
 
 // lanPort extracts the numeric port from a host:port (or ":port") bind address,

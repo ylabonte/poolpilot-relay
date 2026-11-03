@@ -45,11 +45,6 @@ import (
 // DefaultListen is the LAN API bind address; override via LAN_LISTEN.
 const DefaultListen = ":8443"
 
-// DefaultTunnelListen is the loopback plain-HTTP bind the legacy frp api
-// proxy forwarded to (no proxy does since poolpilot-relay#83); override via
-// TUNNEL_LISTEN.
-const DefaultTunnelListen = "127.0.0.1:8480"
-
 // DeviceCap bounds the number of ACTIVE (non-revoked) devices per agent. A
 // lost/reset phone is revoked, freeing a slot, so this only stops runaway
 // growth — the constant-time bearer check in authed loops over the active set.
@@ -87,16 +82,6 @@ func Listen() string {
 	return DefaultListen
 }
 
-// TunnelListen resolves TUNNEL_LISTEN — the loopback plain-HTTP listener the
-// embedded frpc forwarded the legacy tunneled LAN API to (nginx terminated
-// public TLS); see Server.TunnelAddr.
-func TunnelListen() string {
-	if v := os.Getenv("TUNNEL_LISTEN"); v != "" {
-		return v
-	}
-	return DefaultTunnelListen
-}
-
 // PairedNotifier receives pairing-state flips (the mDNS announcer).
 type PairedNotifier interface{ UpdatePaired(bool) }
 
@@ -115,11 +100,6 @@ type Server struct {
 	// errorLog overrides the TLS server's ErrorLog (tests); nil means the
 	// pre-handshake-disconnect filter over the standard logger.
 	errorLog *log.Logger
-	// TunnelAddr is the loopback plain-HTTP bind the legacy frp api proxy
-	// forwarded to (TUNNEL_LISTEN). No proxy forwards here since
-	// poolpilot-relay#83 — the E2E listener mounts TunnelHandler in process.
-	// Empty disables the listener.
-	TunnelAddr string
 	// E2EAddr is the loopback TLS listener (internal/agent/e2e, E2E_LISTEN)
 	// the end-to-end https proxies forward to (poolpilot-relay#80). Empty
 	// disables those proxies; a controller also needs both cloud-delivered E2E
@@ -296,13 +276,13 @@ func (s *Server) mount(routes []route) *http.ServeMux {
 	return mux
 }
 
-// sharedRoutes are reachable over BOTH the LAN (HTTPS) and the tunnel
-// (loopback HTTP behind frp) listeners. The LAN-only ceremonies — pairing,
-// factory-reset and household-reset — are deliberately NOT here: pairing
-// proves physical LAN presence, factory-reset is destructive + irreversible
-// (wipes state and exits the process), and household-reset unpairs every
-// device and drops every controller, so both resets demand the same LAN
-// presence. lanRoutes mounts the real handlers; tunnelRoutes answers 403
+// sharedRoutes are reachable over BOTH the LAN (HTTPS) listener and the
+// tunnel (TunnelHandler, mounted by the E2E listener behind frp). The
+// LAN-only ceremonies — pairing, factory-reset and household-reset — are
+// deliberately NOT here: pairing proves physical LAN presence, factory-reset
+// is destructive + irreversible (wipes state and exits the process), and
+// household-reset unpairs every device and drops every controller, so both
+// resets demand the same LAN presence. lanRoutes mounts the real handlers; tunnelRoutes answers 403
 // lan_only for all three.
 //
 // Routes that change the relay's configuration, its controller set or its
@@ -436,32 +416,6 @@ func (s *Server) serveTLS(ctx context.Context, ln net.Listener) error {
 	}
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.ServeTLS(ln, "", "") }()
-	select {
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutdownCtx)
-		return ctx.Err()
-	case err := <-errCh:
-		return err
-	}
-}
-
-// RunTunnelListener serves the tunnel-facing plain-HTTP listener (loopback;
-// the legacy api proxy's target — none forwards here since
-// poolpilot-relay#83) until ctx is done. A no-op when TunnelAddr is empty.
-func (s *Server) RunTunnelListener(ctx context.Context) error {
-	if s.TunnelAddr == "" {
-		<-ctx.Done()
-		return ctx.Err()
-	}
-	srv := &http.Server{
-		Addr:              s.TunnelAddr,
-		Handler:           s.TunnelHandler(),
-		ReadHeaderTimeout: 10 * time.Second,
-	}
-	errCh := make(chan error, 1)
-	go func() { errCh <- srv.ListenAndServe() }()
 	select {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
