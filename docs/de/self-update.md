@@ -31,34 +31,29 @@ nur Versionen mit gültiger Signatur.
   pro Gerät festen Zeit innerhalb dieses Fensters (damit nicht eine ganze
   Nachbarschaft von Relays in derselben Sekunde neu startet). Ein Gerät übernimmt
   eine neue Version normalerweise binnen etwa eines Tages.
-- **Auf Wunsch, aus der App.** Du willst nicht bis zur Nacht warten? Öffne das
-  Relay in der PoolPilot-App und tippe auf **Jetzt aktualisieren** — ein
-  wartendes Update installiert sich sofort. Das darf nur der
-  Haushalts-**Eigentümer** (siehe unten).
+- **Sofort, von Hand.** Du willst nicht bis zur Nacht warten? Führe den
+  Installer-Einzeiler auf dem Gerät erneut aus:
+
+  ```bash
+  curl -fsSL https://get.poolpilot.eu/install.sh | bash
+  ```
+
+  Er holt und installiert die aktuelle Version und ist auch auf einem Gerät
+  unbedenklich, das schon aktuell ist.
+
+<!-- Die App-Formulierung (Knopf „Jetzt aktualisieren“ und Schalter für
+     automatische Updates auf der Relay-Seite, nur Eigentümer) wiederherstellen,
+     sobald poolpilot-app#440 sie ausliefert, auch im Konfig-Kommentar, den
+     deploy/relay/install.sh schreibt und configuration.md zitiert. -->
+> **Kommt in die App:** ein Knopf **Jetzt aktualisieren** und ein
+> **Ein/Aus-Schalter für automatische Updates** auf der Seite des Relays in der
+> PoolPilot-App, für den Haushalts-Eigentümer. Die App hat beides noch nicht;
+> bis dahin nimm den Installer oben und die Einstellung am Gerät unten.
 
 ## Updates steuern
 
-Du hast zwei voneinander unabhängige Steuerungen:
-
-### Aus der App — empfohlen
-
-Die Seite des Relays in der PoolPilot-App hat einen **Ein/Aus-Schalter für
-automatische Updates**:
-
-- **Ein** (Standard): Updates installieren sich über Nacht von selbst.
-- **Aus**: Das Relay **installiert Updates nicht von selbst**, aber du kannst
-  jederzeit auf **Jetzt aktualisieren** tippen — etwa um einen Sicherheitsfix zu
-  deinem eigenen Zeitpunkt einzuspielen.
-
-Das ist die Einstellung, die die meisten wollen, weil sie das Gerät nie ohne
-Update-Möglichkeit zurücklässt.
-
-**Nur der Haushalts-Eigentümer** kann den Schalter umlegen und auf **Jetzt
-aktualisieren** tippen. Jedes gekoppelte Telefon, auch das eines Mitglieds,
-sieht den Update-Status und kann das Relay nach einem Update suchen lassen; ein
-Mitglieds-Telefon, das den Schalter ändern oder ein Update installieren will,
-wird abgewiesen (siehe
-[Eigentümer- und Mitglieds-Telefone](troubleshooting.md#eigentümer--und-mitglieds-telefone)).
+Automatische Updates sind standardmäßig **eingeschaltet**. Steuern kannst du
+sie derzeit am Gerät selbst.
 
 ### Am Gerät — vollständiges Abschalten
 
@@ -75,17 +70,17 @@ und starte es neu:
 sudo systemctl restart poolpilot-relay
 ```
 
-Mit `UPDATE_DISABLED=1` prüft das Relay **nicht** auf Updates, installiert sie
-**nicht** automatisch **und „Jetzt aktualisieren“ in der App funktioniert dann
-auch nicht** — es ist ein harter Aus-Schalter. Um ein solches Gerät später zu
-aktualisieren, führe den Installer erneut aus:
+Mit `UPDATE_DISABLED=1` prüft das Relay **nicht** von selbst auf Updates und
+installiert sie **nicht** — es ist ein harter Aus-Schalter. Um ein solches
+Gerät später zu aktualisieren, führe den Installer erneut aus:
 
 ```bash
 curl -fsSL https://get.poolpilot.eu/install.sh | bash
 ```
 
-(Das ist der Unterschied zum App-Schalter oben, mit dem du weiterhin auf Wunsch
-aktualisieren kannst.)
+(Der kommende Schalter in der App wird die sanftere Wahl: Er setzt die
+nächtliche Installation aus, lässt dich aber weiterhin auf Wunsch
+aktualisieren.)
 
 ## Wenn ein Update zu hängen scheint
 

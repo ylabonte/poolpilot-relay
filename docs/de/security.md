@@ -20,7 +20,7 @@ Linux-Installation bzw. `/data/state.json` in der
 | Deine Poolsteuerungen | Adresse, Name und Typ — und **Benutzername und Passwort** der Steuerung. |
 | Alarmregeln | Was einen Push auslösen soll, dazu eine kurze Warteschlange noch nicht zugestellter Alarme. |
 | Tunnel-Zugangsdaten | Was das Relay braucht, um sich am PoolPilot-Tunnelserver anzumelden. |
-| Einstellungen | Der Schalter für automatische Updates und das in der App gesetzte Abfrageintervall. |
+| Einstellungen | Ob automatische Updates eingeschaltet sind (Standard), und das in der App gesetzte Abfrageintervall. |
 
 **Benutzername und Passwort deiner Poolsteuerung bleiben auf dem Gerät.** Das
 Relay schickt sie nie an die PoolPilot-Cloud und gibt sie auch über seine eigene

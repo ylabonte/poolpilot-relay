@@ -36,7 +36,7 @@
 //	                 does not carry one (dev/e2e compose)
 //	PAIR_URL_BASE    Universal Link host for `show-pairing` (default
 //	                 https://pair.poolpilot.eu)
-//	UPDATE_DISABLED  "1" disables self-update (checks, staging, auto-apply); the
+//	UPDATE_DISABLED  "1" disables self-update (scheduled checks, staging, apply); the
 //	                 health marker is still written so a manual update is safe
 //	RESTART_ON_RESET "1" makes a factory reset restart the agent in-process with
 //	                 a fresh identity instead of exiting (the container / HA-app

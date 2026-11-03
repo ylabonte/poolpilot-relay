@@ -25,7 +25,7 @@ sudo systemctl restart poolpilot-relay
 | `CLOUD_BASE_URL` | `https://api.poolpilot.eu` | The PoolPilot cloud the Relay talks to. Written by the installer — leave it as is unless support tells you otherwise. |
 | `LAN_LISTEN` | `:8443` | The address/port the Relay serves the app on over your LAN. Change the port only if `8443` clashes with something else on the device. |
 | `POLL_INTERVAL` | `60s` | The **default** for how often the Relay reads your controller (a Go duration, e.g. `30s`, `2m`). Shorter means fresher readings and a little more load. A value set in the app (see [Poll interval](#poll-interval)) takes precedence. |
-| `UPDATE_DISABLED` | *(unset)* | Set to `1` to turn **automatic self‑update fully off** on this device. See [Self-update](self-update.md) for what that means (and why the app's toggle is usually the better choice). |
+| `UPDATE_DISABLED` | *(unset)* | Set to `1` to turn **automatic self‑update fully off** on this device. See [Self-update](self-update.md) for what that means (and why the in‑app toggle, once the app has it, will usually be the better choice). |
 
 The default config the installer writes looks like this:
 
@@ -35,8 +35,8 @@ CLOUD_BASE_URL=https://api.poolpilot.eu
 # LAN_LISTEN=:8443
 # TUNNEL_LISTEN=127.0.0.1:8480
 # POLL_INTERVAL=60s
-# Self-update runs automatically at night; manage it from the PoolPilot app, or
-# set UPDATE_DISABLED=1 here to opt this device out entirely.
+# Self-update runs automatically at night. To update right away, re-run the
+# installer; set UPDATE_DISABLED=1 here to opt this device out entirely.
 # UPDATE_DISABLED=1
 ```
 

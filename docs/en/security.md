@@ -20,7 +20,7 @@ contents:
 | Your pool controllers | Address, name and type — and the controller's **username and password**. |
 | Alert rules | What should trigger a push, plus a short queue of alerts not yet delivered. |
 | Tunnel credentials | What the Relay needs to log in to the PoolPilot tunnel server. |
-| Settings | The automatic-update toggle and the poll interval set in the app. |
+| Settings | Whether automatic updates are on (the default), and the poll interval set in the app. |
 
 **Your controller's username and password stay on the device.** The Relay
 never sends them to the PoolPilot cloud and never returns them over its own
