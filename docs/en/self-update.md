@@ -29,31 +29,27 @@ that carry a valid signature.
   between **03:00 and 05:00 local time**, at a per‑device time within that window
   (so a whole neighbourhood of Relays doesn't restart at the same second). A
   device normally picks up a new release within about a day.
-- **On demand, from the app.** Don't want to wait for the night? Open the Relay
-  in the PoolPilot app and tap **Update now** — a waiting update installs
-  immediately. Only the household **owner** can do this (see below).
+- **Right away, by hand.** Don't want to wait for the night? Re‑run the
+  installer one‑liner on the device:
+
+  ```bash
+  curl -fsSL https://get.poolpilot.eu/install.sh | bash
+  ```
+
+  It fetches and installs the current release and is safe to run on a device
+  that is already up to date.
+
+<!-- Restore the in-app wording (an "Update now" button and an automatic-updates
+     toggle on the Relay page, owner only) once poolpilot-app#440 ships them. -->
+> **Coming to the app:** an **Update now** button and an **automatic updates**
+> on/off toggle on the Relay's page in the PoolPilot app, for the household
+> owner. The app doesn't have them yet; until it does, use the installer above
+> and the device setting below.
 
 ## Controlling updates
 
-You have two independent controls:
-
-### From the app — recommended
-
-The Relay's page in the PoolPilot app has an **automatic updates** on/off toggle:
-
-- **On** (default): updates install by themselves overnight.
-- **Off**: the Relay **won't install updates on its own**, but you can still tap
-  **Update now** whenever you like — for example to pull in a security fix on
-  your own schedule.
-
-This is the setting most people want, because it never leaves the device unable
-to update.
-
-**Only the household owner** can switch the toggle and tap **Update now**.
-Every paired phone, members included, can see the update status and ask the
-Relay to check for an update; a member phone that tries to change the toggle
-or install an update is refused (see
-[Owner and member phones](troubleshooting.md#owner-and-member-phones)).
+Automatic updates are **on** by default. Today you control them on the device
+itself.
 
 ### On the device — full opt‑out
 
@@ -70,17 +66,16 @@ then restart it:
 sudo systemctl restart poolpilot-relay
 ```
 
-With `UPDATE_DISABLED=1` the Relay does **not** check for updates, does **not**
-install them automatically, **and "Update now" in the app will not work either**
-— it's a hard off switch. To bring such a device up to date later, re‑run the
-installer:
+With `UPDATE_DISABLED=1` the Relay does **not** check for updates and does
+**not** install them — it's a hard off switch. To bring such a device up to date
+later, re‑run the installer:
 
 ```bash
 curl -fsSL https://get.poolpilot.eu/install.sh | bash
 ```
 
-(That's the difference from the app toggle above, which still lets you update on
-demand.)
+(The coming in‑app toggle will be the softer choice: it pauses the nightly
+install but still lets you update on demand.)
 
 ## If an update seems stuck
 

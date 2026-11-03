@@ -26,7 +26,7 @@ sudo systemctl restart poolpilot-relay
 | `CLOUD_BASE_URL` | `https://api.poolpilot.eu` | Die PoolPilot-Cloud, mit der das Relay spricht. Wird vom Installer geschrieben — lass sie so, außer der Support sagt etwas anderes. |
 | `LAN_LISTEN` | `:8443` | Adresse/Port, unter dem das Relay die App über dein LAN bedient. Ändere den Port nur, wenn `8443` mit etwas anderem auf dem Gerät kollidiert. |
 | `POLL_INTERVAL` | `60s` | Der **Standard** dafür, wie oft das Relay deine Steuerung ausliest (eine Go-Dauer, z. B. `30s`, `2m`). Kürzer heißt frischere Werte und etwas mehr Last. Ein in der App gesetzter Wert (siehe [Abfrageintervall](#abfrageintervall)) hat Vorrang. |
-| `UPDATE_DISABLED` | *(nicht gesetzt)* | Auf `1` setzen, um das **automatische Selbst-Update auf diesem Gerät vollständig abzuschalten**. Siehe [Selbst-Update](self-update.md), was das bedeutet (und warum der Schalter in der App meist die bessere Wahl ist). |
+| `UPDATE_DISABLED` | *(nicht gesetzt)* | Auf `1` setzen, um das **automatische Selbst-Update auf diesem Gerät vollständig abzuschalten**. Siehe [Selbst-Update](self-update.md), was das bedeutet (und warum der Schalter in der App, sobald es ihn gibt, meist die bessere Wahl sein wird). |
 
 Die Standardkonfiguration, die der Installer schreibt, sieht so aus:
 
