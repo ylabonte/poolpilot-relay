@@ -110,16 +110,11 @@ aufbaut und offen hält.
   Relay schickt deine Alarme an die Cloud, damit sie Push-Nachrichten
   zustellen kann (siehe *Was wo gespeichert ist* oben). Auch diese
   Verbindungen sind verschlüsselt, enden aber bei der Cloud.
-- **Ältere App-Versionen.** Das gilt ab PoolPilot-App-Version 1.2 mit Relay
-  0.11 oder neuer. Ältere App-Versionen nutzen weiterhin die bisherige
-  Verbindung: Das Telefon spricht HTTPS mit der Cloud, und die Cloud reicht
-  jede Anfrage durch den Tunnel weiter, entschlüsselt diesen Verkehr also und
-  verschlüsselt ihn neu. Deine Anfragen und die Antworten der Steuerung sind
-  dort nur für den Moment des Weiterleitens sichtbar — sie werden weder
-  gespeichert noch ausgewertet. Mit App 1.2 und einem Relay älter als 0.11
-  gibt es keinen Rückfall auf diese Verbindung: Der Fernzugriff über das Relay
-  pausiert, bis das Relay aktualisiert ist, und zu Hause funktioniert
-  alles weiter.
+- **Ab App 1.2 und Relay 0.11.** Der Fernzugriff über das Relay braucht die
+  PoolPilot-App ab Version 1.2 und ein Relay ab Version 0.11. Ältere
+  App-Versionen erreichen das Relay nur zu Hause, und mit einem älteren Relay
+  pausiert der Fernzugriff, bis das Relay aktualisiert ist; zu Hause
+  funktioniert alles weiter.
 - **Kein Verkehrsprotokoll.** Der Web-Eingang des Tunnels führt kein
   Zugriffsprotokoll, es entsteht also keine Spur, was du wann mit deinem Pool
   gemacht hast. Der Tunnel-Server meldet der Cloud nur, *dass* sich ein Relay

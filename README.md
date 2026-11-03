@@ -154,7 +154,7 @@ The edge agent is one Go module at the repo root. It talks to the controller on
 the local network and reaches the PoolPilot cloud through an outbound tunnel
 when you're away. The app's remote connections terminate TLS on the Relay
 itself, with its pinned LAN certificate, so the cloud only forwards encrypted
-bytes (end-to-end, from app version 1.2; see
+bytes (end-to-end; remote access needs app version 1.2 or later — see
 [Security & privacy](docs/en/security.md#the-tunnel-in-plain-words)).
 
 ```bash

@@ -45,8 +45,9 @@ import (
 // DefaultListen is the LAN API bind address; override via LAN_LISTEN.
 const DefaultListen = ":8443"
 
-// DefaultTunnelListen is the loopback plain-HTTP bind the frp api proxy
-// forwards to; override via TUNNEL_LISTEN.
+// DefaultTunnelListen is the loopback plain-HTTP bind the legacy frp api
+// proxy forwarded to (no proxy does since poolpilot-relay#83); override via
+// TUNNEL_LISTEN.
 const DefaultTunnelListen = "127.0.0.1:8480"
 
 // DeviceCap bounds the number of ACTIVE (non-revoked) devices per agent. A
@@ -87,7 +88,8 @@ func Listen() string {
 }
 
 // TunnelListen resolves TUNNEL_LISTEN — the loopback plain-HTTP listener the
-// embedded frpc forwards the tunneled LAN API to (nginx terminates public TLS).
+// embedded frpc forwarded the legacy tunneled LAN API to (nginx terminated
+// public TLS); see Server.TunnelAddr.
 func TunnelListen() string {
 	if v := os.Getenv("TUNNEL_LISTEN"); v != "" {
 		return v
@@ -113,8 +115,10 @@ type Server struct {
 	// errorLog overrides the TLS server's ErrorLog (tests); nil means the
 	// pre-handshake-disconnect filter over the standard logger.
 	errorLog *log.Logger
-	// TunnelAddr is the loopback plain-HTTP bind the frp api proxy forwards to
-	// (TUNNEL_LISTEN). Empty disables the tunnel-facing listener.
+	// TunnelAddr is the loopback plain-HTTP bind the legacy frp api proxy
+	// forwarded to (TUNNEL_LISTEN). No proxy forwards here since
+	// poolpilot-relay#83 — the E2E listener mounts TunnelHandler in process.
+	// Empty disables the listener.
 	TunnelAddr string
 	// E2EAddr is the loopback TLS listener (internal/agent/e2e, E2E_LISTEN)
 	// the end-to-end https proxies forward to (poolpilot-relay#80). Empty
@@ -128,12 +132,11 @@ type Server struct {
 	// registered controller has its E2E URLs — how a complete relay hears the
 	// cloud withdraw them; zero means DefaultE2ERecheckInterval.
 	E2ERecheckInterval time.Duration
-	// CtrlFilter is the shared issue poolpilot-cloud#27 authenticated tunnel gate every
-	// controller's ctrl-<GUID> proxy forwards to instead of the
-	// controller itself. Nil disables the gate — the ctrl-<GUID> proxy's
-	// LocalAddr falls back to the controller's raw LAN address, ungated
-	// (kept only for callers/tests that don't care about ctrlfilter; a real
-	// deployment always wires this in via main.go).
+	// CtrlFilter is the shared issue poolpilot-cloud#27 authenticated tunnel
+	// gate in front of every controller's web interface; the E2E listener
+	// mounts its handler for the "<guid>-e2e" hosts. Nil leaves its registry
+	// and session key unset (kept only for callers/tests that don't care
+	// about ctrlfilter; a real deployment always wires this in via main.go).
 	CtrlFilter *ctrlfilter.Server
 	// CloudBaseURL is where /v1/pair redeems codes (CLOUD_BASE_URL).
 	CloudBaseURL string
@@ -445,8 +448,8 @@ func (s *Server) serveTLS(ctx context.Context, ln net.Listener) error {
 }
 
 // RunTunnelListener serves the tunnel-facing plain-HTTP listener (loopback;
-// nginx terminates public TLS and frp carries the hop) until ctx is done. A
-// no-op when TunnelAddr is empty.
+// the legacy api proxy's target — none forwards here since
+// poolpilot-relay#83) until ctx is done. A no-op when TunnelAddr is empty.
 func (s *Server) RunTunnelListener(ctx context.Context) error {
 	if s.TunnelAddr == "" {
 		<-ctx.Done()
@@ -1557,8 +1560,11 @@ func (s *Server) ensureCtrlSessionKey() (ctrlfilter.SessionKey, error) {
 // holds the bearer this route requires.
 //
 // The LAN path needs no session at all — ctrlfilter sits exclusively in the
-// tunnel — so a controller with no RemoteURL is a 409 rather than a 404: it
-// exists, there is simply no remote surface to open.
+// tunnel — so a controller the relay serves no end-to-end host for (see
+// servedE2EURLs) is a 409 rather than a 404: it exists, there is simply no
+// remote surface to open. Since poolpilot-relay#83 that host is the only
+// remote surface: the legacy RemoteURL host is no longer served, so no
+// session_url is minted on it and session_url stays empty.
 func (s *Server) webSessionHandler(w http.ResponseWriter, r *http.Request) {
 	guid := r.PathValue("guid")
 	if guid == "" {
@@ -1570,7 +1576,8 @@ func (s *Server) webSessionHandler(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "unknown_controller")
 		return
 	}
-	if ctrl.RemoteURL == "" {
+	e2eCtrl, _ := s.servedE2EURLs(ctrl)
+	if e2eCtrl == "" {
 		writeErr(w, http.StatusConflict, "remote_access_not_configured")
 		return
 	}
@@ -1595,20 +1602,15 @@ func (s *Server) webSessionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	// The token is base64url plus "." separators — every byte is already safe in
 	// a query value, so no escaping is needed or wanted (escaping would change
-	// the bytes the filter verifies).
-	//
-	// The same token also goes into SessionE2EURL, on the controller's
-	// end-to-end host, when it has one (poolpilot-relay#80): the token binds
-	// the guid and not a hostname, and ctrlfilter maps "<guid>-e2e" onto the
-	// same guid, so it redeems on either host — once (the nonce is burned).
-	resp := wire.WebSessionResponse{
-		SessionURL: ctrl.RemoteURL + ctrlfilter.SessionPath + "?t=" + token,
-		ExpiresIn:  int(ctrlfilter.TokenTTL / time.Second),
-	}
-	if e2eCtrl, _ := s.servedE2EURLs(ctrl); e2eCtrl != "" {
-		resp.SessionE2EURL = e2eCtrl + ctrlfilter.SessionPath + "?t=" + token
-	}
-	writeJSON(w, http.StatusOK, resp)
+	// the bytes the filter verifies). It goes into SessionE2EURL, on the
+	// controller's end-to-end host (poolpilot-relay#80); ctrlfilter maps
+	// "<guid>-e2e" onto the guid the token binds. SessionURL stays "" but
+	// stays on the wire: app 1.2 requires the session_url key (see
+	// wire.WebSessionResponse).
+	writeJSON(w, http.StatusOK, wire.WebSessionResponse{
+		SessionE2EURL: e2eCtrl + ctrlfilter.SessionPath + "?t=" + token,
+		ExpiresIn:     int(ctrlfilter.TokenTTL / time.Second),
+	})
 }
 
 // rotateControllerHandler serves POST /v1/controllers/{guid}/rotate (issue
@@ -1621,8 +1623,8 @@ func (s *Server) webSessionHandler(w http.ResponseWriter, r *http.Request) {
 // succeeds the swap is local bookkeeping — every other field (lan_address,
 // use_https, preset, label, creds, alert rules/state) is preserved in place,
 // only the GUID/RemoteURL/RemoteAPIURL move to the new identity — followed by
-// a tunnel reconfigure so the frpc proxy set swaps ctrl-<old>/api-<old> for
-// ctrl-<new>/api-<new>. A reconfigure error (like putControllers/
+// a tunnel reconfigure so the frpc proxy set swaps e2e-<old>/e2eapi-<old> for
+// e2e-<new>/e2eapi-<new> (once the new guid's E2E URLs are known). A reconfigure error (like putControllers/
 // deleteControllerHandler) is logged but does not fail the request: the
 // rotation is already accepted and persisted, and the next state-changing
 // request (or a restart) reconciles the tunnel.
@@ -1726,7 +1728,7 @@ func (s *Server) rotateControllerHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Respond BEFORE reconfiguring the tunnel. When this request arrived OVER the
-	// tunnel (via api-<old>), reconfigureTunnel removes the api-<old> proxy and
+	// tunnel (via e2eapi-<old>), reconfigureTunnel removes the e2eapi-<old> proxy and
 	// frp tears down this loopback connection — so flush the 200 (carrying the
 	// NEW url) to the app FIRST, then reconfigure. Reconfigure is non-fatal and
 	// reconciled by the next request/restart anyway, so ordering it last is safe;
@@ -2098,7 +2100,7 @@ func (s *Server) reconfigureTunnel() error {
 	if s.afterTunnelStateRead != nil {
 		s.afterTunnelStateRead() // test seam: widen the read→apply window
 	}
-	return ReconfigureTunnel(s.Tunnel, st, s.TunnelAddr, s.E2EAddr, s.CtrlFilter)
+	return ReconfigureTunnel(s.Tunnel, st, s.E2EAddr, s.CtrlFilter)
 }
 
 // ApplyTunnelState re-applies the tunnel from the current persisted state —
@@ -2166,8 +2168,7 @@ func materializeFrpsCA(caPEM string) (string, error) {
 }
 
 // ReconfigureTunnel maps persisted state onto a tunnel config — one ProxySpec
-// per registered controller. apiLocalAddr is the loopback listener the LAN-API
-// proxies forward to; empty disables them. Address-less phantom slots and
+// per registered controller. Address-less phantom slots and
 // controllers not yet registered with the cloud (no GUID) are skipped. A relay
 // whose tunnel is parked (state.State.TunnelParked, poolpilot-cloud#242) or
 // that holds no cloud credentials gets ZERO proxies, which runs no frp service
@@ -2178,26 +2179,22 @@ func materializeFrpsCA(caPEM string) (string, error) {
 // materializeFrpsCA and populates tunnel.Config's FrpsCAFile/FrpsServerName —
 // centralizing the CA-pin so both entry points pin identically.
 //
-// filter is the issue poolpilot-cloud#27 authenticated tunnel gate. When non-nil
-// (and its Addr is set), every ctrl-<GUID> proxy's LocalAddr is redirected to
-// filter.Addr instead of the controller's own address — mirroring how every
-// api-<GUID> proxy already shares one loopback listener (apiLocalAddr) — and
-// filter's GUID -> Target registry is (re)populated in the same pass with
-// each controller's real base URL, so the shared listener can authenticate
-// and reverse-proxy to the right
-// backend per request (demuxed by the tunneled request's Host header — see
-// package ctrlfilter). filter == nil (or an empty Addr) falls back to the
-// pre-poolpilot-cloud#27 passthrough behaviour: LocalAddr is the controller's raw address,
-// unfiltered — kept only for callers/tests that don't wire ctrlfilter in; a
-// real deployment always passes one (see main.go).
+// filter is the issue poolpilot-cloud#27 authenticated tunnel gate. When
+// non-nil, its GUID -> Target registry is (re)populated in the same pass with
+// each controller's real base URL, so the gate the E2E listener mounts can
+// authenticate and reverse-proxy to the right backend per request (demuxed by
+// the request's Host label — see package ctrlfilter), and the web-session key
+// is installed. A real deployment always passes one (see main.go); nil is for
+// tests that don't wire ctrlfilter in.
 //
 // e2eLocalAddr is the loopback E2E TLS listener (poolpilot-relay#80); empty
-// disables the E2E https proxies. Each controller's E2E labels come from its
-// cloud-delivered URLs (see e2eLabels) — never derived here.
-func ReconfigureTunnel(t tunnel.Tunnel, st state.State, apiLocalAddr, e2eLocalAddr string, filter *ctrlfilter.Server) error {
+// disables the E2E https proxies — since poolpilot-relay#83 the only proxies
+// there are. Each controller's E2E labels come from its cloud-delivered URLs
+// (see e2eLabels) — never derived here.
+func ReconfigureTunnel(t tunnel.Tunnel, st state.State, e2eLocalAddr string, filter *ctrlfilter.Server) error {
 	var specs []tunnel.ProxySpec
 	var targets map[string]ctrlfilter.Target
-	filterEnabled := filter != nil && filter.Addr != ""
+	filterEnabled := filter != nil
 	if filterEnabled {
 		targets = make(map[string]ctrlfilter.Target, len(st.Controllers))
 	}
@@ -2208,23 +2205,20 @@ func ReconfigureTunnel(t tunnel.Tunnel, st state.State, apiLocalAddr, e2eLocalAd
 		}
 		// NormalizeLanAddress is the single source of truth for LAN address
 		// canonicalization (same as putControllers/dedup): it guarantees a
-		// host:port / [v6]:port form frp's SplitHostPort accepts. An ad-hoc
+		// host:port / [v6]:port form for the filter's target URL. An ad-hoc
 		// strings.Contains(":") port-default let a bracketed portless "[::1]" or a
-		// scheme-carrying "http://host/" through unported, and translate then
-		// rejected the WHOLE config — one bad address wedged every controller.
-		localAddr := state.NormalizeLanAddress(ctrl.LanAddress, ctrl.UseHTTPS)
-		proxyLocalAddr := localAddr
+		// scheme-carrying "http://host/" through unported.
 		if filterEnabled {
 			scheme := "http"
 			if ctrl.UseHTTPS {
 				scheme = "https"
 			}
+			localAddr := state.NormalizeLanAddress(ctrl.LanAddress, ctrl.UseHTTPS)
 			targets[ctrl.GUID] = ctrlfilter.Target{BaseURL: scheme + "://" + localAddr}
-			proxyLocalAddr = filter.Addr
 		}
 		ctrlLabel, apiLabel := e2eLabels(ctrl)
 		specs = append(specs, tunnel.ProxySpec{
-			GUID: ctrl.GUID, LocalAddr: proxyLocalAddr,
+			GUID:         ctrl.GUID,
 			E2ECtrlLabel: ctrlLabel, E2EAPILabel: apiLabel,
 		})
 	}
@@ -2243,10 +2237,7 @@ func ReconfigureTunnel(t tunnel.Tunnel, st state.State, apiLocalAddr, e2eLocalAd
 	if authToken == "" {
 		authToken = os.Getenv("FRPS_AUTH_TOKEN")
 	}
-	// frp needs a host:port; a host-less bind like ":8480" becomes loopback.
-	if apiLocalAddr != "" && strings.HasPrefix(apiLocalAddr, ":") {
-		apiLocalAddr = "127.0.0.1" + apiLocalAddr
-	}
+	// frp needs a host:port; a host-less bind like ":8482" becomes loopback.
 	if e2eLocalAddr != "" && strings.HasPrefix(e2eLocalAddr, ":") {
 		e2eLocalAddr = "127.0.0.1" + e2eLocalAddr
 	}
@@ -2275,7 +2266,6 @@ func ReconfigureTunnel(t tunnel.Tunnel, st state.State, apiLocalAddr, e2eLocalAd
 		RelayToken:     st.Cloud.FrpcToken,
 		Controllers:    specs,
 		SubdomainHost:  st.Cloud.FRPS.SubdomainHost,
-		APILocalAddr:   apiLocalAddr,
 		E2ELocalAddr:   e2eLocalAddr,
 		FrpsCAFile:     caFile,
 		FrpsServerName: st.Cloud.FRPS.ServerName,

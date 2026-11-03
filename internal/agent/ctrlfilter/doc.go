@@ -1,7 +1,8 @@
 // Package ctrlfilter is the relay's tunnel-facing gate in front of a pool
-// controller. It terminates the frp ctrl-<GUID> proxy: the proxy's LocalAddr
-// points at a Server (a local net/http server, not the controller itself),
-// which resolves the controller from the Host header, requires a paired-app
+// controller. Remote requests for a controller reach a Server (through the
+// E2E listener, which mounts its Handler — before poolpilot-relay#83 also
+// through the legacy ctrl-<GUID> proxy), never the controller itself; it
+// resolves the controller from the Host header, requires a paired-app
 // credential (issue poolpilot-cloud#27 — a leaked tunnel GUID alone is not enough), strips
 // the relay's own credentials, and reverse-proxies the request to the
 // controller's real LAN address.
