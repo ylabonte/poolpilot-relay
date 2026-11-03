@@ -39,7 +39,7 @@ func resolveLanListen(haOptionsPath string, reserved ...int) string {
 	}
 	for _, r := range reserved {
 		if p == r {
-			slog.Warn("ignoring Home Assistant lan_port that collides with an internal relay port; keeping the default",
+			slog.Warn("ignoring Home Assistant lan_port on a port the relay reserves; keeping the default",
 				"lan_port", p, "reserved_port", r)
 			return lanapi.Listen()
 		}

@@ -451,10 +451,10 @@ func bootHasRegisteredController(st state.State) bool {
 // the agent no longer binds: the tunneled LAN API (8480) and the controller
 // filter (8481), which only the legacy http frp proxies forwarded to. Before
 // they were removed, a Home Assistant lan_port on either was refused and the
-// relay kept the default 8443. They stay reserved for now so that an upgrade
-// does not suddenly accept such a stale option, move the LAN API off 8443 and
-// strand the phones paired on it without their direct LAN link. Drop them
-// once that grace period is over.
+// relay kept the default 8443. They stay reserved for good: a stale lan_port
+// of 8480/8481 can sit in a Home Assistant options file indefinitely, and
+// accepting it on any later upgrade would move the LAN API off 8443 and strand
+// the phones paired on it without their direct LAN link.
 var retiredLoopbackPorts = []int{8480, 8481}
 
 // reservedLoopbackPorts is every port a Home Assistant lan_port must not

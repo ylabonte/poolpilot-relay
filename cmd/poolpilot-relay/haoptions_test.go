@@ -276,8 +276,8 @@ func TestRetiredListenerEnvIgnored(t *testing.T) {
 	t.Setenv("E2E_LISTEN", "")
 	t.Setenv("TUNNEL_LISTEN", "127.0.0.1:9480")
 	t.Setenv("CTRL_FILTER_LISTEN", "127.0.0.1:9481")
-	_ = reservedLoopbackPorts()
-	if got := reservedLoopbackPorts(); !slices.Equal(got, []int{8480, 8481, 8482}) {
+	got := reservedLoopbackPorts()
+	if !slices.Equal(got, []int{8480, 8481, 8482}) {
 		t.Errorf("reserved = %v, want [8480 8481 8482]", got)
 	}
 }
