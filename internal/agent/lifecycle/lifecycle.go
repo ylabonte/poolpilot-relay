@@ -305,7 +305,7 @@ func (w *Watcher) ask(ctx context.Context, st state.State, now time.Time) {
 		// tunnel left with a stale config by any path heals itself here
 		// instead of only being logged.
 		if w.o.TunnelState() == "disabled" {
-			slog.Info("relay lifecycle: control plane reports the relay active; no end-to-end proxy to serve yet (E2E URLs not delivered), re-applying the tunnel config")
+			slog.Info("relay lifecycle: control plane reports the relay active; no end-to-end proxy to serve yet (no usable E2E address pair), re-applying the tunnel config")
 		} else {
 			slog.Info("relay lifecycle: control plane reports the relay active; tunnel still down, re-applying its config")
 		}

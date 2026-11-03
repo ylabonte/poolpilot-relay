@@ -56,10 +56,12 @@ mDNS-Logs** auf dem Konfigurations-Tab der Home-Assistant-App.
 
 Kann sich der Fernzugriffs-Tunnel des Relays ein paar Minuten lang nicht
 verbinden, fragt das Relay die PoolPilot-Cloud nach dem Grund und handelt
-danach. Dasselbe tut es, höchstens etwa einmal pro Stunde, solange die Cloud
-dem Relay seine Ende-zu-Ende-Fernzugriffsadressen noch nicht gegeben hat:
-Der Fernzugriff ist dann nicht verfügbar, und die Logzeile sagt *„no
-end-to-end proxy to serve yet“*. Zu tun ist dabei nichts. Jede Änderung steht
+danach. Dasselbe tut es, solange es keine Ende-zu-Ende-Fernzugriffsadresse
+hat, die es bedienen kann (die Cloud hat noch keine geliefert, oder der
+Ende-zu-Ende-Zugang ist abgeschaltet): in der ersten Stunde nach einem Start
+ein paar Mal, danach etwa einmal pro Stunde. Der Fernzugriff ist dann nicht
+verfügbar, und die Logzeile sagt *„no end-to-end proxy to serve yet“*. Zu tun
+ist dabei nichts. Jede Änderung steht
 als eine `relay lifecycle:`-Zeile im Log:
 
 - **„parking the tunnel; credentials kept“ (`state=suspended`)**: Das Abo
