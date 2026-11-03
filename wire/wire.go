@@ -18,12 +18,13 @@ const APISubdomainSuffix = "-api"
 
 // CtrlProxyPrefix names a controller's cloud-terminated http frp proxy:
 // "ctrl-<GUID>". Relays up to v0.12.x register it; later relays register only
-// the E2E proxies below. The cloud's internal/frpplugin still reads it when it
-// authorizes a NewProxy/subdomain against a controller row.
+// the E2E proxies below. The cloud's internal/frpplugin still reads it to
+// check an http NewProxy's name (expectedProxyName).
 //
 // Deprecated: no current relay registers this proxy. It is kept for the cloud,
 // which still accepts http proxies from relays up to v0.12.x in the field.
-// Remove it only after the cloud refuses http proxies.
+// Remove it only once the cloud no longer references it, i.e. after it refuses
+// http proxies and drops that code (poolpilot-cloud#293).
 const CtrlProxyPrefix = "ctrl-"
 
 // E2ESubdomainSuffix and APIE2ESubdomainSuffix build the end-to-end encrypted
@@ -275,9 +276,11 @@ type ControllerListResponse struct {
 //
 // SessionE2EURL is that bootstrap on the controller's end-to-end encrypted
 // host (RemoteE2EURL + "/__session?t=<token>"). SessionURL is the same
-// bootstrap on the cloud-terminated RemoteURL host. Relays up to v0.12.x fill
-// both. Current relays serve no RemoteURL host: they leave SessionURL empty,
-// and answer 409 remote_access_not_configured for a controller without an E2E
+// bootstrap on the cloud-terminated RemoteURL host. Relays up to v0.12.x
+// always fill SessionURL, and fill SessionE2EURL too when the controller has
+// an E2E host (v0.11.0 on); they answer 409 remote_access_not_configured for a
+// controller without a RemoteURL. Current relays serve no RemoteURL host: they
+// leave SessionURL empty, and answer that 409 for a controller without an E2E
 // host. The token binds the controller, not a hostname, so it redeems on
 // either host — but only once.
 type WebSessionResponse struct {

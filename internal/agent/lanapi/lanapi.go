@@ -2142,8 +2142,9 @@ func materializeFrpsCA(caPEM string) (string, error) {
 // tests that don't wire ctrlfilter in.
 //
 // e2eLocalAddr is the loopback E2E TLS listener (poolpilot-relay#80); empty
-// disables the E2E https proxies — the only proxies there are. Each controller's E2E labels come from its cloud-delivered URLs
-// (see e2eLabels) — never derived here.
+// disables the E2E https proxies — the only proxies there are. Each
+// controller's E2E labels come from its cloud-delivered URLs (see e2eLabels)
+// — never derived here.
 func ReconfigureTunnel(t tunnel.Tunnel, st state.State, e2eLocalAddr string, filter *ctrlfilter.Server) error {
 	var specs []tunnel.ProxySpec
 	var targets map[string]ctrlfilter.Target

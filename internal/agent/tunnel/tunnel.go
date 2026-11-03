@@ -485,8 +485,9 @@ func (t *frpTunnel) proxyState(name string) Status {
 //	                          (poolpilot-cloud#31 pinning; set only when FrpsCAFile != "")
 //	[[proxies]] https       → HTTPSProxyConfig{name, subdomain, localIP, localPort}
 //
-// The template may still carry an http "ctrl-<GUID>" proxy; translate emits
-// no http proxy, so that entry has no counterpart here.
+// The template still carries an http "ctrl-<GUID>" proxy
+// (poolpilot-cloud#293); translate emits no http proxy, so that entry has no
+// counterpart here.
 //
 // For each controller that carries both cloud-delivered E2E labels (and
 // E2ELocalAddr is set — see hasE2E) it emits "e2e-<GUID>" (subdomain
