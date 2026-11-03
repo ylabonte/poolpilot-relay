@@ -13,7 +13,7 @@ notes live in the relay's GitHub Releases:
   older, cloud-terminated remote connection. Remote access therefore needs
   **PoolPilot app 1.2 or later**; older app versions keep working at home on
   your local network, but no longer reach the Relay remotely.
-- Nothing to change in the app's **Configuration** tab.
+- Nothing to change on this app's **Configuration** tab in Home Assistant.
 
 ## 0.6.1
 
