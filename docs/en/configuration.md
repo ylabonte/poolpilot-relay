@@ -35,8 +35,8 @@ CLOUD_BASE_URL=https://api.poolpilot.eu
 # LAN_LISTEN=:8443
 # TUNNEL_LISTEN=127.0.0.1:8480
 # POLL_INTERVAL=60s
-# Self-update runs automatically at night; manage it from the PoolPilot app, or
-# set UPDATE_DISABLED=1 here to opt this device out entirely.
+# Self-update runs automatically at night. To update right away, re-run the
+# installer; set UPDATE_DISABLED=1 here to opt this device out entirely.
 # UPDATE_DISABLED=1
 ```
 

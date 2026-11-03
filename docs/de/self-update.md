@@ -43,7 +43,8 @@ nur Versionen mit gültiger Signatur.
 
 <!-- Die App-Formulierung (Knopf „Jetzt aktualisieren“ und Schalter für
      automatische Updates auf der Relay-Seite, nur Eigentümer) wiederherstellen,
-     sobald poolpilot-app#440 sie ausliefert. -->
+     sobald poolpilot-app#440 sie ausliefert, auch im Konfig-Kommentar, den
+     deploy/relay/install.sh schreibt und configuration.md zitiert. -->
 > **Kommt in die App:** ein Knopf **Jetzt aktualisieren** und ein
 > **Ein/Aus-Schalter für automatische Updates** auf der Seite des Relays in der
 > PoolPilot-App, für den Haushalts-Eigentümer. Die App hat beides noch nicht;
@@ -69,9 +70,9 @@ und starte es neu:
 sudo systemctl restart poolpilot-relay
 ```
 
-Mit `UPDATE_DISABLED=1` prüft das Relay **nicht** auf Updates und installiert
-sie **nicht** — es ist ein harter Aus-Schalter. Um ein solches Gerät später zu
-aktualisieren, führe den Installer erneut aus:
+Mit `UPDATE_DISABLED=1` prüft das Relay **nicht** von selbst auf Updates und
+installiert sie **nicht** — es ist ein harter Aus-Schalter. Um ein solches
+Gerät später zu aktualisieren, führe den Installer erneut aus:
 
 ```bash
 curl -fsSL https://get.poolpilot.eu/install.sh | bash

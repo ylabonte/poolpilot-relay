@@ -40,7 +40,9 @@ that carry a valid signature.
   that is already up to date.
 
 <!-- Restore the in-app wording (an "Update now" button and an automatic-updates
-     toggle on the Relay page, owner only) once poolpilot-app#440 ships them. -->
+     toggle on the Relay page, owner only) once poolpilot-app#440 ships them, also
+     in the config comment written by deploy/relay/install.sh and quoted in
+     configuration.md. -->
 > **Coming to the app:** an **Update now** button and an **automatic updates**
 > on/off toggle on the Relay's page in the PoolPilot app, for the household
 > owner. The app doesn't have them yet; until it does, use the installer above
@@ -66,9 +68,9 @@ then restart it:
 sudo systemctl restart poolpilot-relay
 ```
 
-With `UPDATE_DISABLED=1` the Relay does **not** check for updates and does
-**not** install them — it's a hard off switch. To bring such a device up to date
-later, re‑run the installer:
+With `UPDATE_DISABLED=1` the Relay does **not** check for updates on its own
+and does **not** install them — it's a hard off switch. To bring such a
+device up to date later, re‑run the installer:
 
 ```bash
 curl -fsSL https://get.poolpilot.eu/install.sh | bash
