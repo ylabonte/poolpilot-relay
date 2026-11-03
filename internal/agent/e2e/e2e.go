@@ -54,7 +54,7 @@ func Listen() string {
 // Server is the E2E TLS listener.
 type Server struct {
 	// Addr is the bind (Listen()). Empty disables the listener: Run then just
-	// blocks on ctx, like the other loopback listeners.
+	// blocks on ctx.
 	Addr string
 	// Cert is the relay's LAN certificate (state.TLS) — the pinned identity.
 	Cert tls.Certificate

@@ -1,8 +1,6 @@
 package ctrlfilter
 
 import (
-	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -98,15 +96,6 @@ func TestGuidFromHost(t *testing.T) {
 		if got := guidFromHost(host); got != want {
 			t.Errorf("guidFromHost(%q) = %q, want %q", host, got, want)
 		}
-	}
-}
-
-func TestRunNoopWhenAddrEmpty(t *testing.T) {
-	srv := &Server{}
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	if err := srv.Run(ctx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Run with empty Addr = %v, want context.DeadlineExceeded", err)
 	}
 }
 

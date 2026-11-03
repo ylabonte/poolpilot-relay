@@ -21,11 +21,11 @@ import (
 // variables, and the FROM-scratch container image has no shell to translate
 // them — so the agent reads the one setting the app exposes, `lan_port`, itself.
 //
-// reserved lists ports the agent already binds internally (the loopback
-// listeners: tunneled LAN API, ctrl-filter, E2E); an `lan_port` equal to one
-// of them is refused —
-// binding :<port> would collide with the loopback listener and recreate the
-// very "address already in use" this option exists to escape.
+// reserved lists ports a `lan_port` must not take (see reservedLoopbackPorts):
+// the E2E loopback listener, whose port binding :<port> would collide with and
+// recreate the very "address already in use" this option exists to escape,
+// plus the retired loopback ports kept reserved so an upgrade does not move a
+// paired relay off 8443. An `lan_port` equal to one of them is refused.
 //
 // It never mutates the environment, so a factory-reset in-process restart
 // (runLoop calling run again) re-resolves cleanly from the current env + file.
