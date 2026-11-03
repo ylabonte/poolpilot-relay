@@ -277,6 +277,9 @@ type ControllerListResponse struct {
 // Older relays fill both; the token binds the controller, not a hostname, so
 // it redeems on either host — but only once.
 type WebSessionResponse struct {
+	// SessionURL must never become omitempty: app 1.2 decodes it as a
+	// required field (RelayWebSessionResponse.sessionUrl has no default), so
+	// a response without the key fails to decode — the relay sends "".
 	SessionURL    string `json:"session_url"`
 	SessionE2EURL string `json:"session_e2e_url,omitempty"`
 	ExpiresIn     int    `json:"expires_in"`

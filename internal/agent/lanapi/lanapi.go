@@ -1604,7 +1604,9 @@ func (s *Server) webSessionHandler(w http.ResponseWriter, r *http.Request) {
 	// a query value, so no escaping is needed or wanted (escaping would change
 	// the bytes the filter verifies). It goes into SessionE2EURL, on the
 	// controller's end-to-end host (poolpilot-relay#80); ctrlfilter maps
-	// "<guid>-e2e" onto the guid the token binds.
+	// "<guid>-e2e" onto the guid the token binds. SessionURL stays "" but
+	// stays on the wire: app 1.2 requires the session_url key (see
+	// wire.WebSessionResponse).
 	writeJSON(w, http.StatusOK, wire.WebSessionResponse{
 		SessionE2EURL: e2eCtrl + ctrlfilter.SessionPath + "?t=" + token,
 		ExpiresIn:     int(ctrlfilter.TokenTTL / time.Second),

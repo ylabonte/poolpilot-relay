@@ -985,6 +985,11 @@ func TestWebSessionMintsABootstrapURL(t *testing.T) {
 	if got.SessionURL != "" {
 		t.Fatalf("session_url = %q, want empty: the legacy host is no longer served", got.SessionURL)
 	}
+	// Empty, but present: app 1.2 decodes session_url as a required key, so
+	// dropping it (omitempty) would break every web session there.
+	if !strings.Contains(string(raw), `"session_url":""`) {
+		t.Fatalf("session_url key missing from the response: %s", raw)
+	}
 	if got.ExpiresIn <= 0 {
 		t.Fatalf("expires_in = %d, want > 0", got.ExpiresIn)
 	}
