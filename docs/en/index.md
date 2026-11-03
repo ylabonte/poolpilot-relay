@@ -33,8 +33,8 @@ your local network and bridges it to the PoolPilot apps:
 
 - **at home** over your Wi‑Fi, and
 - **when you're away** through a tunnel via the PoolPilot cloud — end-to-end
-  encrypted between your phone and your Relay from app version 1.2 (see
-  [Security & privacy](security.md#the-tunnel-in-plain-words)).
+  encrypted between your phone and your Relay; this needs app version 1.2 or
+  later (see [Security & privacy](security.md#the-tunnel-in-plain-words)).
 
 Once it's installed and paired, the Relay looks after itself: it keeps your
 controller connected, sends the alerts you configured in the app, and
