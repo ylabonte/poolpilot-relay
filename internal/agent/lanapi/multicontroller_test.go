@@ -3,7 +3,6 @@ package lanapi
 import (
 	"context"
 	"encoding/json"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -558,21 +557,17 @@ func TestReconfigureTunnelMultipleControllers(t *testing.T) {
 			{GUID: "gp", LanAddress: ""},                            // phantom → skip
 		},
 	}
-	if err := ReconfigureTunnel(ft, st, "127.0.0.1:8480", "", nil); err != nil {
+	if err := ReconfigureTunnel(ft, st, "", nil); err != nil {
 		t.Fatalf("reconfigure: %v", err)
 	}
 	cfg := ft.last()
 	if len(cfg.Controllers) != 2 {
 		t.Fatalf("want 2 proxy specs, got %d: %+v", len(cfg.Controllers), cfg.Controllers)
 	}
-	want := map[string]string{"g1": "192.168.2.3:80", "g2": "192.168.2.9:443"}
-	for _, spec := range cfg.Controllers {
-		if want[spec.GUID] != spec.LocalAddr {
-			t.Errorf("spec %q local = %q, want %q", spec.GUID, spec.LocalAddr, want[spec.GUID])
+	for i, guid := range []string{"g1", "g2"} {
+		if cfg.Controllers[i].GUID != guid {
+			t.Errorf("spec %d guid = %q, want %q", i, cfg.Controllers[i].GUID, guid)
 		}
-	}
-	if cfg.APILocalAddr != "127.0.0.1:8480" {
-		t.Errorf("api local addr = %q", cfg.APILocalAddr)
 	}
 }
 
@@ -594,7 +589,7 @@ func TestReconfigureTunnelMaterializesFrpsCA(t *testing.T) {
 		}},
 		Controllers: []state.Controller{{GUID: "g1", LanAddress: "192.168.2.3"}},
 	}
-	if err := ReconfigureTunnel(ft, st, "127.0.0.1:8480", "", nil); err != nil {
+	if err := ReconfigureTunnel(ft, st, "", nil); err != nil {
 		t.Fatalf("reconfigure: %v", err)
 	}
 	cfg := ft.last()
@@ -626,7 +621,7 @@ func TestReconfigureTunnelNoCAPEMLeavesFrpsCAFileEmpty(t *testing.T) {
 		Cloud:       state.Cloud{FrpcToken: "relay-tok", FRPS: state.FRPS{ServerAddr: "frps", ServerPort: 7000, AuthToken: "shared"}},
 		Controllers: []state.Controller{{GUID: "g1", LanAddress: "192.168.2.3"}},
 	}
-	if err := ReconfigureTunnel(ft, st, "127.0.0.1:8480", "", nil); err != nil {
+	if err := ReconfigureTunnel(ft, st, "", nil); err != nil {
 		t.Fatalf("reconfigure: %v", err)
 	}
 	cfg := ft.last()
@@ -658,7 +653,7 @@ func TestReconfigureTunnelFailsClosedWhenCAMaterializeErrors(t *testing.T) {
 		}},
 		Controllers: []state.Controller{{GUID: "g1", LanAddress: "192.168.2.3"}},
 	}
-	err := ReconfigureTunnel(ft, st, "127.0.0.1:8480", "", nil)
+	err := ReconfigureTunnel(ft, st, "", nil)
 	if err == nil {
 		t.Fatal("ReconfigureTunnel returned nil error; want a fail-closed error when CA materialization fails")
 	}
@@ -669,15 +664,15 @@ func TestReconfigureTunnelFailsClosedWhenCAMaterializeErrors(t *testing.T) {
 	}
 }
 
-// When a ctrlfilter.Server is supplied, every ctrl-<GUID> proxy's LocalAddr
-// is redirected to the filter's shared listener (not the controller's own
-// address) and the filter's GUID -> Target registry is populated with each
-// controller's real base URL (issue poolpilot-cloud#27's authenticated tunnel gate) — so the
-// filter can authenticate and dial the right backend once the tunneled
-// request reaches it.
-func TestReconfigureTunnelWithCtrlFilterRewiresLocalAddr(t *testing.T) {
+// When a ctrlfilter.Server is supplied, its GUID -> Target registry is
+// populated with each controller's real base URL (issue poolpilot-cloud#27's
+// authenticated tunnel gate, which the E2E listener mounts) — so the filter
+// can authenticate and dial the right backend once a remote request reaches
+// it. The filter needs no listen address for that: no proxy forwards to its
+// own listener any more (poolpilot-relay#83).
+func TestReconfigureTunnelPopulatesCtrlFilterTargets(t *testing.T) {
 	ft := &fakeTunnel{}
-	filter := &ctrlfilter.Server{Addr: "127.0.0.1:9999"}
+	filter := &ctrlfilter.Server{}
 	st := state.State{
 		Cloud: state.Cloud{FrpcToken: "relay-tok", FRPS: state.FRPS{ServerAddr: "frps", ServerPort: 7000, AuthToken: "shared"}},
 		Controllers: []state.Controller{
@@ -685,17 +680,11 @@ func TestReconfigureTunnelWithCtrlFilterRewiresLocalAddr(t *testing.T) {
 			{GUID: "g2", Preset: "violet", LanAddress: "192.168.2.9", UseHTTPS: true},
 		},
 	}
-	if err := ReconfigureTunnel(ft, st, "127.0.0.1:8480", "", filter); err != nil {
+	if err := ReconfigureTunnel(ft, st, "", filter); err != nil {
 		t.Fatalf("reconfigure: %v", err)
 	}
-	cfg := ft.last()
-	if len(cfg.Controllers) != 2 {
+	if cfg := ft.last(); len(cfg.Controllers) != 2 {
 		t.Fatalf("want 2 proxy specs, got %d: %+v", len(cfg.Controllers), cfg.Controllers)
-	}
-	for _, spec := range cfg.Controllers {
-		if spec.LocalAddr != filter.Addr {
-			t.Errorf("spec %q local = %q, want the filter's shared addr %q", spec.GUID, spec.LocalAddr, filter.Addr)
-		}
 	}
 
 	g1, ok := filter.Lookup("g1")
@@ -708,33 +697,12 @@ func TestReconfigureTunnelWithCtrlFilterRewiresLocalAddr(t *testing.T) {
 	}
 }
 
-// filter == nil (the default in every other test in this file) must fall
-// back to the pre-poolpilot-cloud#27 passthrough: LocalAddr is the controller's own
-// address, unfiltered. Locked in explicitly so a future change can't
-// silently make filtering mandatory for callers that don't opt in.
-func TestReconfigureTunnelNilFilterIsPassthrough(t *testing.T) {
-	ft := &fakeTunnel{}
-	st := state.State{
-		Cloud:       state.Cloud{FrpcToken: "relay-tok", FRPS: state.FRPS{ServerAddr: "frps", ServerPort: 7000, AuthToken: "shared"}},
-		Controllers: []state.Controller{{GUID: "g1", Preset: "procon-ip", LanAddress: "192.168.2.3"}},
-	}
-	if err := ReconfigureTunnel(ft, st, "127.0.0.1:8480", "", nil); err != nil {
-		t.Fatalf("reconfigure: %v", err)
-	}
-	cfg := ft.last()
-	if len(cfg.Controllers) != 1 || cfg.Controllers[0].LocalAddr != "192.168.2.3:80" {
-		t.Fatalf("nil filter must pass through the raw address: %+v", cfg.Controllers)
-	}
-}
-
 // A controller stored with a bracketed, portless IPv6 literal ("[::1]") or a
 // scheme-carrying address ("http://Host/") must still yield a host:port
-// LocalAddr. The old port-defaulting keyed on a bare strings.Contains(":")
-// check, so both forms slipped through UNPORTED — frp's SplitHostPort in
-// translate then failed and Configure rejected the WHOLE config, wedging every
-// controller's tunnel. NormalizeLanAddress is now the single source of truth,
-// so each spec is SplitHostPort-safe and the real tunnel accepts the config.
-func TestReconfigureTunnelNormalizesLocalAddr(t *testing.T) {
+// filter target. The old port-defaulting keyed on a bare strings.Contains(":")
+// check, so both forms slipped through UNPORTED. NormalizeLanAddress is now
+// the single source of truth, and the real tunnel accepts the config.
+func TestReconfigureTunnelNormalizesLanAddress(t *testing.T) {
 	st := state.State{
 		Cloud: state.Cloud{FrpcToken: "relay-tok", FRPS: state.FRPS{ServerAddr: "frps", ServerPort: 7000, AuthToken: "shared"}},
 		Controllers: []state.Controller{
@@ -743,28 +711,20 @@ func TestReconfigureTunnelNormalizesLocalAddr(t *testing.T) {
 		},
 	}
 
-	// The captured config carries a canonical host:port LocalAddr for each —
-	// SplitHostPort-safe, matching the NormalizeLanAddress output exactly.
-	ft := &fakeTunnel{}
-	if err := ReconfigureTunnel(ft, st, "127.0.0.1:8480", "", nil); err != nil {
+	filter := &ctrlfilter.Server{}
+	if err := ReconfigureTunnel(&fakeTunnel{}, st, "", filter); err != nil {
 		t.Fatalf("reconfigure: %v", err)
 	}
-	cfg := ft.last()
-	want := map[string]string{"v6": "[::1]:80", "sch": "host:80"}
-	for _, spec := range cfg.Controllers {
-		if want[spec.GUID] != spec.LocalAddr {
-			t.Errorf("spec %q local = %q, want %q", spec.GUID, spec.LocalAddr, want[spec.GUID])
-		}
-		if _, _, err := net.SplitHostPort(spec.LocalAddr); err != nil {
-			t.Errorf("spec %q local %q is not host:port: %v", spec.GUID, spec.LocalAddr, err)
+	want := map[string]string{"v6": "http://[::1]:80", "sch": "http://host:80"}
+	for guid, base := range want {
+		if got, ok := filter.Lookup(guid); !ok || got.BaseURL != base {
+			t.Errorf("filter target %q = %+v (ok=%v), want %q", guid, got, ok, base)
 		}
 	}
 
-	// End-to-end: the REAL tunnel's translate must ACCEPT the whole config. The
-	// old ad-hoc port-defaulting made translate fail on these addresses, so
-	// Configure rejected every controller — not just the malformed one.
-	if err := ReconfigureTunnel(tunnel.New(), st, "127.0.0.1:8480", "", nil); err != nil {
-		t.Fatalf("real tunnel rejected the whole config on a normalizable address: %v", err)
+	// End-to-end: the REAL tunnel's translate must ACCEPT the whole config.
+	if err := ReconfigureTunnel(tunnel.New(), st, "", nil); err != nil {
+		t.Fatalf("real tunnel rejected the config: %v", err)
 	}
 }
 
@@ -991,11 +951,22 @@ func (f *fakeTunnel) last() tunnel.Config {
 	return f.cfg
 }
 
+// withE2E serves the end-to-end plane on f: the E2E listener is configured and
+// the fake cloud hands out E2E URLs, so a controller registered afterwards has
+// the remote surface a web session opens (poolpilot-relay#83).
+func withE2E(f *fixture) {
+	f.srv.E2EAddr = testE2EAddr
+	f.e2eEnabled.Store(true)
+}
+
 // Issue poolpilot-cloud#27: POST /v1/controllers/{guid}/web-session mints the single-use
 // bootstrap token the app's in-app browser redeems for a ctrl-vhost session
-// cookie. The relay returns the COMPLETE URL — clients must not assemble it.
+// cookie. The relay returns the COMPLETE URL — clients must not assemble it —
+// on the end-to-end host only: the legacy host is no longer served, so
+// session_url stays empty (poolpilot-relay#83).
 func TestWebSessionMintsABootstrapURL(t *testing.T) {
 	f := newFixture(t)
+	withE2E(f)
 	token := f.pair(t)
 	g1 := putControllerOK(t, f, token, wire.ControllerConfig{Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: "Pool 1"})
 
@@ -1007,9 +978,12 @@ func TestWebSessionMintsABootstrapURL(t *testing.T) {
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatalf("decode %s: %v", raw, err)
 	}
-	wantPrefix := "https://" + g1 + ".remote.example" + ctrlfilter.SessionPath + "?t="
-	if !strings.HasPrefix(got.SessionURL, wantPrefix) {
-		t.Fatalf("session_url = %q, want prefix %q", got.SessionURL, wantPrefix)
+	wantPrefix := e2eURL(g1) + ctrlfilter.SessionPath + "?t="
+	if !strings.HasPrefix(got.SessionE2EURL, wantPrefix) {
+		t.Fatalf("session_e2e_url = %q, want prefix %q", got.SessionE2EURL, wantPrefix)
+	}
+	if got.SessionURL != "" {
+		t.Fatalf("session_url = %q, want empty: the legacy host is no longer served", got.SessionURL)
 	}
 	if got.ExpiresIn <= 0 {
 		t.Fatalf("expires_in = %d, want > 0", got.ExpiresIn)
@@ -1029,6 +1003,7 @@ func TestWebSessionMintsABootstrapURL(t *testing.T) {
 // wiring mistake would otherwise only show up in production.
 func TestWebSessionTokenIsRedeemableByTheFilter(t *testing.T) {
 	f := newFixture(t)
+	withE2E(f)
 	filter := &ctrlfilter.Server{}
 	f.srv.CtrlFilter = filter
 	token := f.pair(t)
@@ -1043,13 +1018,13 @@ func TestWebSessionTokenIsRedeemableByTheFilter(t *testing.T) {
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatalf("decode %s: %v", raw, err)
 	}
-	u, err := url.Parse(got.SessionURL)
+	u, err := url.Parse(got.SessionE2EURL)
 	if err != nil {
-		t.Fatalf("parse session_url %q: %v", got.SessionURL, err)
+		t.Fatalf("parse session_e2e_url %q: %v", got.SessionE2EURL, err)
 	}
 
 	req := httptest.NewRequest("GET", ctrlfilter.SessionPath+"?"+u.RawQuery, nil)
-	req.Host = g1 + ".remote.example"
+	req.Host = u.Host
 	rec := httptest.NewRecorder()
 	filter.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusFound {
@@ -1081,22 +1056,21 @@ func TestWebSessionUnknownControllerIs404(t *testing.T) {
 }
 
 // A controller with no remote surface is a 409, not a 404: it exists, there is
-// simply nothing to open remotely. The LAN path needs no session at all.
-func TestWebSessionWithoutRemoteURLIs409(t *testing.T) {
+// simply nothing to open remotely. The LAN path needs no session at all. Since
+// poolpilot-relay#83 the end-to-end host is the only remote surface, so a
+// controller that still has its legacy remote_url but no E2E URL is a 409 too
+// — no session_url is minted on a host the relay no longer serves.
+func TestWebSessionWithoutE2EURLIs409(t *testing.T) {
 	f := newFixture(t)
 	token := f.pair(t)
 	g1 := putControllerOK(t, f, token, wire.ControllerConfig{Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: "Pool 1"})
-	if err := f.store.Update(func(doc *state.State) {
-		if c := doc.ControllerByGUID(g1); c != nil {
-			c.RemoteURL = ""
-		}
-	}); err != nil {
-		t.Fatalf("clear remote_url: %v", err)
+	if c, _ := f.store.Get().FindController(g1); c.RemoteURL == "" || c.RemoteE2EURL != "" {
+		t.Fatalf("setup: want a legacy remote_url and no E2E URL: %+v", c)
 	}
 
 	resp, raw := f.do(t, "POST", "/v1/controllers/"+g1+"/web-session", token, nil)
-	if resp.StatusCode != http.StatusConflict {
-		t.Fatalf("got HTTP %d %s, want 409", resp.StatusCode, raw)
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(string(raw), "remote_access_not_configured") {
+		t.Fatalf("got HTTP %d %s, want 409 remote_access_not_configured", resp.StatusCode, raw)
 	}
 }
 
@@ -1105,6 +1079,7 @@ func TestWebSessionWithoutRemoteURLIs409(t *testing.T) {
 // and the tunnel leg already proves possession of the pairing bearer.
 func TestWebSessionIsAvailableOnTheTunnelLeg(t *testing.T) {
 	f := newFixture(t)
+	withE2E(f)
 	token := f.pair(t)
 	g1 := putControllerOK(t, f, token, wire.ControllerConfig{Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: "Pool 1"})
 	ts := f.tunnelServer(t)
@@ -1130,6 +1105,7 @@ func TestWebSessionIsAvailableOnTheTunnelLeg(t *testing.T) {
 // CookieTTL — the exact window the lost-phone revoke flow exists to close.
 func TestDeviceRevokeKillsLiveWebSessions(t *testing.T) {
 	f := newFixture(t)
+	withE2E(f)
 	filter := &ctrlfilter.Server{}
 	f.srv.CtrlFilter = filter
 	token, dev1 := f.pairFirst(t)
@@ -1145,12 +1121,12 @@ func TestDeviceRevokeKillsLiveWebSessions(t *testing.T) {
 	if err := json.Unmarshal(raw, &mint); err != nil {
 		t.Fatalf("decode %s: %v", raw, err)
 	}
-	u, err := url.Parse(mint.SessionURL)
+	u, err := url.Parse(mint.SessionE2EURL)
 	if err != nil {
-		t.Fatalf("parse session_url: %v", err)
+		t.Fatalf("parse session_e2e_url: %v", err)
 	}
 	boot := httptest.NewRequest("GET", ctrlfilter.SessionPath+"?"+u.RawQuery, nil)
-	boot.Host = g1 + ".remote.example"
+	boot.Host = u.Host
 	bootRec := httptest.NewRecorder()
 	filter.Handler().ServeHTTP(bootRec, boot)
 	if bootRec.Code != http.StatusFound {
@@ -1164,7 +1140,7 @@ func TestDeviceRevokeKillsLiveWebSessions(t *testing.T) {
 	// Precondition: that cookie opens the tunnel.
 	probe := func() int {
 		req := httptest.NewRequest("GET", "/GetState.csv", nil)
-		req.Host = g1 + ".remote.example"
+		req.Host = u.Host
 		for _, c := range cookies {
 			req.AddCookie(c)
 		}

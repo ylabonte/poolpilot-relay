@@ -10,6 +10,14 @@ import (
 	v1 "github.com/fatedier/frp/pkg/config/v1"
 )
 
+const testGUID = "0123456789abcdef0123456789abcdef"
+
+// e2eSpec is a controller carrying both cloud-delivered E2E labels, so it gets
+// its two https proxies (see hasE2E).
+func e2eSpec(guid string) ProxySpec {
+	return ProxySpec{GUID: guid, E2ECtrlLabel: guid + "-e2e", E2EAPILabel: guid + "-api-e2e"}
+}
+
 func testConfig() Config {
 	return Config{
 		ServerAddr:    "frps.example",
@@ -17,17 +25,15 @@ func testConfig() Config {
 		AuthToken:     "shared-token",
 		RelayToken:    "per-relay-token",
 		SubdomainHost: "remote.poolpilot.localhost",
-		Controllers: []ProxySpec{
-			{GUID: "0123456789abcdef0123456789abcdef", LocalAddr: "192.168.2.3:80"},
-		},
+		E2ELocalAddr:  "127.0.0.1:8482",
+		Controllers:   []ProxySpec{e2eSpec(testGUID)},
 	}
 }
 
-// The translation must mirror poolpilot-cloud's test/e2e/frpc.toml.tmpl
-// exactly — that file is the tunnel contract the frps plugin authenticates
-// against.
-func TestTranslateMatchesFrpcTemplate(t *testing.T) {
-	common, proxies, err := translate(testConfig())
+// The common section must mirror poolpilot-cloud's test/e2e/frpc.toml.tmpl —
+// that file is the tunnel contract the frps plugin authenticates against.
+func TestTranslateCommonMatchesFrpcTemplate(t *testing.T) {
+	common, _, err := translate(testConfig())
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -43,87 +49,46 @@ func TestTranslateMatchesFrpcTemplate(t *testing.T) {
 	if common.Metadatas["token"] != "per-relay-token" {
 		t.Errorf("metadatas.token = %q — the frps plugin authenticates the relay with this", common.Metadatas["token"])
 	}
-	// One controller, no APILocalAddr → exactly one (controller) proxy.
-	if len(proxies) != 1 {
-		t.Fatalf("want 1 proxy without APILocalAddr, got %d", len(proxies))
-	}
-	proxy := proxies[0].(*v1.HTTPProxyConfig)
-	if proxy.Name != "ctrl-0123456789abcdef0123456789abcdef" {
-		t.Errorf("proxy name = %q", proxy.Name)
-	}
-	if proxy.Type != "http" {
-		t.Errorf("proxy type = %q", proxy.Type)
-	}
-	if proxy.SubDomain != "0123456789abcdef0123456789abcdef" {
-		t.Errorf("subdomain = %q", proxy.SubDomain)
-	}
-	if proxy.LocalIP != "192.168.2.3" || proxy.LocalPort != 80 {
-		t.Errorf("backend = %s:%d", proxy.LocalIP, proxy.LocalPort)
-	}
 }
 
-// With APILocalAddr set, a second proxy "api-<GUID>" / subdomain "<GUID>-api"
-// must appear — the tunneled relay LAN API.
-func TestTranslateAddsAPIProxy(t *testing.T) {
+// Two controllers with E2E labels → four https proxies: an e2e-/e2eapi- pair
+// per controller, all forwarding to the SAME loopback E2E listener — and no
+// legacy http proxy at all (poolpilot-relay#83).
+func TestTranslateTwoControllersFourE2EProxies(t *testing.T) {
 	cfg := testConfig()
-	cfg.APILocalAddr = "127.0.0.1:8480"
-	_, proxies, err := translate(cfg)
-	if err != nil {
-		t.Fatalf("translate: %v", err)
-	}
-	if len(proxies) != 2 {
-		t.Fatalf("want 2 proxies with APILocalAddr, got %d", len(proxies))
-	}
-	api := proxies[1].(*v1.HTTPProxyConfig)
-	if api.Name != "api-0123456789abcdef0123456789abcdef" {
-		t.Errorf("api proxy name = %q", api.Name)
-	}
-	if api.SubDomain != "0123456789abcdef0123456789abcdef-api" {
-		t.Errorf("api subdomain = %q, want <guid>-api", api.SubDomain)
-	}
-	if api.LocalIP != "127.0.0.1" || api.LocalPort != 8480 {
-		t.Errorf("api backend = %s:%d", api.LocalIP, api.LocalPort)
-	}
-}
-
-// Two controllers with APILocalAddr set → four proxies: ctrl-/api- pair per
-// controller, all api proxies forwarding to the SAME loopback listener.
-func TestTranslateTwoControllersFourProxies(t *testing.T) {
-	cfg := testConfig()
-	cfg.APILocalAddr = "127.0.0.1:8480"
 	cfg.Controllers = []ProxySpec{
-		{GUID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", LocalAddr: "192.168.2.3:80"},
-		{GUID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", LocalAddr: "192.168.2.9:443"},
+		e2eSpec("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+		e2eSpec("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
 	}
 	_, proxies, err := translate(cfg)
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
 	if len(proxies) != 4 {
-		t.Fatalf("want 4 proxies for 2 controllers + api, got %d", len(proxies))
+		t.Fatalf("want 4 proxies for 2 controllers, got %d", len(proxies))
 	}
-	want := map[string]struct {
-		sub  string
-		ip   string
-		port int
-	}{
-		"ctrl-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "192.168.2.3", 80},
-		"api-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa":  {"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-api", "127.0.0.1", 8480},
-		"ctrl-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "192.168.2.9", 443},
-		"api-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb":  {"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-api", "127.0.0.1", 8480},
+	want := map[string]string{
+		"e2e-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa":    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-e2e",
+		"e2eapi-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-api-e2e",
+		"e2e-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb":    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-e2e",
+		"e2eapi-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-api-e2e",
 	}
 	seen := map[string]bool{}
 	for _, p := range proxies {
-		hp := p.(*v1.HTTPProxyConfig)
-		w, ok := want[hp.Name]
+		hp, ok := p.(*v1.HTTPSProxyConfig)
+		if !ok {
+			t.Errorf("unexpected non-https proxy %#v", p)
+			continue
+		}
+		sub, ok := want[hp.Name]
 		if !ok {
 			t.Errorf("unexpected proxy %q", hp.Name)
 			continue
 		}
 		seen[hp.Name] = true
-		if hp.SubDomain != w.sub || hp.LocalIP != w.ip || hp.LocalPort != w.port {
-			t.Errorf("proxy %q = subdomain %q backend %s:%d, want %q %s:%d",
-				hp.Name, hp.SubDomain, hp.LocalIP, hp.LocalPort, w.sub, w.ip, w.port)
+		if hp.SubDomain != sub || hp.LocalIP != "127.0.0.1" || hp.LocalPort != 8482 {
+			t.Errorf("proxy %q = subdomain %q backend %s:%d, want %q 127.0.0.1:8482",
+				hp.Name, hp.SubDomain, hp.LocalIP, hp.LocalPort, sub)
 		}
 	}
 	if len(seen) != 4 {
@@ -207,10 +172,8 @@ func TestTranslateRejectsBadInput(t *testing.T) {
 	}{
 		{"missing server", func(c *Config) { c.ServerAddr = "" }},
 		{"missing guid", func(c *Config) { c.Controllers[0].GUID = "" }},
-		{"local addr without port", func(c *Config) { c.Controllers[0].LocalAddr = "192.168.2.3" }},
-		{"local addr bad port", func(c *Config) { c.Controllers[0].LocalAddr = "192.168.2.3:notaport" }},
-		{"api addr without port", func(c *Config) { c.APILocalAddr = "127.0.0.1" }},
-		{"api addr bad port", func(c *Config) { c.APILocalAddr = "127.0.0.1:notaport" }},
+		{"e2e addr without port", func(c *Config) { c.E2ELocalAddr = "127.0.0.1" }},
+		{"e2e addr bad port", func(c *Config) { c.E2ELocalAddr = "127.0.0.1:notaport" }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -236,20 +199,8 @@ func TestBuildServiceFromConfig(t *testing.T) {
 	}
 	// Before Run, the exporter must simply report "no such proxy yet" without
 	// panicking — Status() relies on that.
-	if _, ok := svc.StatusExporter().GetProxyStatus("ctrl-0123456789abcdef0123456789abcdef"); ok {
+	if _, ok := svc.StatusExporter().GetProxyStatus("e2e-" + testGUID); ok {
 		t.Error("proxy status should not exist before Run")
-	}
-}
-
-func TestBuildServiceWithAPIProxy(t *testing.T) {
-	cfg := testConfig()
-	cfg.APILocalAddr = "127.0.0.1:8480"
-	svc, err := buildService(cfg)
-	if err != nil {
-		t.Fatalf("buildService: %v", err)
-	}
-	if svc == nil {
-		t.Fatal("nil service")
 	}
 }
 
@@ -292,8 +243,8 @@ func TestStatusLifecycleWithoutNetwork(t *testing.T) {
 
 // needsRestart guards the in-place-reconcile fast path: only a change to one of
 // the transport fields (server endpoint, auth material, or the poolpilot-cloud#31 TLS
-// pin) forces a full service restart; everything else (the proxy set,
-// SubdomainHost, APILocalAddr) is hot-reloadable via UpdateConfigSource.
+// pin) forces a full service restart; everything else (the controller set and
+// their E2E labels, SubdomainHost) is hot-reloadable via UpdateConfigSource.
 func TestNeedsRestart(t *testing.T) {
 	base := testConfig()
 	proxyOnly := func(mutate func(*Config)) Config {
@@ -308,20 +259,19 @@ func TestNeedsRestart(t *testing.T) {
 	}{
 		{"identical", testConfig(), false},
 		{"add controller", proxyOnly(func(c *Config) {
-			c.Controllers = append(c.Controllers, ProxySpec{GUID: "ffffffffffffffffffffffffffffffff", LocalAddr: "192.168.2.9:80"})
+			c.Controllers = append(c.Controllers, e2eSpec("ffffffffffffffffffffffffffffffff"))
 		}), false},
 		// Emptying the proxy set tears the service down (poolpilot-cloud#242): a
 		// proxy-less control connection has nothing to serve and would keep
 		// logging in forever once the cloud forgot the relay token.
 		{"drop all controllers", proxyOnly(func(c *Config) { c.Controllers = nil }), true},
-		{"change local addr", proxyOnly(func(c *Config) { c.Controllers[0].LocalAddr = "192.168.2.99:8080" }), false},
-		{"toggle api local addr", proxyOnly(func(c *Config) { c.APILocalAddr = "127.0.0.1:8480" }), false},
 		{"change subdomain host", proxyOnly(func(c *Config) { c.SubdomainHost = "other.example" }), false},
-		{"gain e2e labels", proxyOnly(func(c *Config) {
-			c.E2ELocalAddr = "127.0.0.1:8482"
-			c.Controllers[0].E2ECtrlLabel = c.Controllers[0].GUID + "-e2e"
-			c.Controllers[0].E2EAPILabel = c.Controllers[0].GUID + "-api-e2e"
+		// Losing the labels leaves a controller with no proxy, but the control
+		// connection stays (see Config.Controllers): no restart.
+		{"lose e2e labels", proxyOnly(func(c *Config) {
+			c.Controllers[0].E2ECtrlLabel, c.Controllers[0].E2EAPILabel = "", ""
 		}), false},
+		{"change e2e label", proxyOnly(func(c *Config) { c.Controllers[0].E2ECtrlLabel = testGUID }), false},
 		{"change server addr", proxyOnly(func(c *Config) { c.ServerAddr = "other-frps.example" }), true},
 		{"change server port", proxyOnly(func(c *Config) { c.ServerPort = 7443 }), true},
 		{"change auth token", proxyOnly(func(c *Config) { c.AuthToken = "rotated-token" }), true},
@@ -343,7 +293,7 @@ func TestNeedsRestart(t *testing.T) {
 func TestReconcileProxyOnlyChangeAppliesInPlace(t *testing.T) {
 	old := testConfig()
 	newCfg := testConfig()
-	newCfg.Controllers = append(newCfg.Controllers, ProxySpec{GUID: "ffffffffffffffffffffffffffffffff", LocalAddr: "192.168.2.9:80"})
+	newCfg.Controllers = append(newCfg.Controllers, e2eSpec("ffffffffffffffffffffffffffffffff"))
 
 	var gotProxies []v1.ProxyConfigurer
 	calls := 0
@@ -358,8 +308,8 @@ func TestReconcileProxyOnlyChangeAppliesInPlace(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("apply called %d times, want exactly 1", calls)
 	}
-	if len(gotProxies) != 2 {
-		t.Errorf("apply got %d proxies, want 2 (both controllers)", len(gotProxies))
+	if len(gotProxies) != 4 {
+		t.Errorf("apply got %d proxies, want 4 (both controllers' E2E pair)", len(gotProxies))
 	}
 }
 
@@ -400,7 +350,7 @@ func TestReconcileTransportChangeRebuilds(t *testing.T) {
 func TestReconcileApplyErrorFallsBackToRebuild(t *testing.T) {
 	old := testConfig()
 	newCfg := testConfig()
-	newCfg.Controllers = append(newCfg.Controllers, ProxySpec{GUID: "ffffffffffffffffffffffffffffffff", LocalAddr: "192.168.2.9:80"})
+	newCfg.Controllers = append(newCfg.Controllers, e2eSpec("ffffffffffffffffffffffffffffffff"))
 
 	keep := reconcile(old, newCfg, func(*v1.ClientCommonConfig, []v1.ProxyConfigurer) error {
 		return fmt.Errorf("config source is not available")
@@ -421,7 +371,7 @@ func TestReconcileKeepsRealServiceInPlace(t *testing.T) {
 		t.Fatalf("buildService: %v", err)
 	}
 	newCfg := testConfig()
-	newCfg.Controllers = append(newCfg.Controllers, ProxySpec{GUID: "ffffffffffffffffffffffffffffffff", LocalAddr: "192.168.2.9:80"})
+	newCfg.Controllers = append(newCfg.Controllers, e2eSpec("ffffffffffffffffffffffffffffffff"))
 
 	keep := reconcile(old, newCfg, func(common *v1.ClientCommonConfig, proxies []v1.ProxyConfigurer) error {
 		return svc.UpdateConfigSource(common, proxies, nil)
@@ -435,7 +385,7 @@ func TestReconcileKeepsRealServiceInPlace(t *testing.T) {
 	// REAL (non-running) Service and StatusExporter() is still callable without
 	// panicking. The keep-running-across-reconcile proof lives in the e2e suite.
 	// An in-process frps+frpc harness (server.NewService on loopback, driving
-	// this frpTunnel to a real "running" ctrl-proxy and reconciling in place)
+	// this frpTunnel to a real "running" proxy and reconciling in place)
 	// was attempted here to close that gap with a unit-level proof; it started
 	// and passed cleanly without -race, but -race caught unsynchronized field
 	// access inside frp itself — a pre-existing bug in the vendored library,
@@ -448,7 +398,7 @@ func TestReconcileKeepsRealServiceInPlace(t *testing.T) {
 	// outside the ctlMu lock that stop() uses to write it — so that abandoned
 	// harness would still trip -race on 0.70.1. The checked-in suite never
 	// calls Run, so it passes -race as-is; CI stays without -race, unchanged.
-	if _, ok := svc.StatusExporter().GetProxyStatus("ctrl-ffffffffffffffffffffffffffffffff"); ok {
+	if _, ok := svc.StatusExporter().GetProxyStatus("e2e-ffffffffffffffffffffffffffffffff"); ok {
 		t.Error("new proxy should not report status before Run")
 	}
 }

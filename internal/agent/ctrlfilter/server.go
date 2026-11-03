@@ -17,8 +17,9 @@ import (
 )
 
 // DefaultListen is the loopback plain-HTTP bind every configured
-// controller's ctrl-<GUID> frp proxy forwards to once filtering is wired in
-// (see lanapi.ReconfigureTunnel); override via CTRL_FILTER_LISTEN.
+// controller's legacy ctrl-<GUID> frp proxy forwarded to (none does since
+// poolpilot-relay#83; the E2E listener mounts Handler in process); override
+// via CTRL_FILTER_LISTEN.
 const DefaultListen = "127.0.0.1:8481"
 
 // Listen resolves CTRL_FILTER_LISTEN.
@@ -29,18 +30,18 @@ func Listen() string {
 	return DefaultListen
 }
 
-// Target is what one controller's ctrl-<GUID> proxy resolves to behind the
+// Target is what one controller's remote host resolves to behind the
 // filter: BaseURL ("scheme://lan_address") is where authenticated requests are
 // reverse-proxied.
 type Target struct {
 	BaseURL string
 }
 
-// Server is the shared tunnel-facing listener every controller's ctrl-<GUID>
-// proxy forwards to — mirroring how every api-<GUID> proxy already shares
-// lanapi's single TunnelAddr listener. Requests are demuxed onto a
-// controller by the leading label of the Host header
-// ("<guid>.remote.<host>[:port]"), which frp carries end-to-end unmodified
+// Server is the shared tunnel-facing gate in front of every controller: its
+// Handler is mounted by the E2E listener (and served on Addr, where the
+// legacy ctrl-<GUID> proxies used to forward before poolpilot-relay#83).
+// Requests are demuxed onto a controller by the leading label of the Host
+// header ("<guid>[-e2e].remote.<host>[:port]"), which frp carries unmodified
 // as long as no proxy sets HostHeaderRewrite — this relay never does (see
 // github.com/fatedier/frp's server/proxy/http.go, which only rewrites
 // req.Host in pkg/util/vhost/http.go when that field is non-empty).
