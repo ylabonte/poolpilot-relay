@@ -1,47 +1,34 @@
 package tunnel
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	v1 "github.com/fatedier/frp/pkg/config/v1"
 )
 
-const e2eGUID = "0123456789abcdef0123456789abcdef"
-
-// e2eConfig is testConfig with the api proxies and the cloud-delivered
-// end-to-end labels for its one controller (poolpilot-relay#80).
-func e2eConfig() Config {
-	cfg := testConfig()
-	cfg.APILocalAddr = "127.0.0.1:8480"
-	cfg.E2ELocalAddr = "127.0.0.1:8482"
-	cfg.Controllers[0].E2ECtrlLabel = e2eGUID + "-e2e"
-	cfg.Controllers[0].E2EAPILabel = e2eGUID + "-api-e2e"
-	return cfg
-}
-
-// With both E2E labels a controller gets four proxies: the legacy http pair
-// unchanged, plus two https proxies (SNI-routed by frps, never decrypted
-// there) forwarding to the one loopback E2E TLS listener.
+// With both E2E labels a controller gets exactly its two https proxies
+// (SNI-routed by frps, never decrypted there), forwarding to the one loopback
+// E2E TLS listener — and no legacy http proxy (poolpilot-relay#83).
 func TestTranslateEmitsE2EProxiesWithLabels(t *testing.T) {
-	_, proxies, err := translate(e2eConfig())
+	_, proxies, err := translate(testConfig())
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
-	if len(proxies) != 4 {
-		t.Fatalf("want 4 proxies with E2E labels, got %d", len(proxies))
+	if len(proxies) != 2 {
+		t.Fatalf("want 2 proxies with E2E labels, got %d", len(proxies))
 	}
 	byName := map[string]v1.ProxyConfigurer{}
 	for _, p := range proxies {
 		byName[p.GetBaseConfig().Name] = p
-	}
-	for _, legacy := range []string{"ctrl-" + e2eGUID, "api-" + e2eGUID} {
-		if _, ok := byName[legacy].(*v1.HTTPProxyConfig); !ok {
-			t.Errorf("legacy http proxy %q missing or not http: %#v", legacy, byName[legacy])
+		if _, ok := p.(*v1.HTTPProxyConfig); ok {
+			t.Errorf("legacy http proxy %q emitted", p.GetBaseConfig().Name)
 		}
 	}
 	want := map[string]string{
-		"e2e-" + e2eGUID:    e2eGUID + "-e2e",
-		"e2eapi-" + e2eGUID: e2eGUID + "-api-e2e",
+		"e2e-" + testGUID:    testGUID + "-e2e",
+		"e2eapi-" + testGUID: testGUID + "-api-e2e",
 	}
 	for name, sub := range want {
 		p, ok := byName[name].(*v1.HTTPSProxyConfig)
@@ -63,10 +50,11 @@ func TestTranslateEmitsE2EProxiesWithLabels(t *testing.T) {
 	}
 }
 
-// Without E2E labels — an older cloud, or E2E not enabled there — nothing
-// changes: exactly today's two http proxies. An old frps would reject an https
-// proxy at NewProxy, so none may be emitted.
-func TestTranslateWithoutE2ELabelsEmitsTwoProxies(t *testing.T) {
+// Without E2E labels — the cloud has not delivered them yet, or its E2E plane
+// is off — a controller gets no proxy at all: the legacy http pair it used to
+// fall back on is gone, and an frps without vhostHTTPSPort would reject an
+// https proxy at NewProxy.
+func TestTranslateWithoutE2ELabelsEmitsNoProxy(t *testing.T) {
 	for name, mutate := range map[string]func(*Config){
 		"no labels":         func(c *Config) { c.Controllers[0].E2ECtrlLabel, c.Controllers[0].E2EAPILabel = "", "" },
 		"only ctrl label":   func(c *Config) { c.Controllers[0].E2EAPILabel = "" },
@@ -74,94 +62,107 @@ func TestTranslateWithoutE2ELabelsEmitsTwoProxies(t *testing.T) {
 		"no e2e local addr": func(c *Config) { c.E2ELocalAddr = "" },
 	} {
 		t.Run(name, func(t *testing.T) {
-			cfg := e2eConfig()
+			cfg := testConfig()
 			mutate(&cfg)
 			_, proxies, err := translate(cfg)
 			if err != nil {
 				t.Fatalf("translate: %v", err)
 			}
-			if len(proxies) != 2 {
-				t.Fatalf("want 2 proxies, got %d", len(proxies))
-			}
-			for _, p := range proxies {
-				if _, ok := p.(*v1.HTTPProxyConfig); !ok {
-					t.Errorf("unexpected non-http proxy %#v", p)
-				}
+			if len(proxies) != 0 {
+				t.Fatalf("want 0 proxies, got %d: %#v", len(proxies), proxies)
 			}
 		})
 	}
 }
 
 func TestTranslateRejectsBadE2ELocalAddr(t *testing.T) {
-	cfg := e2eConfig()
+	cfg := testConfig()
 	cfg.E2ELocalAddr = "no-port"
 	if _, _, err := translate(cfg); err == nil {
 		t.Fatal("translate accepted an E2E local address without a port")
 	}
 }
 
-func TestBuildServiceWithE2EProxies(t *testing.T) {
-	if _, err := buildService(e2eConfig()); err != nil {
-		t.Fatalf("buildService with E2E proxies: %v", err)
+// A controller set none of whose controllers has E2E labels yields a service
+// with zero proxies — frp must accept that, because the control connection is
+// still what keeps the relay "online" for the cloud.
+func TestBuildServiceWithZeroProxies(t *testing.T) {
+	cfg := testConfig()
+	cfg.Controllers = []ProxySpec{{GUID: testGUID}}
+	if _, err := buildService(cfg); err != nil {
+		t.Fatalf("buildService with zero proxies: %v", err)
 	}
 }
 
-// The E2E proxies get their own status slots: today's apps read State /
-// APIState for the legacy http plane they actually use, so a failing E2E
-// registration must not turn that red. Headline and per controller.
-func TestStatusReportsE2EProxiesSeparately(t *testing.T) {
-	cfg := e2eConfig()
+// The E2E proxies are the only plane, so they fill both the E2E slots and the
+// headline State / APIState — headline and per controller. A controller
+// without E2E labels gets no slot.
+func TestStatusReportsE2EProxiesInBothSlots(t *testing.T) {
+	const plainGUID = "ffffffffffffffffffffffffffffffff"
+	cfg := testConfig()
+	cfg.Controllers = append(cfg.Controllers, ProxySpec{GUID: plainGUID})
 	phases := map[string]Status{
-		"ctrl-" + e2eGUID:   {State: "connected"},
-		"api-" + e2eGUID:    {State: "connected"},
-		"e2e-" + e2eGUID:    {State: "error", LastErr: "type [https] not supported"},
-		"e2eapi-" + e2eGUID: {State: "connecting"},
+		"e2e-" + testGUID:    {State: "error", LastErr: "type [https] not supported"},
+		"e2eapi-" + testGUID: {State: "connecting"},
 	}
-	got := statusOf(&cfg, func(name string) Status { return phases[name] })
-	if got.State != "connected" || got.LastErr != "" || got.APIState != "connected" {
-		t.Errorf("legacy headline = %q/%q/%q, want connected/\"\"/connected", got.State, got.LastErr, got.APIState)
-	}
+	got := statusOf(&cfg, func(name string) Status {
+		st, ok := phases[name]
+		if !ok {
+			t.Errorf("consulted %q, which is not a registered proxy", name)
+		}
+		return st
+	})
 	if got.E2EState != "error" || got.E2ELastErr != "type [https] not supported" || got.E2EAPIState != "connecting" {
 		t.Errorf("E2E headline = %q/%q/%q", got.E2EState, got.E2ELastErr, got.E2EAPIState)
 	}
-	ps := got.Controllers[e2eGUID]
-	if ps.State != "connected" || ps.APIState != "connected" || ps.LastErr != "" {
-		t.Errorf("per-controller legacy = %+v", ps)
+	if got.State != got.E2EState || got.LastErr != got.E2ELastErr || got.APIState != got.E2EAPIState {
+		t.Errorf("headline = %q/%q/%q, want the E2E values", got.State, got.LastErr, got.APIState)
 	}
-	if ps.E2EState != "error" || ps.E2EAPIState != "connecting" || ps.E2ELastErr == "" {
-		t.Errorf("per-controller E2E = %+v", ps)
+	ps, ok := got.Controllers[testGUID]
+	if !ok {
+		t.Fatal("no per-controller slot for the E2E controller")
 	}
+	if ps.E2EState != "error" || ps.E2EAPIState != "connecting" || ps.E2ELastErr == "" ||
+		ps.State != ps.E2EState || ps.LastErr != ps.E2ELastErr || ps.APIState != ps.E2EAPIState {
+		t.Errorf("per-controller = %+v", ps)
+	}
+	if _, ok := got.Controllers[plainGUID]; ok {
+		t.Errorf("a controller without E2E labels got a slot: %+v", got.Controllers[plainGUID])
+	}
+}
 
-	// Without labels the E2E names are never consulted and the slots stay empty.
-	plain := testConfig()
-	plain.APILocalAddr = "127.0.0.1:8480"
-	got = statusOf(&plain, func(name string) Status {
-		if name == "e2e-"+e2eGUID || name == "e2eapi-"+e2eGUID {
-			t.Errorf("consulted %q without E2E labels", name)
-		}
-		return Status{State: "connected"}
+// A running service with no E2E proxy has nothing to serve: the headline reads
+// "disabled" (so the lifecycle watcher, which waits for "connected", asks the
+// cloud why), and the E2E fields stay absent.
+func TestStatusWithoutE2EProxiesIsDisabled(t *testing.T) {
+	cfg := testConfig()
+	cfg.Controllers = []ProxySpec{{GUID: testGUID}}
+	got := statusOf(&cfg, func(name string) Status {
+		t.Errorf("consulted %q without E2E labels", name)
+		return Status{}
 	})
-	if got.State != "connected" || got.E2EState != "" || got.E2EAPIState != "" || got.Controllers[e2eGUID].E2EState != "" {
-		t.Errorf("plain status = %+v", got)
+	if got.State != "disabled" || got.LastErr != "" || got.APIState != "" ||
+		got.E2EState != "" || got.E2EAPIState != "" || len(got.Controllers) != 0 {
+		t.Errorf("status = %+v, want disabled headline, no E2E fields, no per-controller entries", got)
 	}
 }
 
 // With the frp service down or not yet built, a configured E2E plane is not
-// "absent": the service-level state and error are mirrored into the E2E
-// fields, headline and per controller, so the E2E fields are absent only while
-// no controller has E2E proxies. The legacy per-controller slots stay as they
-// were (empty → "disabled" in /v1/status).
-func TestStatusMirrorsServiceStateIntoE2EWhenServiceDown(t *testing.T) {
+// "absent": the service-level state and error are mirrored into both slots,
+// headline and per controller, so the E2E fields are absent only while no
+// controller has E2E proxies.
+func TestStatusMirrorsServiceStateWhenServiceDown(t *testing.T) {
 	tn := New()
-	if err := tn.Configure(e2eConfig()); err != nil {
+	if err := tn.Configure(testConfig()); err != nil {
 		t.Fatal(err)
 	}
 	got := tn.Status()
-	if got.State != "connecting" || got.E2EState != "connecting" || got.E2EAPIState != "connecting" || got.E2ELastErr != "" {
-		t.Errorf("before the first build = %+v, want connecting mirrored into E2E", got)
+	if got.State != "connecting" || got.APIState != "connecting" ||
+		got.E2EState != "connecting" || got.E2EAPIState != "connecting" || got.E2ELastErr != "" {
+		t.Errorf("before the first build = %+v, want connecting in both slots", got)
 	}
-	ps := got.Controllers[e2eGUID]
-	if ps.E2EState != "connecting" || ps.E2EAPIState != "connecting" || ps.State != "" || ps.APIState != "" {
+	ps := got.Controllers[testGUID]
+	if ps.E2EState != "connecting" || ps.E2EAPIState != "connecting" || ps.State != "connecting" || ps.APIState != "connecting" {
 		t.Errorf("per-controller before the first build = %+v", ps)
 	}
 
@@ -170,18 +171,49 @@ func TestStatusMirrorsServiceStateIntoE2EWhenServiceDown(t *testing.T) {
 	tn.(*frpTunnel).mu.Unlock()
 	got = tn.Status()
 	if got.State != "error" || got.E2EState != "error" || got.E2EAPIState != "error" || got.E2ELastErr != "tunnel: build frp service: boom" {
-		t.Errorf("service error = %+v, want it mirrored into E2E", got)
+		t.Errorf("service error = %+v, want it in both slots", got)
 	}
-	if ps := got.Controllers[e2eGUID]; ps.E2EState != "error" || ps.E2ELastErr == "" || ps.E2EAPIState != "error" {
+	if ps := got.Controllers[testGUID]; ps.E2EState != "error" || ps.E2ELastErr == "" || ps.State != "error" || ps.LastErr == "" {
 		t.Errorf("per-controller service error = %+v", ps)
 	}
 
-	// No E2E proxies configured → the E2E fields stay absent.
+	// No E2E proxies configured → the E2E fields stay absent; the headline is
+	// the service-level state.
 	plain := New()
-	if err := plain.Configure(testConfig()); err != nil {
+	cfg := testConfig()
+	cfg.Controllers = []ProxySpec{{GUID: testGUID}}
+	if err := plain.Configure(cfg); err != nil {
 		t.Fatal(err)
 	}
-	if got := plain.Status(); got.E2EState != "" || got.E2EAPIState != "" || len(got.Controllers) != 0 {
-		t.Errorf("without E2E proxies = %+v, want no E2E fields and no per-controller entries", got)
+	if got := plain.Status(); got.State != "connecting" || got.APIState != "" || got.E2EState != "" || got.E2EAPIState != "" || len(got.Controllers) != 0 {
+		t.Errorf("without E2E proxies = %+v, want connecting headline and no E2E fields", got)
+	}
+}
+
+// Controllers without E2E labels still keep a control connection: the service
+// is built (Login and Ping keep the relay online for the cloud), it just
+// registers no proxy, and the headline reads "disabled".
+func TestRunKeepsServiceForControllersWithoutE2E(t *testing.T) {
+	tn := New().(*frpTunnel)
+	cfg := offlineConfig()
+	cfg.Controllers = []ProxySpec{{GUID: testGUID}}
+	if err := tn.Configure(cfg); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- tn.Run(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("Run did not return after ctx cancel")
+		}
+	}()
+
+	waitFor(t, "service for a controller without E2E labels", func() bool { return serviceRunning(tn) })
+	if got := tn.Status(); got.State != "disabled" || got.E2EState != "" {
+		t.Errorf("status = %+v, want disabled headline and no E2E fields", got)
 	}
 }

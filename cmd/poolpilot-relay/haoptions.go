@@ -21,8 +21,9 @@ import (
 // variables, and the FROM-scratch container image has no shell to translate
 // them — so the agent reads the one setting the app exposes, `lan_port`, itself.
 //
-// reserved lists ports the agent already binds internally (the loopback frp
-// api / ctrl-filter proxies); an `lan_port` equal to one of them is refused —
+// reserved lists ports the agent already binds internally (the loopback
+// listeners: tunneled LAN API, ctrl-filter, E2E); an `lan_port` equal to one
+// of them is refused —
 // binding :<port> would collide with the loopback listener and recreate the
 // very "address already in use" this option exists to escape.
 //

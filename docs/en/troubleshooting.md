@@ -52,8 +52,13 @@ Home Assistant app's Configuration tab.
 ## Remote access paused, or the Relay forgot its household
 
 If the Relay's remote tunnel can't connect for a couple of minutes, the Relay
-asks the PoolPilot cloud why, and acts on the answer. One `relay lifecycle:`
-line in the log marks each change:
+asks the PoolPilot cloud why, and acts on the answer. It does the same while
+it has no end-to-end remote address it can serve (the cloud hasn't delivered
+one yet, or end-to-end access is switched off): a few times in the first hour
+after a start, then about once an hour. Remote access isn't available then,
+and the log line says *"no end-to-end proxy to serve yet"*. That needs no
+action. One
+`relay lifecycle:` line in the log marks each change:
 
 - **"parking the tunnel; credentials kept" (`state=suspended`)**: the
   household's subscription isn't active (for example it lapsed). The Relay

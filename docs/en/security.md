@@ -105,15 +105,11 @@ PoolPilot cloud and keeps open.
   for pairing, your household and push setup, and the Relay sends your alerts
   to the cloud so it can deliver push messages (see *What is stored where*
   above). Those connections are encrypted too, but they end at the cloud.
-- **Older app versions.** This applies from PoolPilot app version 1.2 with
-  Relay 0.11 or later. Older app versions still use the previous connection:
-  the phone talks HTTPS to the cloud, and the cloud passes each request on
-  through the tunnel, so it decrypts and re-encrypts that traffic. Your
-  requests and the controller's answers are visible there just for the moment
-  of forwarding — they are neither stored nor analysed. With app 1.2 and a
-  Relay older than 0.11 there is no fallback to that connection: remote access
-  through the Relay pauses until the Relay is updated, and at home
-  everything keeps working.
+- **App 1.2 and Relay 0.11 or later.** Remote access through the Relay needs
+  PoolPilot app version 1.2 or later and a Relay at version 0.11 or later.
+  Older app versions reach the Relay only at home, and with an older Relay
+  remote access pauses until the Relay is updated; at home everything keeps
+  working.
 - **No traffic log.** The tunnel's web front end keeps no access log, so there
   is no per-request trail of what you did with your pool. The tunnel server
   only tells the cloud *that* a Relay connected, is still online or went

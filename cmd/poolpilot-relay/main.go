@@ -11,12 +11,15 @@
 //	HA_OPTIONS       path to the Home Assistant Supervisor options file (JSON);
 //	                 when set (and LAN_LISTEN is not), its `lan_port` sets the LAN
 //	                 API port so the app's port is settable from the HA UI
-//	TUNNEL_LISTEN    loopback HTTP bind the frp api proxy forwards to
-//	                 (default 127.0.0.1:8480) — the tunneled LAN API
-//	CTRL_FILTER_LISTEN loopback HTTP bind every ctrl-<GUID> frp proxy forwards
-//	                 to (default 127.0.0.1:8481) — the authenticated,
+//	TUNNEL_LISTEN    loopback HTTP bind the legacy frp api proxy forwarded to
+//	                 (default 127.0.0.1:8480) — the tunneled LAN API. No proxy
+//	                 forwards here since poolpilot-relay#83
+//	CTRL_FILTER_LISTEN loopback HTTP bind the legacy ctrl-<GUID> frp proxies
+//	                 forwarded to (default 127.0.0.1:8481) — the authenticated,
 //	                 credential-gated proxy (poolpilot-cloud#27) standing in front of
-//	                 every controller's real address
+//	                 every controller's real address. No proxy forwards here
+//	                 since poolpilot-relay#83; the E2E listener mounts the same
+//	                 gate in process
 //	E2E_LISTEN       loopback TLS bind every end-to-end https frp proxy
 //	                 forwards to (default 127.0.0.1:8482; poolpilot-relay#80).
 //	                 Serves the existing LAN certificate (same SPKI pin as the
@@ -252,8 +255,8 @@ func run() error {
 		Paired:      st.Paired(),
 		Disabled:    os.Getenv("MDNS_DISABLED") == "1",
 	})
-	// ctrlFilter is the poolpilot-cloud#27 authenticated tunnel gate every ctrl-<GUID>
-	// proxy forwards to instead of the controller itself — see
+	// ctrlFilter is the poolpilot-cloud#27 authenticated tunnel gate in front
+	// of every controller; the E2E listener mounts its handler — see
 	// lanapi.ReconfigureTunnel and package ctrlfilter.
 	ctrlFilter := &ctrlfilter.Server{Addr: ctrlfilter.Listen()}
 
@@ -319,7 +322,7 @@ func run() error {
 		if boot.Cloud.FRPS.AuthToken == "" {
 			boot.Cloud.FRPS.AuthToken = os.Getenv("FRPS_AUTH_TOKEN")
 		}
-		if err := lanapi.ReconfigureTunnel(tun, boot, lanapi.TunnelListen(), e2e.Listen(), ctrlFilter); err != nil {
+		if err := lanapi.ReconfigureTunnel(tun, boot, e2e.Listen(), ctrlFilter); err != nil {
 			slog.Warn("tunnel resume failed", "err", err)
 		}
 	}

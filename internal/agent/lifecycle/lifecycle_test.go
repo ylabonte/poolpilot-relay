@@ -173,6 +173,31 @@ func TestSuspendedParksKeepsCredentialsAndResumesOnActive(t *testing.T) {
 	}
 }
 
+// A running tunnel with no end-to-end proxy to serve reads "disabled"
+// (poolpilot-relay#83: the cloud has not delivered E2E URLs, or runs with
+// E2E_ENABLED off). It still counts as down: with no proxy there is no other
+// sign that frps refuses the login, so the watcher must keep asking — and a
+// lapsed household must still park.
+func TestDisabledTunnelWithoutProxiesStillAsksAndParks(t *testing.T) {
+	r := newRig(t)
+	r.tunnel = "disabled"
+	r.cloud.answer(wire.RelayStateActive, "")
+	r.stepUntilAsked(t, downGrace+time.Minute)
+	if got := r.store.Get(); got.TunnelParked() {
+		t.Fatalf("active must not park: %+v", got.Cloud)
+	}
+	// Active keeps re-asking, backed off.
+	if gap := r.stepUntilAsked(t, activeBackoffMax+time.Hour); gap < activeBackoffMin*9/10 {
+		t.Errorf("re-ask after %v, want ≥ ~%v", gap, activeBackoffMin)
+	}
+
+	r.cloud.answer(wire.RelayStateSuspended, wire.RelayReasonLapsed)
+	r.stepUntilAsked(t, activeBackoffMax+time.Hour)
+	if got := r.store.Get(); !got.TunnelParked() || got.Cloud.Lifecycle != state.LifecycleSuspended {
+		t.Fatalf("a lapsed household behind a proxy-less tunnel must park: %+v", got.Cloud)
+	}
+}
+
 func TestParkedBackoffIsCapped(t *testing.T) {
 	r := newRig(t)
 	r.cloud.answer(wire.RelayStateSuspended, wire.RelayReasonRevoked)

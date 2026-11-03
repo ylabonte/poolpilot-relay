@@ -190,8 +190,10 @@ func TestRotateReplacesE2EURLs(t *testing.T) {
 	}
 }
 
-// session_e2e_url is the bootstrap on the E2E host, present iff the controller
-// has one, and its token redeems through the filter on that host.
+// session_e2e_url is the bootstrap on the E2E host, and its token redeems
+// through the filter on that host. A controller without an E2E host has no
+// remote surface since poolpilot-relay#83 (409), and session_url — the legacy
+// host — is never minted.
 func TestWebSessionE2EURL(t *testing.T) {
 	f, _, token := e2eFixture(t)
 	filter := &ctrlfilter.Server{Addr: "127.0.0.1:0"}
@@ -201,28 +203,22 @@ func TestWebSessionE2EURL(t *testing.T) {
 	c2 := csvController(t)
 	g1 := putControllerOK(t, f, token, wire.ControllerConfig{Preset: "procon-ip", LanAddress: addr(c2.URL)})
 
-	mint := func(guid string) wire.WebSessionResponse {
-		t.Helper()
-		resp, raw := f.do(t, "POST", "/v1/controllers/"+guid+"/web-session", token, nil)
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("web-session: %d %s", resp.StatusCode, raw)
-		}
-		var ws wire.WebSessionResponse
-		_ = json.Unmarshal(raw, &ws)
-		return ws
+	if resp, raw := f.do(t, "POST", "/v1/controllers/"+g0+"/web-session", token, nil); resp.StatusCode != http.StatusConflict {
+		t.Errorf("web-session without an E2E URL: %d %s, want 409", resp.StatusCode, raw)
 	}
-	if ws := mint(g0); ws.SessionE2EURL != "" {
-		t.Errorf("session_e2e_url without an E2E URL: %+v", ws)
+	resp, raw := f.do(t, "POST", "/v1/controllers/"+g1+"/web-session", token, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("web-session: %d %s", resp.StatusCode, raw)
 	}
-	ws := mint(g1)
+	var ws wire.WebSessionResponse
+	_ = json.Unmarshal(raw, &ws)
 	prefix := e2eURL(g1) + ctrlfilter.SessionPath + "?t="
 	if !strings.HasPrefix(ws.SessionE2EURL, prefix) {
 		t.Fatalf("session_e2e_url = %q, want prefix %q", ws.SessionE2EURL, prefix)
 	}
-	if !strings.HasPrefix(ws.SessionURL, "https://"+g1+".remote.example"+ctrlfilter.SessionPath+"?t=") {
-		t.Errorf("session_url changed: %q", ws.SessionURL)
+	if ws.SessionURL != "" {
+		t.Errorf("session_url = %q, want empty: the legacy host is no longer served", ws.SessionURL)
 	}
-	// One token, either host — the E2E one here.
 	tok := strings.TrimPrefix(ws.SessionE2EURL, prefix)
 	req := httptest.NewRequest(http.MethodGet, ctrlfilter.SessionPath+"?t="+tok, nil)
 	req.Host = g1 + "-e2e.remote.example"
@@ -257,7 +253,7 @@ func TestReconfigureTunnelE2ELabels(t *testing.T) {
 			st := base
 			st.Controllers = []state.Controller{{GUID: "g1", LanAddress: "192.168.2.3", RemoteE2EURL: tc.ctrl, RemoteAPIE2EURL: tc.api}}
 			ft := &fakeTunnel{}
-			if err := ReconfigureTunnel(ft, st, "127.0.0.1:8480", testE2EAddr, nil); err != nil {
+			if err := ReconfigureTunnel(ft, st, testE2EAddr, nil); err != nil {
 				t.Fatal(err)
 			}
 			s := specFor(t, ft.last(), "g1")
@@ -302,8 +298,9 @@ func TestBackfillE2EPersistsAndReconfigures(t *testing.T) {
 }
 
 // The off-switch: a guid the cloud lists with BOTH E2E fields empty is the
-// cloud withdrawing the E2E plane for it — the stored pair is cleared and only
-// the two https proxies go away (the legacy proxy spec stays as it was).
+// cloud withdrawing the E2E plane for it — the stored pair is cleared and the
+// two https proxies go away. The controller keeps its spec (with no proxy
+// since poolpilot-relay#83), so the control connection stays up.
 func TestBackfillE2EClearsOnExplicitEmptyPair(t *testing.T) {
 	f, ft, token := e2eFixture(t)
 	f.e2eEnabled.Store(true)
@@ -324,8 +321,8 @@ func TestBackfillE2EClearsOnExplicitEmptyPair(t *testing.T) {
 	if after.E2ECtrlLabel != "" || after.E2EAPILabel != "" {
 		t.Errorf("E2E labels survived the clear: %+v", after)
 	}
-	if after.GUID != before.GUID || after.LocalAddr != before.LocalAddr {
-		t.Errorf("the legacy proxy spec changed: %+v → %+v", before, after)
+	if after.GUID != before.GUID {
+		t.Errorf("the controller's spec changed: %+v → %+v", before, after)
 	}
 	if info := getControllersInfo(t, f, token, g1); info.RemoteE2EURL != "" {
 		t.Errorf("cleared URL still surfaced: %+v", info)
@@ -451,8 +448,8 @@ func TestRunE2EBackfillSlowRecheckHearsTheClear(t *testing.T) {
 // presence as "the pinned remote leg exists", so a URL whose proxies were
 // never registered — E2E listener disabled, or a pair e2eLabels rejects —
 // must surface nowhere: not in the PUT (miss or hit) or rotate answers, not in
-// /v1/controllers or /v1/status, and no session_e2e_url. The raw values are
-// still stored.
+// /v1/controllers or /v1/status, and no web session (409: no remote surface).
+// The raw values are still stored.
 func TestUnservedE2EURLsAreNotSurfaced(t *testing.T) {
 	for name, setup := range map[string]func(f *fixture){
 		"listener disabled": func(f *fixture) { f.srv.E2EAddr = "" },
@@ -490,8 +487,8 @@ func TestUnservedE2EURLsAreNotSurfaced(t *testing.T) {
 			_, raw = f.do(t, "GET", "/v1/status", token, nil)
 			noE2E("GET /v1/status", raw)
 			resp, raw = f.do(t, "POST", "/v1/controllers/"+cc.GUID+"/web-session", token, nil)
-			if resp.StatusCode != http.StatusOK {
-				t.Fatalf("web-session: %d %s", resp.StatusCode, raw)
+			if resp.StatusCode != http.StatusConflict {
+				t.Fatalf("web-session: %d %s, want 409", resp.StatusCode, raw)
 			}
 			noE2E("web-session", raw)
 			resp, raw = f.do(t, "POST", "/v1/controllers/"+cc.GUID+"/rotate", token, nil)
@@ -505,22 +502,27 @@ func TestUnservedE2EURLsAreNotSurfaced(t *testing.T) {
 
 func hasLabels(s tunnel.ProxySpec) bool { return s.E2ECtrlLabel != "" || s.E2EAPILabel != "" }
 
-// /v1/status carries the E2E proxies' phases in their own fields, headline
-// and per controller, next to the untouched legacy state.
-func TestStatusSurfacesE2EStateSeparately(t *testing.T) {
+// /v1/status maps the tunnel's status field for field, headline and per
+// controller: since poolpilot-relay#83 the tunnel fills state / api_state and
+// the e2e_* fields from the same E2E proxies (tunnel.Status), and lanapi
+// passes both through unchanged.
+func TestStatusSurfacesE2EState(t *testing.T) {
 	f, ft, token := e2eFixture(t)
 	f.e2eEnabled.Store(true)
 	g1 := putControllerOK(t, f, token, wire.ControllerConfig{Preset: "procon-ip", LanAddress: f.controllerAddr()})
 	ft.setStatus(tunnel.Status{
-		State: "connected", APIState: "connected",
+		State: "error", LastErr: "boom", APIState: "connecting",
 		E2EState: "error", E2ELastErr: "boom", E2EAPIState: "connecting",
 		Controllers: map[string]tunnel.ProxyStatus{g1: {
-			State: "connected", APIState: "connected",
+			State: "error", LastErr: "boom", APIState: "connecting",
 			E2EState: "error", E2ELastErr: "boom", E2EAPIState: "connecting",
 		}},
 	})
 	st := f.status(t, token)
-	want := wire.TunnelStatus{State: "connected", APIState: "connected", E2EState: "error", E2ELastError: "boom", E2EAPIState: "connecting"}
+	want := wire.TunnelStatus{
+		State: "error", LastError: "boom", APIState: "connecting",
+		E2EState: "error", E2ELastError: "boom", E2EAPIState: "connecting",
+	}
 	if st.Tunnel != want {
 		t.Errorf("headline tunnel = %+v, want %+v", st.Tunnel, want)
 	}
@@ -600,8 +602,8 @@ func TestBackfillE2ENeverWritesAControllerChangedMidRequest(t *testing.T) {
 
 // With the real (never-run) tunnel the frp service is not built yet: a
 // controller with E2E proxies still reports E2E state — the mirrored
-// service-level "connecting" — headline and per controller, while its legacy
-// per-controller state reads "disabled" exactly as before.
+// service-level "connecting" — headline and per controller, and its
+// per-controller state reads the same (the E2E plane is the only one).
 func TestStatusE2EStateWhileTheServiceIsDown(t *testing.T) {
 	f := newFixture(t)
 	f.srv.E2EAddr = testE2EAddr
@@ -613,7 +615,7 @@ func TestStatusE2EStateWhileTheServiceIsDown(t *testing.T) {
 		t.Errorf("headline = %+v, want the service state mirrored into E2E", st.Tunnel)
 	}
 	cs := statusOfController(t, f, token, g1)
-	if cs.Tunnel.E2EState != "connecting" || cs.Tunnel.E2EAPIState != "connecting" || cs.Tunnel.State != "disabled" {
+	if cs.Tunnel.E2EState != "connecting" || cs.Tunnel.E2EAPIState != "connecting" || cs.Tunnel.State != "connecting" {
 		t.Errorf("controller tunnel = %+v", cs.Tunnel)
 	}
 }
