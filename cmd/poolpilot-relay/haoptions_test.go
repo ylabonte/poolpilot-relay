@@ -271,7 +271,7 @@ func TestReservedLoopbackPortsIncludeE2E(t *testing.T) {
 }
 
 // The retired listeners' env vars are ignored: they no longer move what is
-// reserved, and a repeated call never grows the shared retired list.
+// reserved.
 func TestRetiredListenerEnvIgnored(t *testing.T) {
 	t.Setenv("E2E_LISTEN", "")
 	t.Setenv("TUNNEL_LISTEN", "127.0.0.1:9480")
