@@ -16,12 +16,14 @@ import "github.com/ylabonte/poolpilot-relay/bands"
 // matches exactly one label.
 const APISubdomainSuffix = "-api"
 
-// CtrlProxyPrefix names a controller's legacy http frp proxy: "ctrl-<GUID>".
-// Relays released before poolpilot-relay#83 register it (poolpilot-relay#80
-// kept it for one app release window); later relays register only the E2E
-// proxies below. Still read by the cloud's internal/frpplugin, which
-// authorizes a NewProxy/subdomain against a controller row, for as long as it
-// accepts proxies from older relays.
+// CtrlProxyPrefix names a controller's cloud-terminated http frp proxy:
+// "ctrl-<GUID>". Relays up to v0.12.x register it; later relays register only
+// the E2E proxies below. The cloud's internal/frpplugin still reads it when it
+// authorizes a NewProxy/subdomain against a controller row.
+//
+// Deprecated: no current relay registers this proxy. It is kept for the cloud,
+// which still accepts http proxies from relays up to v0.12.x in the field.
+// Remove it only after the cloud refuses http proxies.
 const CtrlProxyPrefix = "ctrl-"
 
 // E2ESubdomainSuffix and APIE2ESubdomainSuffix build the end-to-end encrypted
@@ -35,7 +37,7 @@ const CtrlProxyPrefix = "ctrl-"
 // The relay never builds an E2E URL from these: the control plane is
 // authoritative for the URLs (remote_e2e_url / remote_api_e2e_url below), and
 // the relay registers whatever label those URLs carry. The constants document
-// the grammar both sides accept during the migration window.
+// the label grammar both sides use.
 const (
 	E2ESubdomainSuffix    = "-e2e"
 	APIE2ESubdomainSuffix = APISubdomainSuffix + E2ESubdomainSuffix
@@ -43,9 +45,10 @@ const (
 
 // E2ECtrlProxyPrefix and E2EAPIProxyPrefix name a controller's two frp https
 // proxies: "e2e-<GUID>" (controller plane) and "e2eapi-<GUID>" (LAN API) — the
-// only proxies a relay registers since poolpilot-relay#83. What the cloud's
-// frps plugin authorizes is the subdomain; the names have to be unique per
-// relay and distinct from the legacy "ctrl-<GUID>" / "api-<GUID>".
+// only proxies a current relay registers. What the cloud's frps plugin
+// authorizes is the subdomain; the names have to be unique per relay and
+// distinct from the "ctrl-<GUID>" / "api-<GUID>" http proxies that relays up
+// to v0.12.x register (see CtrlProxyPrefix).
 const (
 	E2ECtrlProxyPrefix = "e2e-"
 	E2EAPIProxyPrefix  = "e2eapi-"
@@ -153,19 +156,20 @@ type ControllerConfig struct {
 
 // ControllerConfigResponse carries the cloud-assigned identity.
 //
-// RemoteURL and RemoteAPIURL name the legacy, cloud-terminated plane. Since
-// poolpilot-relay#83 the relay no longer serves either host — only the E2E
-// pair below — but it still passes both through wherever this package
-// carries them, because apps use them as controller-identity and matching
-// hints, until the control plane stops delivering them.
+// RemoteURL and RemoteAPIURL name the cloud-terminated hosts, which relays up
+// to v0.12.x serve. Current relays serve only the E2E pair below, but still
+// pass both through wherever this package carries them, until the control
+// plane stops delivering them: app 1.2 requires the remote_url key here,
+// skips a controller with an empty remote_url when it joins a household
+// (GET /v1/controllers), and matches controllers on remote_api_url.
 type ControllerConfigResponse struct {
 	GUID      string `json:"guid"`
 	RemoteURL string `json:"remote_url"`
-	// RemoteAPIURL is the relay's own LAN API tunneled at "<guid>-api.<host>",
-	// which relays before poolpilot-relay#83 serve with the same pairing bearer
-	// (all /v1/* except /v1/pair, which stays LAN-only). Empty from pre-R5
-	// control-planes — the agent then derives it locally from the GUID +
-	// subdomain host.
+	// RemoteAPIURL is the relay's own LAN API at the cloud-terminated
+	// "<guid>-api.<host>", which relays up to v0.12.x serve with the same
+	// pairing bearer (all /v1/* except /v1/pair, which stays LAN-only). Empty
+	// from pre-R5 control-planes — the agent then derives it locally from the
+	// GUID + subdomain host.
 	RemoteAPIURL string `json:"remote_api_url,omitempty"`
 	// RemoteE2EURL and RemoteAPIE2EURL are the end-to-end encrypted twins of
 	// RemoteURL and RemoteAPIURL (poolpilot-relay#80): TLS on them terminates
@@ -270,12 +274,12 @@ type ControllerListResponse struct {
 // the resulting session.
 //
 // SessionE2EURL is that bootstrap on the controller's end-to-end encrypted
-// host (RemoteE2EURL + "/__session?t=<token>"). SessionURL was the same
-// bootstrap on the legacy RemoteURL host; since poolpilot-relay#83 the relay
-// no longer serves that host, so it answers 409 remote_access_not_configured
-// for a controller without an E2E host and leaves SessionURL empty otherwise.
-// Older relays fill both; the token binds the controller, not a hostname, so
-// it redeems on either host — but only once.
+// host (RemoteE2EURL + "/__session?t=<token>"). SessionURL is the same
+// bootstrap on the cloud-terminated RemoteURL host. Relays up to v0.12.x fill
+// both. Current relays serve no RemoteURL host: they leave SessionURL empty,
+// and answer 409 remote_access_not_configured for a controller without an E2E
+// host. The token binds the controller, not a hostname, so it redeems on
+// either host — but only once.
 type WebSessionResponse struct {
 	// SessionURL must never become omitempty: app 1.2 decodes it as a
 	// required field (RelayWebSessionResponse.sessionUrl has no default), so
@@ -311,11 +315,11 @@ type TunnelStatus struct {
 	// state and error. All absent only while no controller has E2E proxies.
 	// Additive.
 	//
-	// Older relays report State/APIState for the legacy http plane only. Since
-	// poolpilot-relay#83 there is no legacy plane: State/LastError/APIState
-	// carry the same values as the E2E fields whenever any are present, and
-	// otherwise the service-level state ("disabled" while a service runs with
-	// no E2E proxy to serve).
+	// Relays up to v0.12.x report State/APIState for their cloud-terminated
+	// http proxies only. Current relays have no such proxies:
+	// State/LastError/APIState carry the same values as the E2E fields whenever
+	// any are present, and otherwise the service-level state ("disabled" while
+	// a service runs with no E2E proxy to serve).
 	E2EState     string `json:"e2e_state,omitempty"`
 	E2EAPIState  string `json:"e2e_api_state,omitempty"`
 	E2ELastError string `json:"e2e_last_error,omitempty"`
@@ -330,8 +334,8 @@ type ControllerStatus struct {
 	Reachable    bool          `json:"reachable"`
 	LastPollAt   string        `json:"last_poll_at,omitempty"` // RFC 3339
 	Measurements []Measurement `json:"measurements,omitempty"`
-	// RemoteAPIURL is the same value returned at controller registration
-	// (legacy plane, no longer served since poolpilot-relay#83 — see
+	// RemoteAPIURL is the same value returned at controller registration (a
+	// cloud-terminated host current relays no longer serve — see
 	// ControllerConfigResponse); apps reach the relay away from home on
 	// RemoteAPIE2EURL.
 	RemoteAPIURL string `json:"remote_api_url,omitempty"`
@@ -339,9 +343,9 @@ type ControllerStatus struct {
 	RemoteE2EURL    string `json:"remote_e2e_url,omitempty"`
 	RemoteAPIE2EURL string `json:"remote_api_e2e_url,omitempty"`
 	// Tunnel is THIS controller's own tunnel state (its ctrl + api proxy — the
-	// E2E pair since poolpilot-relay#83; "disabled" while it has none), so a
-	// single dead controller proxy is attributable rather than hidden behind the
-	// headline worst-of-all Tunnel. Additive — apps that ignore it are unaffected.
+	// E2E pair; "disabled" while it has none), so a single dead controller
+	// proxy is attributable rather than hidden behind the headline worst-of-all
+	// Tunnel. Additive — apps that ignore it are unaffected.
 	Tunnel TunnelStatus `json:"tunnel"`
 }
 

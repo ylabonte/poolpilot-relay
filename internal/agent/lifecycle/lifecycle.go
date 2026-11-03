@@ -24,10 +24,9 @@
 // "Down" means any headline state but "connected" — including "disabled",
 // which the tunnel reports while its frp service runs with no proxy to serve
 // (no controller has its end-to-end URLs yet, or the cloud runs with
-// E2E_ENABLED off; poolpilot-relay#83). That is deliberate: without a proxy
-// there is no other signal that frps refuses the login, so such a relay keeps
-// asking (backed off to activeBackoffMax) and is still parked when its
-// household lapses. The "active" answer is then logged as "no end-to-end
+// E2E_ENABLED off). That is deliberate: without a proxy there is no other
+// signal that frps refuses the login, so such a relay keeps asking (backed
+// off to activeBackoffMax) and is still parked when its household lapses. The "active" answer is then logged as "no end-to-end
 // proxy to serve", not as a tunnel that is down.
 //
 // A relay with NO tunnel (no registered controller) is asked about too, in

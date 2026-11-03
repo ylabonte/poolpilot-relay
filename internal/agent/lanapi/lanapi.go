@@ -1516,9 +1516,9 @@ func (s *Server) ensureCtrlSessionKey() (ctrlfilter.SessionKey, error) {
 // The LAN path needs no session at all — ctrlfilter sits exclusively in the
 // tunnel — so a controller the relay serves no end-to-end host for (see
 // servedE2EURLs) is a 409 rather than a 404: it exists, there is simply no
-// remote surface to open. Since poolpilot-relay#83 that host is the only
-// remote surface: the legacy RemoteURL host is no longer served, so no
-// session_url is minted on it and session_url stays empty.
+// remote surface to open. That host is the only remote surface: the relay
+// serves no RemoteURL host, so no session_url is minted on it and session_url
+// stays empty.
 func (s *Server) webSessionHandler(w http.ResponseWriter, r *http.Request) {
 	guid := r.PathValue("guid")
 	if guid == "" {
@@ -2142,8 +2142,7 @@ func materializeFrpsCA(caPEM string) (string, error) {
 // tests that don't wire ctrlfilter in.
 //
 // e2eLocalAddr is the loopback E2E TLS listener (poolpilot-relay#80); empty
-// disables the E2E https proxies — since poolpilot-relay#83 the only proxies
-// there are. Each controller's E2E labels come from its cloud-delivered URLs
+// disables the E2E https proxies — the only proxies there are. Each controller's E2E labels come from its cloud-delivered URLs
 // (see e2eLabels) — never derived here.
 func ReconfigureTunnel(t tunnel.Tunnel, st state.State, e2eLocalAddr string, filter *ctrlfilter.Server) error {
 	var specs []tunnel.ProxySpec

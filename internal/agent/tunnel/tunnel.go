@@ -2,9 +2,7 @@
 // controllers through the cloud frps: token transport auth, the per-relay
 // token in metadatas.token, loginFailExit=false, and — per controller whose
 // end-to-end URLs the cloud delivered — two https proxies for the end-to-end
-// plane; see translate. The legacy http proxies ("ctrl-<GUID>" /
-// "api-<GUID>", TLS terminated by the cloud) are no longer registered
-// (poolpilot-relay#83).
+// plane; see translate. It registers no other proxy.
 //
 // The frp dependency is deliberately quarantined here — no other agent package
 // may import github.com/fatedier/frp.
@@ -85,8 +83,7 @@ type Config struct {
 }
 
 // Status is the coarse tunnel state surfaced via GET /v1/status and read by
-// the lifecycle watcher. Since the legacy http proxies are gone
-// (poolpilot-relay#83) the end-to-end proxies are the only plane, so both
+// the lifecycle watcher. The end-to-end proxies are the only plane, so both
 // sets of fields describe them:
 //
 //   - E2EState / E2ELastErr / E2EAPIState are the worst E2E ctrl-proxy phase
@@ -488,8 +485,8 @@ func (t *frpTunnel) proxyState(name string) Status {
 //	                          (poolpilot-cloud#31 pinning; set only when FrpsCAFile != "")
 //	[[proxies]] https       → HTTPSProxyConfig{name, subdomain, localIP, localPort}
 //
-// (The template still carries the legacy http "ctrl-<GUID>" proxy; the relay
-// no longer registers any http proxy — poolpilot-relay#83.)
+// The template may still carry an http "ctrl-<GUID>" proxy; translate emits
+// no http proxy, so that entry has no counterpart here.
 //
 // For each controller that carries both cloud-delivered E2E labels (and
 // E2ELocalAddr is set — see hasE2E) it emits "e2e-<GUID>" (subdomain
