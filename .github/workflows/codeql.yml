@@ -5,9 +5,9 @@ name: CodeQL
 # code-scanning rule gates on.
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
   schedule:
     - cron: "27 3 * * 1" # weekly, Monday 03:27 UTC
 

@@ -20,6 +20,18 @@ jobs:
           [[ "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.[1-9][0-9]*)?$ ]] \
             || { echo "::error::tag '$GITHUB_REF_NAME' is not a plain vX.Y.Z[-rc.N] release tag — refusing to build."; exit 1; }
 
+      - name: Refuse tags that are not on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Releases ship from main only. develop collects unreleased work and is
+          # merged by rebase (new commit hashes), so a tag on a develop commit
+          # would publish code that main never had. "behind"/"identical" means
+          # the tagged commit is contained in main.
+          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$GITHUB_SHA" --jq .status)
+          [[ "$status" == identical || "$status" == behind ]] \
+            || { echo "::error::tag '$GITHUB_REF_NAME' points at a commit that is not on main (compare: $status) — tag releases on main."; exit 1; }
+
       - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v7
