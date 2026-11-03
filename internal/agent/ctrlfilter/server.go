@@ -1,13 +1,11 @@
 package ctrlfilter
 
 import (
-	"context"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -15,20 +13,6 @@ import (
 	"github.com/ylabonte/poolpilot-relay/internal/useragent"
 	"github.com/ylabonte/poolpilot-relay/wire"
 )
-
-// DefaultListen is the loopback plain-HTTP bind every configured
-// controller's legacy ctrl-<GUID> frp proxy forwarded to (none does since
-// poolpilot-relay#83; the E2E listener mounts Handler in process); override
-// via CTRL_FILTER_LISTEN.
-const DefaultListen = "127.0.0.1:8481"
-
-// Listen resolves CTRL_FILTER_LISTEN.
-func Listen() string {
-	if v := os.Getenv("CTRL_FILTER_LISTEN"); v != "" {
-		return v
-	}
-	return DefaultListen
-}
 
 // Target is what one controller's remote host resolves to behind the
 // filter: BaseURL ("scheme://lan_address") is where authenticated requests are
@@ -38,19 +22,14 @@ type Target struct {
 }
 
 // Server is the shared tunnel-facing gate in front of every controller: its
-// Handler is mounted by the E2E listener (and served on Addr, where the
-// legacy ctrl-<GUID> proxies used to forward before poolpilot-relay#83).
+// Handler is mounted in process by the E2E listener; it binds no listener of
+// its own.
 // Requests are demuxed onto a controller by the leading label of the Host
 // header ("<guid>[-e2e].remote.<host>[:port]"), which frp carries unmodified
 // as long as no proxy sets HostHeaderRewrite — this relay never does (see
 // github.com/fatedier/frp's server/proxy/http.go, which only rewrites
 // req.Host in pkg/util/vhost/http.go when that field is non-empty).
 type Server struct {
-	// Addr is the loopback bind (Listen()). Empty disables the listener —
-	// Run then just blocks on ctx, matching lanapi.RunTunnelListener's
-	// no-op-when-unset shape.
-	Addr string
-
 	mu      sync.RWMutex
 	targets map[string]Target
 	// key signs and verifies web-session tokens and cookies (session.go). Empty
@@ -327,32 +306,6 @@ func guidFromHost(host string) string {
 		host = host[:i]
 	}
 	return strings.TrimSuffix(host, wire.E2ESubdomainSuffix)
-}
-
-// Run serves the shared filter listener until ctx is done; a no-op (just
-// blocks on ctx) when Addr is empty. Mirrors
-// lanapi.Server.RunTunnelListener's lifecycle exactly.
-func (s *Server) Run(ctx context.Context) error {
-	if s.Addr == "" {
-		<-ctx.Done()
-		return ctx.Err()
-	}
-	srv := &http.Server{
-		Addr:              s.Addr,
-		Handler:           s.Handler(),
-		ReadHeaderTimeout: 10 * time.Second,
-	}
-	errCh := make(chan error, 1)
-	go func() { errCh <- srv.ListenAndServe() }()
-	select {
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutdownCtx)
-		return ctx.Err()
-	case err := <-errCh:
-		return err
-	}
 }
 
 // controllerTransport is the reverse proxy's transport for the controller leg —

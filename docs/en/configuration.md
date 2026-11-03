@@ -33,7 +33,6 @@ The default config the installer writes looks like this:
 # PoolPilot Relay agent configuration (systemd EnvironmentFile).
 CLOUD_BASE_URL=https://api.poolpilot.eu
 # LAN_LISTEN=:8443
-# TUNNEL_LISTEN=127.0.0.1:8480
 # POLL_INTERVAL=60s
 # Self-update runs automatically at night. To update right away, re-run the
 # installer; set UPDATE_DISABLED=1 here to opt this device out entirely.
@@ -42,6 +41,10 @@ CLOUD_BASE_URL=https://api.poolpilot.eu
 
 Lines starting with `#` are comments (inactive). To enable one, remove the `#`
 and set the value.
+
+A config written by an older installer may still contain
+`# TUNNEL_LISTEN=127.0.0.1:8480`. The Relay no longer reads `TUNNEL_LISTEN`, so
+that line does nothing, with or without the `#`; you can delete it.
 
 ## Poll interval
 
@@ -138,11 +141,15 @@ A few more variables exist mainly for development, testing, and support. You
 should not need them on a normal home install, and changing them can stop the
 Relay from working — only set them if you know why:
 
-`TUNNEL_LISTEN`, `CTRL_FILTER_LISTEN`, `STATE_PATH`, `MDNS_DISABLED`,
-`MDNS_VERBOSE_LOGS`, `FRPS_AUTH_TOKEN`, `PAIR_URL_BASE`, `REPO_DL_BASE` — plus the
+`STATE_PATH`, `MDNS_DISABLED`, `MDNS_VERBOSE_LOGS`, `FRPS_AUTH_TOKEN`,
+`PAIR_URL_BASE`, `REPO_DL_BASE` — plus the
 container-only `RESTART_ON_RESET` and `HA_OPTIONS`, which the
 [Home Assistant app](home-assistant.md) image sets for you (leave them unset on a
 systemd install).
+
+`TUNNEL_LISTEN` and `CTRL_FILTER_LISTEN` are gone: the Relay ignores them, because
+the loopback listeners they configured no longer exist. Remote access runs only
+through the end-to-end encrypted connection.
 
 `MDNS_VERBOSE_LOGS=1` re-enables the discovery library's own INFO logging (see
 [Troubleshooting](troubleshooting.md#repeated-mdns-rfc6762-log-lines)); it is off

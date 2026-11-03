@@ -196,7 +196,7 @@ func TestRotateReplacesE2EURLs(t *testing.T) {
 // host — is never minted.
 func TestWebSessionE2EURL(t *testing.T) {
 	f, _, token := e2eFixture(t)
-	filter := &ctrlfilter.Server{Addr: "127.0.0.1:0"}
+	filter := &ctrlfilter.Server{}
 	f.srv.CtrlFilter = filter
 	g0 := putControllerOK(t, f, token, wire.ControllerConfig{Preset: "procon-ip", LanAddress: f.controllerAddr()})
 	f.e2eEnabled.Store(true)
@@ -457,7 +457,7 @@ func TestUnservedE2EURLsAreNotSurfaced(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			f, ft, token := e2eFixture(t)
-			f.srv.CtrlFilter = &ctrlfilter.Server{Addr: "127.0.0.1:0"}
+			f.srv.CtrlFilter = &ctrlfilter.Server{}
 			f.e2eEnabled.Store(true)
 			setup(f)
 			noE2E := func(what string, raw []byte) {
