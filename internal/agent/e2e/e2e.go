@@ -18,8 +18,8 @@
 // The plain forms are accepted from the start so the cloud can later rename
 // the E2E labels without a relay change. Mounting TunnelHandler means the
 // LAN-only ceremonies (pair, factory-reset, household-reset) answer 403
-// lan_only here exactly as on the legacy tunnel; mounting ctrlfilter means the
-// controller plane keeps its bearer-or-cookie gate.
+// lan_only here; mounting ctrlfilter means the controller plane keeps its
+// bearer-or-cookie gate.
 package e2e
 
 import (

@@ -74,8 +74,9 @@ func TestE2ESubdomainSuffixes(t *testing.T) {
 	}
 }
 
-// The E2E proxies' phases ride in their own additive TunnelStatus fields, so
-// the legacy state/api_state keep describing only the plane today's apps use.
+// The E2E proxies' phases ride in their own additive TunnelStatus fields, and
+// a zero E2E status adds no e2e_* key. (Current relays fill state/api_state
+// with the same values; that mirroring is the tunnel package's job.)
 func TestTunnelStatusE2EFields(t *testing.T) {
 	raw, err := json.Marshal(TunnelStatus{State: "connected", E2EState: "error", E2EAPIState: "connecting", E2ELastError: "boom"})
 	if err != nil {
