@@ -81,7 +81,7 @@ journalctl -u poolpilot-relay-updater      # what the updater did (and why)
 The agent understands the two flags you'd expect:
 
 ```bash
-poolpilot-relay version     # also --version, -v  → prints the version, e.g. v0.1.0
+poolpilot-relay version     # also --version, -v  → prints the version, e.g. v1.0.0
 poolpilot-relay help        # also --help,    -h  → lists the commands and flags
 ```
 

@@ -83,7 +83,7 @@ journalctl -u poolpilot-relay-updater      # was der Updater getan hat (und waru
 Der Agent versteht die beiden Schalter, die du erwartest:
 
 ```bash
-poolpilot-relay version     # auch --version, -v  → gibt die Version aus, z. B. v0.1.0
+poolpilot-relay version     # auch --version, -v  → gibt die Version aus, z. B. v1.0.0
 poolpilot-relay help        # auch --help,    -h  → listet Befehle und Schalter
 ```
 
