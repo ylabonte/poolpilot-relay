@@ -189,11 +189,14 @@ Holst du dir die Eigentümer-Rolle zurück, weil kein Eigentümer-Telefon mehr �
 ist, hält dich ein voller Haushalt nicht mehr auf: Mit dem Code wiederherstellen,
 dann in der App unter **PoolPilot Relay → Gekoppelte Geräte** die nicht mehr
 vorhandenen Telefone entfernen. Das setzt ein Relay und eine PoolPilot-Cloud
-voraus, die beide diese Ausnahme enthalten; bei einem älteren Relay muss sich
-zuerst ein Mitglied auf einem Telefon abmelden, das es nicht mehr braucht. Kann
-das auch kein Mitglied (die übrigen Telefone wurden zurückgesetzt oder
-deinstalliert, ohne sich abzumelden), siehe
-[Immer noch hängen?](#immer-noch-hängen).
+voraus, die beide diese Ausnahme enthalten. Bei Relays bis v1.0.0 lehnt das
+Relay selbst noch mit `409 device_quota` ab; und bei einem neueren Relay, aber
+einer Cloud ohne die Ausnahme, antwortet die Cloud mit
+`409 household_device_quota`. In beiden Fällen wird nichts gekoppelt und der
+Wiederherstellungscode bleibt gültig, daher muss sich zuerst ein Mitglied auf
+einem Telefon abmelden, das es nicht mehr braucht. Kann das auch kein Mitglied
+(die übrigen Telefone wurden zurückgesetzt oder deinstalliert, ohne sich
+abzumelden), siehe [Immer noch hängen?](#immer-noch-hängen).
 
 Relays bis v0.12.0 antworten in diesem Fall stattdessen mit `409 voucher_quota`,
 worauf die App rät, ein paar Minuten zu warten und es mit demselben Code erneut

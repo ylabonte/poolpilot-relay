@@ -171,10 +171,13 @@ phone they no longer need. Then pair again with the same code.
 If you are taking the owner role back because no owner phone is left, a
 full household no longer stops you: recover with the code, then remove the
 phones that are gone under **PoolPilot Relay → Paired devices**. This needs a
-Relay and a PoolPilot cloud that both include that exemption; on an older
-Relay, a member has to sign out on a phone they no longer need first, and if no
-member can (the extra phones were reset or uninstalled without signing out), see
-[Still stuck?](#still-stuck).
+Relay and a PoolPilot cloud that both include that exemption. On Relays up to
+v1.0.0 the Relay itself still refuses with `409 device_quota`; and with a newer
+Relay but a cloud that does not have the exemption yet, the cloud answers
+`409 household_device_quota`. In both cases nothing is paired and the recovery
+code stays valid, so a member has to sign out on a phone they no longer need
+first. If no member can (the extra phones were reset or uninstalled without
+signing out), see [Still stuck?](#still-stuck).
 
 Relays up to v0.12.0 answer this case with `409 voucher_quota` instead, for which
 the app says to wait a few minutes and try again with the same code. Waiting
