@@ -467,3 +467,65 @@ func TestJoinRequiresAPairedRelay(t *testing.T) {
 		t.Fatalf("an un-paired relay brokered %d voucher(s)", n)
 	}
 }
+
+// recoveryCodeForWindow derives the recovery code of an explicit window, so one
+// test can redeem two distinct (single-use) codes back to back.
+func recoveryCodeForWindow(t *testing.T, f *fixture, window int64) string {
+	t.Helper()
+	st := f.store.Get()
+	code, err := recovery.Code(st.TLS.KeyPEM, st.AgentID, window)
+	if err != nil {
+		t.Fatalf("derive recovery code: %v", err)
+	}
+	return code
+}
+
+// TestRecoveryIsAdmittedOneOverTheDeviceCap pins ylabonte/poolpilot-cloud#282
+// on the relay side: an owner who lost every device cannot remove the stale
+// ones, so recovery is exempt from DeviceCap up to ONE device over it
+// (RecoveryDeviceCap, the same ceiling the cloud applies). A second recovery at
+// that ceiling is refused with device_quota and spends no window; a join keeps
+// DeviceCap, both at it and one over it.
+func TestRecoveryIsAdmittedOneOverTheDeviceCap(t *testing.T) {
+	if RecoveryDeviceCap != DeviceCap+1 {
+		t.Fatalf("RecoveryDeviceCap = %d, want DeviceCap+1 (%d)", RecoveryDeviceCap, DeviceCap+1)
+	}
+	f := newFixture(t)
+	f.pairFirst(t)
+	seedTLSKey(t, f)
+	for len(f.store.Get().ActiveDevices()) < DeviceCap {
+		f.addDevice(t, goodInvite, "extra")
+	}
+
+	// A join at the cap is refused.
+	if resp, raw := pairRaw(t, f, wire.PairRequest{InviteCode: goodInvite}); resp.StatusCode != http.StatusConflict || errCode(t, raw) != "device_quota" {
+		t.Fatalf("join at the cap: HTTP %d %s, want 409 device_quota", resp.StatusCode, raw)
+	}
+	// Recovery at the cap succeeds: one over.
+	w := recovery.WindowIndex(time.Now())
+	resp, raw := pairRaw(t, f, wire.PairRequest{RecoveryCode: recoveryCodeForWindow(t, f, w-1), DeviceName: "owner phone"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("recovery at the device cap: HTTP %d %s, want 200", resp.StatusCode, raw)
+	}
+	if got := len(f.store.Get().ActiveDevices()); got != RecoveryDeviceCap {
+		t.Fatalf("active devices after recovery = %d, want %d", got, RecoveryDeviceCap)
+	}
+	spent := f.store.Get().RecoveryWindowUsed
+
+	// A join one over the cap is still refused.
+	if resp, raw := pairRaw(t, f, wire.PairRequest{InviteCode: goodInvite}); resp.StatusCode != http.StatusConflict || errCode(t, raw) != "device_quota" {
+		t.Fatalf("join over the cap: HTTP %d %s, want 409 device_quota", resp.StatusCode, raw)
+	}
+	// A second recovery at the ceiling is refused, with a fresh code, and the
+	// code is not burned.
+	resp, raw = pairRaw(t, f, wire.PairRequest{RecoveryCode: recoveryCodeForWindow(t, f, w)})
+	if resp.StatusCode != http.StatusConflict || errCode(t, raw) != "device_quota" {
+		t.Fatalf("second recovery at the ceiling: HTTP %d %s, want 409 device_quota", resp.StatusCode, raw)
+	}
+	if got := len(f.store.Get().ActiveDevices()); got != RecoveryDeviceCap {
+		t.Fatalf("active devices = %d, want exactly %d", got, RecoveryDeviceCap)
+	}
+	if got := f.store.Get().RecoveryWindowUsed; got != spent {
+		t.Fatalf("a refused recovery moved the window mark %d -> %d", spent, got)
+	}
+}

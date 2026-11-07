@@ -165,9 +165,15 @@ bekommen, koppel es mit einem Wiederherstellungscode.
 ## Der Haushalt hat sein Geräte-Limit erreicht
 
 In einem Haushalt können dein eigenes Gerät plus bis zu 10 weitere gleichzeitig
-angemeldet sein. Ist er voll, koppelt das Relay kein weiteres Telefon – weder
-per Einladung noch mit einem Wiederherstellungscode für die Eigentümer-Rolle. Die App erhält dann `409`
-mit dem Fehlercode `household_device_quota`. Es wird nichts gekoppelt und nichts
+angemeldet sein. Ist er voll, koppelt das Relay kein weiteres Telefon per Einladung.
+Die Eigentümer-Rolle mit einem Wiederherstellungscode zurückzuholen ist die
+einzige Ausnahme: Sie wird auch bei vollem Haushalt angenommen, bis zu einem
+Gerät über dem Limit, damit ein Eigentümer, der alle Telefone verloren hat,
+wieder hineinkommt und die nicht mehr genutzten entfernen kann. Eine zweite
+Wiederherstellung, solange der Haushalt schon ein Gerät über dem Limit liegt,
+wird abgelehnt, bis ein Telefon entfernt ist. Die App erhält bei vollem
+Haushalt `409` mit dem Fehlercode `household_device_quota` (oder `device_quota`,
+wenn die Liste dieses Relays selbst voll ist). Es wird nichts gekoppelt und nichts
 verbraucht – weder der Einladungscode noch der Wiederherstellungscode, der bis
 zu seinem Ablauf gilt. Das Limit wird vor dem
 Einladungscode selbst geprüft, daher bekommt auch eine vertippte oder
@@ -180,11 +186,17 @@ wird, oder ein Mitglied meldet sich auf einem Telefon ab, das es nicht mehr
 braucht. Danach mit demselben Code erneut koppeln.
 
 Holst du dir die Eigentümer-Rolle zurück, weil kein Eigentümer-Telefon mehr übrig
-ist, kann niemand für dich ein anderes Telefon entfernen: Ein Mitglied muss sich
-auf einem Telefon abmelden, das es nicht mehr braucht. Kann das auch kein
-Mitglied (die übrigen Telefone wurden zurückgesetzt oder deinstalliert, ohne
-sich abzumelden), siehe [Immer noch hängen?](#immer-noch-hängen). Dass die
-Eigentümer-Wiederherstellung auch am Limit gelingt, ist als Korrektur geplant.
+ist, hält dich ein voller Haushalt nicht mehr auf: Mit dem Code wiederherstellen,
+dann in der App unter **PoolPilot Relay → Gekoppelte Geräte** die nicht mehr
+vorhandenen Telefone entfernen. Das setzt ein Relay und eine PoolPilot-Cloud
+voraus, die beide diese Ausnahme enthalten. Bei Relays bis v1.0.0 lehnt das
+Relay selbst noch mit `409 device_quota` ab; und bei einem neueren Relay, aber
+einer Cloud ohne die Ausnahme, antwortet die Cloud mit
+`409 household_device_quota`. In beiden Fällen wird nichts gekoppelt und der
+Wiederherstellungscode bleibt gültig, daher muss sich zuerst ein Mitglied auf
+einem Telefon abmelden, das es nicht mehr braucht. Kann das auch kein Mitglied
+(die übrigen Telefone wurden zurückgesetzt oder deinstalliert, ohne sich
+abzumelden), siehe [Immer noch hängen?](#immer-noch-hängen).
 
 Relays bis v0.12.0 antworten in diesem Fall stattdessen mit `409 voucher_quota`,
 worauf die App rät, ein paar Minuten zu warten und es mit demselben Code erneut
