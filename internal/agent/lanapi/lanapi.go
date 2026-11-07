@@ -54,6 +54,14 @@ const DefaultListen = ":8443"
 // alongside, in its own change.
 const DeviceCap = 11
 
+// RecoveryDeviceCap is the ceiling for the OWNER RECOVERY ceremony only: one
+// device over DeviceCap, matching the cloud's own recovery ceiling (an owner
+// who lost every device cannot remove the stale ones, so a full household would
+// otherwise stay locked out). Bounded, not lifted: a second recovery at this
+// ceiling is refused with device_quota until a device is removed. Invites keep
+// DeviceCap.
+const RecoveryDeviceCap = DeviceCap + 1
+
 // ctxKey namespaces this package's request-context values.
 type ctxKey int
 
@@ -585,7 +593,7 @@ func (s *Server) pairJoin(w http.ResponseWriter, r *http.Request, req wire.PairR
 	}
 	s.pairWithVoucher(w, r, req, func(ctx context.Context, deviceID string) (wire.DeviceVoucherResponse, error) {
 		return s.Cloud.BrokerVoucher(ctx, req.InviteCode, deviceID)
-	}, joinRole)
+	}, DeviceCap, joinRole)
 }
 
 // pairRecover is the physical-access ceremony: an operator ran
@@ -624,7 +632,7 @@ func (s *Server) pairRecover(w http.ResponseWriter, r *http.Request, req wire.Pa
 	}
 	s.pairWithVoucher(w, r, req, func(ctx context.Context, deviceID string) (wire.DeviceVoucherResponse, error) {
 		return s.Cloud.BrokerRecoveryVoucher(ctx, deviceID)
-	}, recoveryRole, window)
+	}, RecoveryDeviceCap, recoveryRole, window)
 }
 
 // joinRole is the local role of a device that joined with an invite: the role
@@ -642,7 +650,8 @@ func joinRole(v wire.DeviceVoucherResponse) string {
 // anchor — so the role does not depend on what the voucher reports.
 func recoveryRole(wire.DeviceVoucherResponse) string { return state.RoleOwner }
 
-// pairWithVoucher is the body shared by the join and recovery flows: cap check,
+// pairWithVoucher is the body shared by the join and recovery flows: cap check
+// (deviceCap: DeviceCap for a join, RecoveryDeviceCap for a recovery),
 // broker the voucher at the cloud, mint a local device with the role roleFor
 // assigns, persist, respond.
 //
@@ -663,6 +672,7 @@ func (s *Server) pairWithVoucher(
 	r *http.Request,
 	req wire.PairRequest,
 	broker func(ctx context.Context, deviceID string) (wire.DeviceVoucherResponse, error),
+	deviceCap int,
 	roleFor func(wire.DeviceVoucherResponse) string,
 	consumedWindow ...int64,
 ) {
@@ -671,7 +681,7 @@ func (s *Server) pairWithVoucher(
 	// the user can revoke a device and retry. This snapshot check is advisory: it
 	// is re-checked atomically inside the Update below to close the TOCTOU where
 	// two concurrent adds both clear this snapshot and would each append past cap.
-	if len(st.ActiveDevices()) >= DeviceCap {
+	if len(st.ActiveDevices()) >= deviceCap {
 		writeErr(w, http.StatusConflict, "device_quota")
 		return
 	}
@@ -715,7 +725,7 @@ func (s *Server) pairWithVoucher(
 				active++
 			}
 		}
-		if active >= DeviceCap {
+		if active >= deviceCap {
 			overCap = true
 			return
 		}

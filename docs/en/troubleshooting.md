@@ -151,9 +151,14 @@ rights on the Relay, pair it with a recovery code.
 ## The household is at its device limit
 
 A household can have your own device plus up to 10 more signed in at once. When
-it is full, the Relay refuses to pair another phone, whether it joins with an
-invite or takes the owner role back with a recovery code. The app is told so with `409` and the
-error code `household_device_quota`. Nothing is paired and nothing is used up:
+it is full, the Relay refuses to pair another phone that joins with an invite.
+Taking the owner role back with a recovery code is the one exception: it is
+admitted even when the household is full, up to one device over the limit, so
+an owner who lost every phone can get back in and then remove the stale ones. A
+second recovery while the household is already one over the limit is refused
+until a phone is removed. The app is told a full household with `409` and the
+error code `household_device_quota` (or `device_quota` when it is this Relay's
+own list that is full). Nothing is paired and nothing is used up:
 neither the invite code nor the recovery code, which works until it expires.
 The limit is checked before the invite code itself, so a mistyped or expired
 invite gets this answer too and is only refused for what it is once there is
@@ -163,11 +168,13 @@ To make room, an owner removes a phone that is no longer used under
 **PoolPilot Relay → Paired devices** in the app, or a member signs out on a
 phone they no longer need. Then pair again with the same code.
 
-If you are taking the owner role back because no owner phone is left, nobody
-can remove another phone for you: a member has to sign out on a phone they no
-longer need. If no member can do that either (the extra phones were reset or
-uninstalled without signing out), see [Still stuck?](#still-stuck). Letting
-owner recovery succeed at the limit is a planned fix.
+If you are taking the owner role back because no owner phone is left, a
+full household no longer stops you: recover with the code, then remove the
+phones that are gone under **PoolPilot Relay → Paired devices**. This needs a
+Relay and a PoolPilot cloud that both include that exemption; on an older
+Relay, a member has to sign out on a phone they no longer need first, and if no
+member can (the extra phones were reset or uninstalled without signing out), see
+[Still stuck?](#still-stuck).
 
 Relays up to v0.12.0 answer this case with `409 voucher_quota` instead, for which
 the app says to wait a few minutes and try again with the same code. Waiting
