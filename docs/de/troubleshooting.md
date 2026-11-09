@@ -265,6 +265,11 @@ richte das Relay neu ein. Im Log steht dann *„relay reset: the last paired
 device left“*. Über den Fernzugriffs-Tunnel passiert das nie: Das
 Relay lehnt es ab, sein letztes Telefon aus der Ferne zu entfernen.
 
+Nach beiden Arten des Zurücksetzens braucht das Relay ein paar Sekunden für den
+Neustart. Eine Einrichtung in diesem Moment wird mit `503` und dem Fehlercode
+`resetting` abgelehnt, und nichts wird gekoppelt; versuche es erneut, sobald das
+Relay wieder im Netzwerk ist.
+
 ## Aktualisieren oder neu installieren
 
 Den Installer-Einzeiler erneut auszuführen bringt ein Gerät auf die aktuelle

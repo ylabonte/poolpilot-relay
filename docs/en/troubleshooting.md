@@ -241,6 +241,10 @@ as new. The log shows *"relay reset: the last paired device left"*. This never
 happens through the remote tunnel: the Relay refuses to remove its last phone
 remotely.
 
+After either reset the Relay needs a few seconds to restart. A setup attempted
+in that moment is refused with `503` and the error code `resetting`, and nothing
+is paired; try again once the Relay is back on the network.
+
 ## Update or reinstall
 
 Re‑running the installer one‑liner updates a device to the current release and
