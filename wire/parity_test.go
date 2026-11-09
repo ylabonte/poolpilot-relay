@@ -95,6 +95,8 @@ func TestFixtureRoundTrips(t *testing.T) {
 		{"rc_claim_init_response", func() any { return &RcClaimInitResponse{} }},
 		{"tenant_status_request", func() any { return &TenantStatusRequest{} }},
 		{"tenant_status_response", func() any { return &TenantStatusResponse{} }},
+		{"pairing_proof_request", func() any { return &PairingProofRequest{} }},
+		{"pairing_proof_response", func() any { return &PairingProofResponse{} }},
 		{"update_status", func() any { return &UpdateStatusResponse{} }},
 		{"poll_interval_request", func() any { return &PollIntervalRequest{} }},
 		{"poll_interval_response", func() any { return &PollIntervalResponse{} }},
