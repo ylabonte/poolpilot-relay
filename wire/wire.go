@@ -105,6 +105,27 @@ type PairRequest struct {
 	// show-recovery` on the relay's console.
 	RecoveryCode string `json:"recovery_code,omitempty"`
 	DeviceName   string `json:"device_name,omitempty"`
+	// PairingProof is the optional, opaque proof the phone fetched from the
+	// cloud's POST /app-bearer/pairing-proof (PairingProofResponse) with the
+	// household entry it will present on the voucher redeem
+	// (poolpilot-relay#117, poolpilot-cloud#305). It tells the cloud that the
+	// phone already holds an entry in the household, so a household at its
+	// device cap can still admit it: the pairing reuses that entry and takes
+	// no extra slot.
+	//
+	// The relay only carries it: on an invite join or an owner recovery it is
+	// forwarded unchanged as DeviceVoucherRequest.PairingProof, and on a first
+	// pairing (EnrollmentCode) it is ignored, since no voucher is brokered.
+	// It is credential-like, so the relay never interprets, logs or stores it,
+	// and never refuses a pairing because of it — the cloud ignores any proof
+	// it does not accept. Absent from an older app; omitted when empty.
+	//
+	// One proof per pair attempt. An install with entries in several
+	// households cannot know the relay's household in advance, so on a 409
+	// household_device_quota it fetches the proof of its next entry and
+	// retries with the SAME code: that refusal persists nothing on the relay
+	// and consumes nothing at the cloud, so the code stays good.
+	PairingProof string `json:"pairing_proof,omitempty"`
 }
 
 // PairResponse returns the pairing bearer token — shown once, never again
@@ -1215,6 +1236,19 @@ type DeviceVoucherRequest struct {
 	InviteCode string `json:"invite_code,omitempty"`
 	Recovery   bool   `json:"recovery,omitempty"`
 	DeviceID   string `json:"device_id,omitempty"`
+	// PairingProof is PairRequest.PairingProof, forwarded byte for byte from
+	// the phone's pair request in either mode (poolpilot-relay#117). The relay
+	// never interprets, logs or stores it, and omits the key when the phone
+	// sent none, so an older cloud sees the exact body it always did.
+	//
+	// At the cloud, an accepted proof (unexpired, unused, of THIS relay's
+	// household, still standing for a live bearer) skips the "too many active
+	// bearers" cap and binds the voucher to that bearer, so the redeem must
+	// present it. Any other proof is ignored: the call behaves as if none had
+	// been sent. A refusal (either 409 above) leaves the proof unconsumed. The
+	// cloud's app-bearer contract (§3, "Pairing another relay at the cap") has
+	// the full rule.
+	PairingProof string `json:"pairing_proof,omitempty"`
 }
 
 // DeviceVoucherResponse is the voucher the relay forwards to the joining phone
@@ -1274,6 +1308,28 @@ type AppBearerVoucherRedeemRequest struct {
 	// unlike the mint. See docs/attestation-app-contract.md.
 	AttestKeyID string `json:"attest_key_id,omitempty"`
 	Attestation string `json:"attestation,omitempty"`
+}
+
+// PairingProofRequest is POST /app-bearer/pairing-proof (app-bearer authed,
+// any role, any tier, attestation-guarded and household-bound). The bearer
+// alone names the household entry the proof will stand for; the body exists
+// only to carry the attestation challenge, like TenantStatusRequest. An empty
+// body is valid. The relay never calls this route: the phone does, right
+// before the POST /v1/pair the proof is for (PairRequest.PairingProof).
+type PairingProofRequest struct {
+	// AttestChallenge — see DeviceRegisterRequest.AttestChallenge's doc.
+	AttestChallenge string `json:"attest_challenge,omitempty"`
+}
+
+// PairingProofResponse answers PairingProofRequest. PairingProof is returned
+// once and stored at the cloud only as its hash: opaque (64 lowercase hex
+// today, but clients must not rely on the format), single-use, valid for
+// minutes, and replaced by the bearer's next mint. The phone hands it to the
+// relay in PairRequest.PairingProof; the relay forwards it in
+// DeviceVoucherRequest.PairingProof.
+type PairingProofResponse struct {
+	PairingProof string `json:"pairing_proof"`
+	ExpiresAt    string `json:"expires_at"` // RFC 3339
 }
 
 // ---- Household: linking a paired device to its cloud entry ----

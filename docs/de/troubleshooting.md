@@ -188,6 +188,16 @@ Um Platz zu schaffen, entfernt ein Eigentümer in der App unter
 wird, oder ein Mitglied meldet sich auf einem Telefon ab, das es nicht mehr
 braucht. Danach mit demselben Code erneut koppeln.
 
+Ein Telefon, das schon zum Haushalt gehört (es ist mit einem anderen Relay
+desselben Haushalts gekoppelt), braucht keinen freien Platz, um auch dieses
+Relay zu koppeln: Es behält seinen Platz im Haushalt und belegt keinen weiteren.
+Die App schickt beim Koppeln einen kurzlebigen Nachweis dafür mit, den das Relay
+an die PoolPilot-Cloud weiterreicht, ohne ihn zu lesen oder zu speichern. Das
+setzt ein Relay neuer als v1.0.0 sowie eine Cloud und eine App voraus, die das
+unterstützen; mit einem älteren Relay oder einer älteren App lehnt ein voller
+Haushalt auch dieses Telefon ab. Ein Telefon, das zu mehreren Haushalten gehört,
+probiert sie mit demselben Code nacheinander durch.
+
 Holst du dir die Eigentümer-Rolle zurück, weil kein Eigentümer-Telefon mehr übrig
 ist, hält dich ein voller Haushalt nicht mehr auf: Mit dem Code wiederherstellen,
 dann in der App unter **PoolPilot Relay → Gekoppelte Geräte** die nicht mehr

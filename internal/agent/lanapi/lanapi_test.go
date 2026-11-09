@@ -3,6 +3,7 @@ package lanapi
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -89,6 +90,11 @@ type fixture struct {
 	// (poolpilot-cloud#278), also checked before the invite is consumed, but
 	// lasting until a device is removed.
 	householdCapReached atomic.Bool
+	// acceptedProof, when set to a non-empty string, is the one pairing proof
+	// the /device-vouchers stub accepts: a request carrying it skips the
+	// household cap above, as the real broker does for a proof of its own
+	// household (poolpilot-cloud#305). Any other proof is ignored.
+	acceptedProof atomic.Value // string
 	// brokerHold, when set, runs inside the /device-vouchers stub while the
 	// request is still in flight. It is how a test holds several pairings inside
 	// the broker call at once — which is where the real race window lives, since
@@ -102,8 +108,14 @@ type fixture struct {
 	deviceIDsMu      sync.Mutex
 	redeemDeviceIDs  []string
 	voucherDeviceIDs []string
-	revokedMu        sync.Mutex
-	revoked          map[string]bool
+	// voucherBodies records each POST /device-vouchers body exactly as it
+	// arrived, so a test can pin a key's presence or absence on the wire.
+	voucherBodies [][]byte
+	// statePath is the agent's state file, for tests that check what reached
+	// the disk.
+	statePath string
+	revokedMu sync.Mutex
+	revoked   map[string]bool
 	// updated records, per guid, the last body the agent PUT to
 	// /controllers/{guid} (the dedup-HIT config refresh, issue
 	// poolpilot-cloud#99). updateRejects, when set, makes that route answer
@@ -489,14 +501,18 @@ func newFixture(t *testing.T) *fixture {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
+			rawBody, _ := io.ReadAll(r.Body)
 			var body wire.DeviceVoucherRequest
-			_ = json.NewDecoder(r.Body).Decode(&body)
+			_ = json.Unmarshal(rawBody, &body)
 			f.deviceIDsMu.Lock()
 			f.voucherDeviceIDs = append(f.voucherDeviceIDs, body.DeviceID)
+			f.voucherBodies = append(f.voucherBodies, rawBody)
 			f.deviceIDsMu.Unlock()
+			accepted, _ := f.acceptedProof.Load().(string)
+			proofAccepted := accepted != "" && body.PairingProof == accepted
 			// The cap is checked before the invite is consumed, so this arm sits
 			// ahead of the invite validation just like the real handler's does.
-			if f.householdCapReached.Load() {
+			if f.householdCapReached.Load() && !proofAccepted {
 				w.WriteHeader(http.StatusConflict)
 				_, _ = w.Write([]byte(`{"error":"too many active bearers"}`))
 				return
@@ -537,7 +553,8 @@ func newFixture(t *testing.T) *fixture {
 	}))
 	t.Cleanup(f.cloudSrv.Close)
 
-	f.store, err = state.Open(filepath.Join(t.TempDir(), "state.json"))
+	f.statePath = filepath.Join(t.TempDir(), "state.json")
+	f.store, err = state.Open(f.statePath)
 	if err != nil {
 		t.Fatalf("state.Open: %v", err)
 	}

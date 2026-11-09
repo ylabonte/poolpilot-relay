@@ -171,6 +171,15 @@ To make room, an owner removes a phone that is no longer used under
 **PoolPilot Relay → Paired devices** in the app, or a member signs out on a
 phone they no longer need. Then pair again with the same code.
 
+A phone that is already in the household (it is paired with another Relay of
+the same household) does not need a free slot to pair this Relay too: it keeps
+its place in the household and takes no extra one. The app sends a short-lived
+proof of that with the pairing, and the Relay passes it on to the PoolPilot
+cloud without reading or storing it. This needs a Relay newer than v1.0.0, a
+cloud and an app that support it; with an older Relay or app, a full household
+refuses that phone as well. A phone that belongs to several households tries
+them one after the other with the same code.
+
 If you are taking the owner role back because no owner phone is left, a
 full household no longer stops you: recover with the code, then remove the
 phones that are gone under **PoolPilot Relay → Paired devices**. This needs a
