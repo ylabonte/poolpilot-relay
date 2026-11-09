@@ -1245,7 +1245,8 @@ type DeviceVoucherResponse struct {
 // bearer only decides which household entry the ceremony lands on — the cloud
 // links the new relay device to that bearer and hands it back unchanged
 // instead of minting a second one. Without the header (an older app, a fresh
-// install) the cloud mints a fresh bearer as before. A bearer of another
+// install, or an empty header or "Bearer " with no token, which count as
+// absent) the cloud mints a fresh bearer as before. A bearer of another
 // household is refused with 409, and an unknown or revoked one with 409
 // "app bearer unknown"; both are refused before the voucher is consumed, so
 // the phone can retry the same voucher with another bearer or with none. An
@@ -1261,11 +1262,12 @@ type AppBearerVoucherRedeemRequest struct {
 	// AttestChallenge — see DeviceRegisterRequest.AttestChallenge's doc.
 	AttestChallenge string `json:"attest_challenge,omitempty"`
 	// AttestKeyID + Attestation are the iOS BOOTSTRAP, for the same reason
-	// AppBearerMintRequest carries them: a phone joining a household is a
-	// brand-new install with no registered App Attest key and no bearer to
+	// AppBearerMintRequest carries them: a phone joining a household is usually
+	// a brand-new install with no registered App Attest key and no bearer to
 	// register one with, so it may present the one-time attestation object here
-	// and have the key bound to the household this call admits it to. Both
-	// together or neither.
+	// and have the key bound to the household this call admits it to. An
+	// install that presents an existing bearer (above) is attested the same
+	// way: the bearer does not replace attestation. Both together or neither.
 	//
 	// One cross-repo detail the app must mirror: the clientDataHash preimage is
 	// attestClientData(challenge, "") — this route has no app_user_id to fold in,
@@ -1349,8 +1351,8 @@ type EnrollRedeemRequest struct {
 //     legacy self-report. An older cloud answers a plain {"ok":true}, also
 //     when it wrote nothing (see the next-but-one entry), so a 200 without
 //     "source" does not prove a link.
-//   - 409 "not a legacy pairing": the caller is not a legacy pairing, or (on
-//     an older cloud) already holds a ceremony link on that relay; a newer
+//   - 409 "not a legacy pairing": the caller is not a legacy pairing, or
+//     already holds a ceremony link on that relay; a newer
 //     cloud answers it only when the reported device is not also
 //     ceremony-linked to the caller there. Retrying does not help.
 //   - 409 "relay device not linked" (newer cloud): the caller is a legacy
