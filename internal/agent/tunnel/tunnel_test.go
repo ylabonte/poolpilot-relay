@@ -590,3 +590,39 @@ func waitForOrRunExit(t *testing.T, done <-chan error, what string, cond func() 
 		time.Sleep(50 * time.Microsecond)
 	}
 }
+
+// WaitStopped returns only once the tunnel is idle AND its running frp
+// service is gone (the asynchronous teardown finished), and gives up with
+// ctx's error while a service is still configured.
+func TestWaitStoppedWaitsForTheTeardown(t *testing.T) {
+	tn := New().(*frpTunnel)
+	with := offlineConfig()
+	empty := offlineConfig()
+	empty.Controllers = nil
+	if err := tn.Configure(with); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- tn.Run(ctx) }()
+	waitForOrRunExit(t, done, "service built", func() bool { return serviceRunning(tn) })
+
+	short, cancelShort := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancelShort()
+	if err := tn.WaitStopped(short); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("WaitStopped with a service running = %v, want DeadlineExceeded", err)
+	}
+
+	if err := tn.Configure(empty); err != nil {
+		t.Fatalf("Configure(empty): %v", err)
+	}
+	waitCtx, cancelWait := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelWait()
+	if err := tn.WaitStopped(waitCtx); err != nil {
+		t.Fatalf("WaitStopped after emptying the config: %v", err)
+	}
+	if serviceRunning(tn) {
+		t.Error("WaitStopped returned while the frp service was still running")
+	}
+}

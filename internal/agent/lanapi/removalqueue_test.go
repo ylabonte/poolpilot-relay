@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -91,9 +92,11 @@ func TestRevokeDeviceReportSurvivesCloudFailureAndRestart(t *testing.T) {
 	}
 }
 
-// The last-device LAN revoke unpairs the relay but keeps its cloud
-// credentials, so a failed report there is queued too and goes out later.
-func TestRevokeLastDeviceQueuesReportWhenCloudFails(t *testing.T) {
+// The last-device LAN revoke resets the relay like a factory reset
+// (poolpilot-relay#115), which wipes the queue with the credential: a report
+// the cloud refuses there is attempted once and then lost with the wipe —
+// it never blocks the reset.
+func TestRevokeLastDeviceReportFailureDoesNotBlockTheReset(t *testing.T) {
 	f := newFixture(t)
 	tok, dev := f.pairFirst(t)
 
@@ -101,9 +104,16 @@ func TestRevokeLastDeviceQueuesReportWhenCloudFails(t *testing.T) {
 	if resp, raw := f.do(t, "DELETE", "/v1/devices/"+dev, tok, nil); resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("self-revoke last device: HTTP %d %s, want 204", resp.StatusCode, raw)
 	}
-	if got := pendingIDs(f.store.Get()); len(got) != 1 || got[0] != dev {
-		t.Fatalf("queue = %v, want [%s]", got, dev)
+	f.revokedPushMu.Lock()
+	attempted := f.revokePushAuth[dev]
+	f.revokedPushMu.Unlock()
+	if attempted != "Bearer relay-frpc-token" {
+		t.Errorf("the removal report was not attempted under the old token (auth %q)", attempted)
 	}
+	if _, err := os.Stat(f.store.PathName()); !os.IsNotExist(err) {
+		t.Errorf("state file survived the reset: %v", err)
+	}
+	waitExited(t, f)
 }
 
 // A slow cloud costs DELETE /v1/devices/{id} at most RemovalReportTimeout,
@@ -154,9 +164,11 @@ func TestRevokeDeviceAttemptsOnlyItsOwnEntry(t *testing.T) {
 	}
 }
 
-// queueTwoRemovalsAndUnpair pairs, adds a second phone, and removes both
-// while the cloud answers 502, so both removals are queued and the relay is
-// unpaired but still holds its (old) cloud credentials.
+// queueTwoRemovalsAndUnpair pairs, adds a second phone, removes it while
+// the cloud answers 502 (queued), and then leaves the relay unpaired with its
+// (old) cloud credentials and both removals queued. The last device is
+// revoked in the store directly (unpairKeepingCredential): over the LAN API
+// it would reset the relay instead (poolpilot-relay#115).
 func queueTwoRemovalsAndUnpair(t *testing.T, f *fixture) (string, string) {
 	t.Helper()
 	tok1, dev1 := f.pairFirst(t)
@@ -165,9 +177,7 @@ func queueTwoRemovalsAndUnpair(t *testing.T, f *fixture) (string, string) {
 	if resp, raw := f.do(t, "DELETE", "/v1/devices/"+dev2, tok1, nil); resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("revoke dev2: HTTP %d %s", resp.StatusCode, raw)
 	}
-	if resp, raw := f.do(t, "DELETE", "/v1/devices/"+dev1, tok1, nil); resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("revoke last device: HTTP %d %s", resp.StatusCode, raw)
-	}
+	unpairKeepingCredential(t, f, dev1)
 	if got := pendingIDs(f.store.Get()); len(got) != 2 {
 		t.Fatalf("queue before re-pair = %v, want both removals", got)
 	}

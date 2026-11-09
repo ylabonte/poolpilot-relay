@@ -117,7 +117,10 @@ for owners only: adding, changing or removing controllers, regenerating a
 controller's remote link, changing alert rules, removing **another** phone,
 installing updates or switching automatic updates, and the household and factory
 resets. A member phone that asks for one of these gets `403` with the error code
-`owner_required` from the Relay's local API, and nothing changes.
+`owner_required` from the Relay's local API, and nothing changes. One thing any
+phone can cause: if it is the **last** phone paired with the Relay and removes
+itself, the Relay resets itself like a factory reset (see
+[Factory reset](#factory-reset)).
 
 No other phone can remove the **last** owner phone. A member phone that tries
 gets `403` with `owner_required` (see above). If two owner phones try to remove
@@ -193,7 +196,10 @@ sudo poolpilot-relay show-recovery
 ```
 
 The code expires after a few minutes and is single‑use. It only works on a Relay
-that has been paired before. See [Commands](commands.md#poolpilot-relay-show-recovery).
+that has been paired before and is still set up. A Relay whose last phone removed
+itself has reset itself (see [Factory reset](#factory-reset)); set it up again
+with [`show-pairing`](#re-pair-the-relay) instead. See
+[Commands](commands.md#poolpilot-relay-show-recovery).
 
 ## A stuck or failed update
 
@@ -220,6 +226,24 @@ pairing and identity and the agent restarts with a fresh one (systemd brings it
 straight back up). Afterwards the Relay is unpaired —
 [re‑pair](#re-pair-the-relay) it as if it were new. Because the identity
 changed, remove the old Relay entry in the app first if it's still listed.
+The one other way a Relay resets is when its last phone leaves (below).
+
+**When the last phone leaves, the Relay resets itself.** If the last phone
+paired with the Relay removes itself at home, on the same network (for example
+the owner disconnecting their own phone when no other phone is paired), the
+Relay does exactly what a factory reset does: it frees its place in your
+household in the cloud, forgets its pairing, controllers and cloud credentials,
+and restarts with a fresh identity, ready to be set up again right away. This
+applies whatever the phone's role: a member phone that is the last one left
+triggers it too, even though it can't start a factory reset itself. Afterwards
+a [recovery code](#lost-owner-access) no longer applies; set the Relay up again
+as new. The log shows *"relay reset: the last paired device left"*. This never
+happens through the remote tunnel: the Relay refuses to remove its last phone
+remotely.
+
+After either reset the Relay needs a few seconds to restart. A setup attempted
+in that moment is refused with `503` and the error code `resetting`, and nothing
+is paired; try again once the Relay is back on the network.
 
 ## Update or reinstall
 

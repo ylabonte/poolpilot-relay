@@ -729,11 +729,11 @@ func TestReconfigureTunnelNormalizesLanAddress(t *testing.T) {
 }
 
 // Revoking the LAST active device over the LAN unpairs the agent AND clears its
-// controllers: a re-pair mints a NEW cloud relay identity, so any kept controller
-// GUID would be permanently rejected by the frps hijack guard (owned by the old
-// relay) and undeletable via dedup reuse — a stranded, tunnel-dead row. The cleared
-// GUIDs are best-effort revoked in the cloud and the tunnel is reconfigured to
-// empty. A subsequent pair + controller PUT must register a FRESH GUID.
+// controllers: the cleared GUIDs are best-effort revoked in the cloud (while
+// the old credential is still held) and the tunnel is reconfigured to empty.
+// The relay then resets like a factory reset (poolpilot-relay#115,
+// lastdevice_reset_test.go), so a re-pair starts from a fresh identity after
+// the restart and can never reuse a stale GUID.
 func TestRevokeLastDeviceLANClearsControllers(t *testing.T) {
 	f := newFixture(t)
 	ft := &fakeTunnel{}
@@ -767,14 +767,6 @@ func TestRevokeLastDeviceLANClearsControllers(t *testing.T) {
 	}
 	if f.notifier.paired.Load() {
 		t.Error("mDNS TXT must flip back to unpaired when the last device is revoked")
-	}
-
-	// A fresh pair + controller PUT mints a NEW GUID — the stale one is gone, so
-	// there is no dedup-HIT reuse of a tunnel-dead GUID owned by the old relay.
-	tok2 := f.pair(t)
-	g2 := putControllerOK(t, f, tok2, wire.ControllerConfig{Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: "Pool again"})
-	if g2 == g1 {
-		t.Errorf("re-pair must mint a FRESH controller GUID, got the stale %q", g2)
 	}
 }
 

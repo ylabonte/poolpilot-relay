@@ -53,8 +53,9 @@ sudo poolpilot-relay show-recovery
 
 It prints a QR code / link and the code, tells you when the code expires (a few
 minutes), and reminds you it's single use. It only works once the Relay is
-**enrolled** with the cloud (i.e. it has been paired before); on a brand‑new
-Relay, pair normally with `show-pairing` instead. Like `show-pairing`, it is
+**enrolled** with the cloud (i.e. it has been paired before and is still set
+up); on a brand‑new Relay, or one that reset itself because its last paired phone
+removed itself, pair normally with `show-pairing` instead. Like `show-pairing`, it is
 read‑only.
 
 ## Managing the service

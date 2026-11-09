@@ -245,6 +245,56 @@ func TestWipeBlocksLaterUpdates(t *testing.T) {
 	}
 }
 
+// WipeIf wipes only while its binding holds for the current document, and
+// hands back the document as it was wiped (the last-device reset releases the
+// credential from it, poolpilot-relay#115). A failed binding leaves the store
+// live and the file in place; an already-wiped store is never wiped again.
+func TestWipeIfBindsToTheCurrentDocument(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Update(func(s *State) { s.Cloud.FrpcToken = "tok-new" }); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, wiped, err := st.WipeIf(func(s State) bool { return s.Cloud.FrpcToken == "tok-old" }); err != nil || wiped {
+		t.Fatalf("WipeIf with a failed binding: wiped=%v err=%v, want false/nil", wiped, err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("state file gone after a refused WipeIf: %v", err)
+	}
+	if err := st.Update(func(*State) {}); err != nil {
+		t.Fatalf("store not live after a refused WipeIf: %v", err)
+	}
+
+	prev, wiped, err := st.WipeIf(func(s State) bool { return s.Cloud.FrpcToken == "tok-new" })
+	if err != nil || !wiped {
+		t.Fatalf("WipeIf with a holding binding: wiped=%v err=%v, want true/nil", wiped, err)
+	}
+	if prev.Cloud.FrpcToken != "tok-new" {
+		t.Errorf("returned document token = %q, want the wiped one", prev.Cloud.FrpcToken)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("state file exists after WipeIf: %v", err)
+	}
+	if err := st.Update(func(*State) {}); !errors.Is(err, ErrWiped) {
+		t.Errorf("Update after WipeIf: got %v, want ErrWiped", err)
+	}
+	if _, wiped, _ := st.WipeIf(nil); wiped {
+		t.Error("an already-wiped store was wiped again")
+	}
+	// A wiped store reads empty: nothing still running may find the dropped
+	// credential (or anything else) in it.
+	if got := st.Get(); got.Cloud.FrpcToken != "" || got.Enrolled() {
+		t.Errorf("Get after WipeIf = token %q enrolled %v, want an empty document", got.Cloud.FrpcToken, got.Enrolled())
+	}
+	if !st.Wiped() {
+		t.Error("Wiped() = false after WipeIf")
+	}
+}
+
 // SeedCloudSync flags every controller that has a cloud identity for one
 // refresh push — once per state file: a later pass (every boot calls it) must
 // not re-flag anything, so a controller registered afterwards is never

@@ -743,24 +743,40 @@ func removalBackoff(attempts int) time.Duration {
 	return min(d, removalBackoffMax)
 }
 
+// ReleaseReasonUnpaired is the reason the last-device unpair sends with
+// POST /relay/release (poolpilot-relay#115): the relay's last paired device
+// left over the LAN, and the relay resets exactly like a factory reset. A
+// factory reset itself sends no reason; the control plane records a bodyless
+// release as "factory_reset". A control plane that does not know the reason
+// yet ignores the body and records the call as a factory reset too, so the
+// slot is released either way.
+const ReleaseReasonUnpaired = "unpaired"
+
 // Release best-effort releases this relay's cloud-side quota slot on a
-// factory reset (POST /relay/release, relay-bearer, bodyless — a plain
-// relay-bearer POST like RevokeController/RevokePushForDevice above, no new
-// wire type). Unlike those, baseURL and frpcToken are explicit arguments
-// rather than read from c.store.Get(): the caller (lanapi's factoryReset)
-// invokes this AFTER state.Store.Wipe(), so the call must not depend on the
-// store's post-wipe state. (Wipe removes the file and blocks further Update,
-// but leaves the in-memory doc readable until the process exits — relying on
-// that quirk would be fragile.) The caller snapshots both from the store
-// BEFORE wiping and passes them in, the same way Redeem takes an explicit
-// baseURL before the store is populated.
+// factory reset (POST /relay/release, relay-bearer). reason "" sends no body
+// (the factory reset); a non-empty reason is sent as {"reason":"..."} (the
+// last-device unpair, ReleaseReasonUnpaired). Like RevokePushForDevice's body,
+// it is a plain JSON object, not a wire type: the control plane documents the
+// route and its reasons. Unlike RevokeController/RevokePushForDevice, baseURL
+// and frpcToken are explicit arguments rather than read from c.store.Get():
+// the caller (lanapi's resetLikeFactory) invokes this AFTER the state store
+// was wiped, so the call must not depend on the store's post-wipe state.
+// (Wipe removes the file and blocks further Update, but leaves the in-memory
+// doc readable until the process exits — relying on that quirk would be
+// fragile.) The caller takes both from the document as it was wiped
+// (state.Store.WipeIf) and passes them in, the same way Redeem takes an
+// explicit baseURL before the store is populated.
 //
 // A 404 means an old control plane without the route yet — best-effort, and
 // version skew must never fail the reset — so it is treated as success, the
 // same idempotent-404 reading RevokeController gives an already-gone
 // controller.
-func (c *Client) Release(ctx context.Context, baseURL, frpcToken string) error {
-	status, err := c.doJSON(ctx, http.MethodPost, baseURL+"/relay/release", frpcToken, nil, nil)
+func (c *Client) Release(ctx context.Context, baseURL, frpcToken, reason string) error {
+	var body any
+	if reason != "" {
+		body = map[string]string{"reason": reason}
+	}
+	status, err := c.doJSON(ctx, http.MethodPost, baseURL+"/relay/release", frpcToken, body, nil)
 	if err != nil {
 		return err
 	}

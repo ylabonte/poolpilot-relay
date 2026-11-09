@@ -180,6 +180,18 @@ type Server struct {
 	// probe → cloud register → persist closes that race.
 	controllerMu sync.Mutex
 
+	// setupMu serializes the first pairing (POST /v1/pair with an enrolment
+	// code, from its pairing-state check through the cloud redeem to the
+	// persist) with resetLikeFactory's wipe. Without it a first pairing whose redeem was
+	// still in flight when a last-device reset wiped the store would consume
+	// its enrolment code, mint a cloud identity, and then fail to persist it
+	// (ErrWiped) — an orphaned identity and a 500. With it the reset waits for
+	// the pairing to commit (and then skips, because the relay is paired
+	// again), or the pairing waits for the wipe (and is refused, because the
+	// relay is restarting). Held across cloud calls, so never take it while
+	// holding controllerMu or tunnelMu.
+	setupMu sync.Mutex
+
 	// bgSync tracks the fire-and-forget cloud syncs kickCloudSync starts, so a
 	// caller that tears the server down (tests removing the state dir) can
 	// wait for them via waitBackground instead of racing their state writes.
@@ -358,7 +370,8 @@ func (s *Server) sharedRoutes() []route {
 
 // lanRoutes is the LAN-facing route set: the shared routes plus pairing,
 // factory-reset and household-reset. Revoking the last active device is
-// allowed here (that is how "remove this phone" unpairs the agent).
+// allowed here (that is how "remove this phone" unpairs the agent, which then
+// resets like a factory reset — see deleteDevice).
 func (s *Server) lanRoutes() []route {
 	return append(s.sharedRoutes(),
 		route{"POST /v1/pair", accessPublic, s.pair},
@@ -489,6 +502,24 @@ func (s *Server) pair(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_json")
 		return
 	}
+	if req.EnrollmentCode != "" {
+		// The first pairing mints a cloud identity (the redeem) before it can
+		// persist it, so it is serialized with resetLikeFactory's wipe
+		// (setupMu), and its pairing-state check runs under that lock too.
+		// The invite and recovery ceremonies need no lock: against a wiped
+		// store (which reads empty) they are refused anyway, not_paired or
+		// code_rejected, before any cloud call.
+		s.setupMu.Lock()
+		defer s.setupMu.Unlock()
+		if s.Store.Wiped() {
+			// A factory reset (or a last-device reset) already wiped the store
+			// and the process is about to restart into a fresh identity:
+			// nothing paired now could be persisted. The app retries once the
+			// relay is back.
+			writeErr(w, http.StatusServiceUnavailable, "resetting")
+			return
+		}
+	}
 	switch {
 	case req.RecoveryCode != "":
 		s.pairRecover(w, r, req)
@@ -607,10 +638,13 @@ func (s *Server) pairJoin(w http.ResponseWriter, r *http.Request, req wire.PairR
 // root-on-the-box access reading the code required — so nothing is being taken
 // on trust that was not already proven.
 //
-// Unlike pairJoin it does NOT require an already-paired relay. A household whose
-// last device was revoked is precisely one that needs recovering, and refusing
-// it here would leave the only way back to be a factory reset — which throws the
-// household away instead of recovering it.
+// Unlike pairJoin it does NOT require an already-paired relay. An enrolled relay
+// with no active device left still belongs to its household and is precisely
+// one that needs recovering, and refusing it here would leave the only way back
+// to be a factory reset — which throws the household away instead of
+// recovering it. (A last-device revoke over the LAN no longer leaves a relay in
+// that state since poolpilot-relay#115 — it resets — but an older version or a
+// skipped reset can.)
 func (s *Server) pairRecover(w http.ResponseWriter, r *http.Request, req wire.PairRequest) {
 	st := s.Store.Get()
 	// The single-use guard's first half: only a window STRICTLY LATER than the
@@ -935,7 +969,8 @@ func (s *Server) getDevices(w http.ResponseWriter, r *http.Request) {
 // deleteDevice revokes a device by id (sets RevokedAt). tunnelLeg selects the
 // D9 guard: on the tunnel, revoking the LAST active device is refused
 // (last_device_lan_only) so a stolen bearer cannot remotely unpair the agent;
-// on the LAN it is allowed and unpairs. Self-revoke (leaving) is open to every
+// on the LAN it is allowed and resets the relay like a factory reset (see
+// "Last device" below). Self-revoke (leaving) is open to every
 // paired device; revoking ANOTHER device — the lost-phone flow — is owner-only
 // (403 owner_required for a member; enforced by the selfOrOwner gate both legs
 // mount this handler behind).
@@ -946,6 +981,21 @@ func (s *Server) getDevices(w http.ResponseWriter, r *http.Request) {
 // revokes of two active devices both cleared the len==1 guard and fully unpaired
 // the agent remotely (defeating D9). On abort (404 or the tunnel last-device
 // guard) the closure leaves the document unmutated.
+//
+// Last device (poolpilot-relay#115): when the revoke leaves no active device
+// on the LAN leg, the relay must not stay bound to its old household — keeping
+// its cloud credential would keep the old relay row alive in the cloud
+// (occupying a quota slot, shown online, not releasable by its owner). So it
+// resets exactly like POST /v1/factory-reset (resetLikeFactory), in this
+// order: the removal reports the old identity still owes go out first, under
+// the credential they belong to (one bounded flush, like pairFirst's before a
+// re-pair); the cleared controllers are revoked at the cloud; then the whole
+// state is wiped, the cloud slot released with reason "unpaired", and the
+// process restarted with a fresh identity once the 204 is on the wire. The
+// wipe is bound to the unpaired document the revoke committed: a new setup
+// that lands while the cloud calls run is never wiped (and the old slot is
+// then left to the cloud's inactivity janitor). Deleting the last CONTROLLER
+// never gets here: swapping a controller on a paired relay resets nothing.
 //
 // Last-owner guard: revoking the household's LAST active owner device is
 // refused with 409 last_owner_device when the caller is a DIFFERENT device.
@@ -1000,6 +1050,9 @@ func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 			lastOwner    bool
 			remaining    int
 			removedGUIDs []string
+			// unpairedToken is the cloud credential the last-device revoke
+			// committed under; resetLikeFactory's wipe is bound to it.
+			unpairedToken string
 		)
 		err := s.Store.Update(func(doc *state.State) {
 			idx := -1
@@ -1053,11 +1106,11 @@ func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 			doc.CtrlSessionSecret = ""
 			if remaining == 0 {
 				// Last active device revoked over the LAN → the agent is now
-				// unpaired. Clear the controllers in the SAME Update: a re-pair runs
-				// pairFirst and mints a NEW cloud relay identity, so every kept GUID
-				// would be permanently rejected by the frps hijack guard (owned by
-				// the old relay) and undeletable via dedup-HIT reuse — a stranded,
-				// tunnel-dead row. Capture the GUIDs for best-effort cloud revocation.
+				// unpaired and resets like a factory reset below. Clear the
+				// controllers in the SAME Update already, so nothing polls or
+				// tunnels them in the meantime, and capture the GUIDs for
+				// best-effort cloud revocation before the credential is wiped.
+				unpairedToken = doc.Cloud.FrpcToken
 				for _, c := range doc.Controllers {
 					if c.GUID != "" {
 						removedGUIDs = append(removedGUIDs, c.GUID)
@@ -1128,9 +1181,19 @@ func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 		// queue. A report the deadline cuts off stays queued.
 		// WithoutCancel: the phone hanging up right after DELETE must not abort
 		// the cleanup mid-flight; the deadline above still bounds it.
+		//
+		// The last-device revoke is the exception: the reset below wipes the
+		// queue with the credential, so there is no later attempt. It flushes
+		// the WHOLE queue once instead (FlushDeviceRemovals, the same last
+		// chance pairFirst gives it before a re-pair), under the same bound;
+		// whatever that cannot settle is lost with the wipe.
 		cleanupCtx := context.WithoutCancel(r.Context())
 		reportCtx, cancelReport := context.WithTimeout(cleanupCtx, s.removalReportTimeout())
-		if err := s.Cloud.ReportDeviceRemoval(reportCtx, id); err != nil {
+		if remaining == 0 {
+			if err := s.Cloud.FlushDeviceRemovals(reportCtx); err != nil {
+				slog.Warn("flush device removal reports before the last-device reset", "err", err)
+			}
+		} else if err := s.Cloud.ReportDeviceRemoval(reportCtx, id); err != nil {
 			slog.Warn("cloud device removal report", "device_id", id, "err", err)
 		}
 		cancelReport()
@@ -1141,11 +1204,30 @@ func (s *Server) deleteDevice(tunnelLeg bool) http.HandlerFunc {
 					slog.Warn("cloud controller revoke", "guid", guid, "err", err)
 				}
 			}
-			// Revoking the last device unpairs the agent — flip the mDNS TXT back so
-			// a fresh pairing ceremony can begin (same hook pair/factory-reset use).
-			if s.OnPaired != nil {
-				s.OnPaired.UpdatePaired(false)
+			// Reset like a factory reset (poolpilot-relay#115), bound to the
+			// document this revoke left: still unpaired, still the same
+			// credential. A new setup in between (pairFirst, or an owner
+			// recovery) fails that binding and is left alone.
+			reset, err := s.resetLikeFactory(cleanupCtx, func(doc state.State) bool {
+				return !doc.Paired() && doc.Cloud.FrpcToken == unpairedToken
+			}, cloud.ReleaseReasonUnpaired)
+			switch {
+			case err != nil:
+				// The revoke itself committed; only the reset failed. The relay
+				// stays unpaired (with its old credential, as before #115).
+				slog.Error("reset after the last device left", "err", err)
+			case !reset:
+				slog.Info("last device left, but a new setup landed meanwhile; reset skipped")
 			}
+			if !reset && s.OnPaired != nil {
+				s.OnPaired.UpdatePaired(s.Store.Get().Paired())
+			}
+			w.WriteHeader(http.StatusNoContent)
+			if reset {
+				slog.Warn("relay reset: the last paired device left; state wiped like a factory reset, restarting with a fresh identity")
+				s.exitAfterResponse()
+			}
+			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}
@@ -2363,39 +2445,116 @@ func (s *Server) controllerStatus(st state.State, c state.Controller, ps tunnel.
 
 // factoryReset wipes local state, then best-effort releases this relay's
 // cloud-side quota slot (issue: a reset relay must not permanently squat an
-// entitlement's controller quota). st is captured BEFORE Wipe on purpose —
-// Wipe is the point of no return (state.Store.Wipe's doc) and the release
-// call needs the frpc token Wipe is about to destroy. Wipe-first is
-// deliberate, not an oversight: a release failure must never block the
-// reset, only the reset itself may. The cloud's own inactivity janitor is
-// the backstop when the release call fails (offline relay, cloud down, or a
-// control plane old enough not to have the route yet).
+// entitlement's controller quota), and restarts the process with a fresh
+// identity. The sequence is resetLikeFactory, shared with the last-device
+// unpair (deleteDevice).
 func (s *Server) factoryReset(w http.ResponseWriter, r *http.Request) {
-	st := s.Store.Get()
-	if err := s.Store.Wipe(); err != nil {
+	if _, err := s.resetLikeFactory(cloudCtx(r), nil, ""); err != nil {
 		slog.Error("factory reset", "err", err)
 		writeErr(w, http.StatusInternalServerError, "wipe_failed")
 		return
 	}
+	w.WriteHeader(http.StatusNoContent)
+	s.exitAfterResponse()
+}
+
+// resetLikeFactory is the ONE factory-reset sequence, run by POST
+// /v1/factory-reset and by the last-device unpair over the LAN
+// (poolpilot-relay#115), so the two can never drift apart:
+//
+//  1. wipe the whole local state (state.Store.WipeIf), serialized with the
+//     first pairing (setupMu): cloud credential, paired devices,
+//     controllers, queued alerts and reports, agent id and TLS key. `still`
+//     binds the wipe to the document the caller decided on (nil:
+//     unconditional); when it no longer holds nothing happens and
+//     (false, nil) is returned. From here the store reads empty, so nothing
+//     still running (poller, alert delivery, controller sync, update check,
+//     lifecycle watcher) can call the cloud with the dropped credential;
+//  2. stop the tunnel and wait (bounded) until its frp service is gone, so
+//     its authenticated heartbeat cannot reach the cloud after the release —
+//     the control plane treats any authenticated call as proof of life and
+//     would un-release the row;
+//  3. announce paired=false over mDNS;
+//  4. if the wiped document was enrolled, best-effort release its cloud slot
+//     (POST /relay/release) with the credential it held, sending reason
+//     ("" for the factory reset itself, cloud.ReleaseReasonUnpaired for the
+//     unpair).
+//
+// What steps 1 and 2 cannot cover: a cloud request another goroutine had
+// already sent before the wipe, still in flight while the release lands. It
+// is a window of one request's latency, and the cloud's inactivity janitor
+// is the backstop then, as for a failed release.
+//
+// Wipe-first is deliberate, not an oversight: a release failure must never
+// block the reset, only the reset itself may. The cloud's own inactivity
+// janitor is the backstop when the release call fails (offline relay, cloud
+// down, or a control plane old enough not to have the route yet). The caller
+// answers its request and then calls exitAfterResponse, which restarts the
+// process into the fresh identity.
+func (s *Server) resetLikeFactory(ctx context.Context, still func(state.State) bool, reason string) (bool, error) {
+	s.setupMu.Lock()
+	st, wiped, err := s.Store.WipeIf(still)
+	s.setupMu.Unlock()
+	if err != nil || !wiped {
+		return wiped, err
+	}
+	s.stopTunnelForReset(ctx)
 	if s.OnPaired != nil {
 		s.OnPaired.UpdatePaired(false)
 	}
 	if st.Enrolled() {
-		// WithoutCancel, like the revoke calls above: the LAN client that issued
-		// the reset may hang up (or the systemd exit below may fire) before this
-		// completes, and that must not abort the release mid-flight. The 5s
-		// bound keeps a wedged uplink from delaying the response.
-		releaseCtx, cancel := context.WithTimeout(cloudCtx(r), 5*time.Second)
-		if err := s.Cloud.Release(releaseCtx, st.Cloud.BaseURL, st.Cloud.FrpcToken); err != nil {
+		// ctx is detached from the request (cloudCtx): the LAN client may hang
+		// up (or the exit below may fire) before this completes, and that must
+		// not abort the release mid-flight. The 5s bound keeps a wedged uplink
+		// from delaying the response.
+		releaseCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		if err := s.Cloud.Release(releaseCtx, st.Cloud.BaseURL, st.Cloud.FrpcToken, reason); err != nil {
 			slog.Warn("cloud slot release failed; the inactivity janitor reclaims it later", "err", err)
 		} else {
-			slog.Info("released cloud quota slot on factory reset")
+			slog.Info("released cloud quota slot on reset", "reason", reasonOrFactoryReset(reason))
 		}
 		cancel()
 	}
-	w.WriteHeader(http.StatusNoContent)
-	// Exit AFTER the response is on the wire; systemd (Restart=always)
-	// resurrects the process with a fresh identity.
+	return true, nil
+}
+
+// tunnelStopWait bounds how long a reset waits for the tunnel to stop before
+// it releases the cloud slot anyway.
+const tunnelStopWait = 3 * time.Second
+
+// stopTunnelForReset re-applies the (now empty) state to the tunnel, which
+// tears its frp service down, and waits up to tunnelStopWait until it is gone
+// (tunnel implementations that can report it; see frpTunnel.WaitStopped).
+// Best-effort: a tunnel that does not stop in time is logged, and the reset
+// goes on.
+func (s *Server) stopTunnelForReset(ctx context.Context) {
+	if err := s.reconfigureTunnel(); err != nil {
+		slog.Warn("reset: stop tunnel", "err", err)
+	}
+	stopper, ok := s.Tunnel.(interface{ WaitStopped(context.Context) error })
+	if !ok {
+		return
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, tunnelStopWait)
+	defer cancel()
+	if err := stopper.WaitStopped(waitCtx); err != nil {
+		slog.Warn("reset: tunnel still stopping; releasing the cloud slot anyway", "err", err)
+	}
+}
+
+// reasonOrFactoryReset names a release reason for the log: "" is the factory
+// reset's own bodyless release.
+func reasonOrFactoryReset(reason string) string {
+	if reason == "" {
+		return "factory_reset"
+	}
+	return reason
+}
+
+// exitAfterResponse terminates the process shortly after the response is on
+// the wire; systemd (Restart=always), or the container's in-process restart,
+// resurrects it with a fresh identity.
+func (s *Server) exitAfterResponse() {
 	if s.ExitFn != nil {
 		go func() {
 			time.Sleep(200 * time.Millisecond)
@@ -2422,9 +2581,9 @@ func (s *Server) factoryReset(w http.ResponseWriter, r *http.Request) {
 //
 // Binding: the drop applies only while the device whose bearer authorized this
 // request is STILL an active device of the current document, checked under the
-// store lock. If the watcher (or a last-device revoke) dropped the household
-// first and a new setup landed before this request got the lock, that device
-// is gone — the new household is left untouched and the caller gets the same
+// store lock. If the watcher dropped the household (or a last-device revoke
+// wiped the relay) first and a new setup landed before this request got the
+// lock, that device is gone — the new household is left untouched and the caller gets the same
 // 401 any bearer of a forgotten household gets. Held under controllerMu so a
 // controller upsert or delete in flight (probe → cloud → persist) cannot
 // re-persist a controller after the drop.
