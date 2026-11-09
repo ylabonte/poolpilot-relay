@@ -814,8 +814,14 @@ func (c *Client) Release(ctx context.Context, baseURL, frpcToken, reason string)
 // deviceID is the relay-local id the joining phone's device record will carry,
 // minted by the caller before this call: the cloud records it on the voucher so
 // the bearer it mints is linked to that device (wire.DeviceVoucherRequest).
-func (c *Client) BrokerVoucher(ctx context.Context, inviteCode, deviceID string) (wire.DeviceVoucherResponse, error) {
-	return c.brokerVoucher(ctx, wire.DeviceVoucherRequest{InviteCode: inviteCode, DeviceID: deviceID}, "invite")
+//
+// pairingProof is the phone's optional proof from its pair request
+// (wire.PairRequest.PairingProof), forwarded unchanged and omitted from the
+// body when empty. Like the voucher, it is not persisted, not logged and never
+// put into an error: it is a credential of the phone's, and the relay only
+// carries it (poolpilot-relay#117).
+func (c *Client) BrokerVoucher(ctx context.Context, inviteCode, deviceID, pairingProof string) (wire.DeviceVoucherResponse, error) {
+	return c.brokerVoucher(ctx, wire.DeviceVoucherRequest{InviteCode: inviteCode, DeviceID: deviceID, PairingProof: pairingProof}, "invite")
 }
 
 // BrokerRecoveryVoucher is the RECOVERY half: no invite, and the voucher comes
@@ -830,9 +836,9 @@ func (c *Client) BrokerVoucher(ctx context.Context, inviteCode, deviceID string)
 // discipline about calling it.
 //
 // deviceID links the minted owner bearer to the recovering phone's device
-// record, exactly as in BrokerVoucher.
-func (c *Client) BrokerRecoveryVoucher(ctx context.Context, deviceID string) (wire.DeviceVoucherResponse, error) {
-	return c.brokerVoucher(ctx, wire.DeviceVoucherRequest{Recovery: true, DeviceID: deviceID}, "recovery")
+// record, and pairingProof is forwarded exactly as in BrokerVoucher.
+func (c *Client) BrokerRecoveryVoucher(ctx context.Context, deviceID, pairingProof string) (wire.DeviceVoucherResponse, error) {
+	return c.brokerVoucher(ctx, wire.DeviceVoucherRequest{Recovery: true, DeviceID: deviceID, PairingProof: pairingProof}, "recovery")
 }
 
 func (c *Client) brokerVoucher(ctx context.Context, body wire.DeviceVoucherRequest, what string) (wire.DeviceVoucherResponse, error) {

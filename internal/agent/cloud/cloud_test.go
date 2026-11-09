@@ -900,7 +900,7 @@ func TestBrokerVoucherSendsTheInviteUnderTheRelayBearer(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := New(newStore(t, srv.URL)).BrokerVoucher(context.Background(), "INV1-CODE", "dev-1")
+	got, err := New(newStore(t, srv.URL)).BrokerVoucher(context.Background(), "INV1-CODE", "dev-1", "")
 	if err != nil {
 		t.Fatalf("BrokerVoucher: %v", err)
 	}
@@ -927,7 +927,7 @@ func TestBrokerRecoveryVoucherAsksForRecoveryOnly(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := New(newStore(t, srv.URL)).BrokerRecoveryVoucher(context.Background(), "dev-1")
+	got, err := New(newStore(t, srv.URL)).BrokerRecoveryVoucher(context.Background(), "dev-1", "")
 	if err != nil {
 		t.Fatalf("BrokerRecoveryVoucher: %v", err)
 	}
@@ -945,6 +945,88 @@ func TestBrokerRecoveryVoucherAsksForRecoveryOnly(t *testing.T) {
 	}
 	if got.Role != "owner" {
 		t.Errorf("role = %q, want owner", got.Role)
+	}
+}
+
+// TestBrokerVoucherForwardsThePairingProof pins poolpilot-relay#117 at the
+// cloud client: the phone's pairing proof travels unchanged in both broker
+// modes, and when the phone sent none the body is byte for byte the one an
+// older relay sent — no "pairing_proof" key at all — so an older cloud sees
+// nothing new.
+func TestBrokerVoucherForwardsThePairingProof(t *testing.T) {
+	const proof = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	for _, tc := range []struct {
+		name    string
+		call    func(c *Client) error
+		wantRaw string
+	}{
+		{"invite with proof", func(c *Client) error {
+			_, err := c.BrokerVoucher(context.Background(), "INV1-CODE", "dev-1", proof)
+			return err
+		}, `{"invite_code":"INV1-CODE","device_id":"dev-1","pairing_proof":"` + proof + `"}`},
+		{"recovery with proof", func(c *Client) error {
+			_, err := c.BrokerRecoveryVoucher(context.Background(), "dev-1", proof)
+			return err
+		}, `{"recovery":true,"device_id":"dev-1","pairing_proof":"` + proof + `"}`},
+		{"invite without proof", func(c *Client) error {
+			_, err := c.BrokerVoucher(context.Background(), "INV1-CODE", "dev-1", "")
+			return err
+		}, `{"invite_code":"INV1-CODE","device_id":"dev-1"}`},
+		{"recovery without proof", func(c *Client) error {
+			_, err := c.BrokerRecoveryVoucher(context.Background(), "dev-1", "")
+			return err
+		}, `{"recovery":true,"device_id":"dev-1"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var raw []byte
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				raw, _ = io.ReadAll(r.Body)
+				_ = json.NewEncoder(w).Encode(wire.DeviceVoucherResponse{Voucher: "vch", Role: "member"})
+			}))
+			defer srv.Close()
+			if err := tc.call(New(newStore(t, srv.URL))); err != nil {
+				t.Fatalf("broker: %v", err)
+			}
+			if string(raw) != tc.wantRaw {
+				t.Errorf("body = %s\nwant   %s", raw, tc.wantRaw)
+			}
+		})
+	}
+}
+
+// TestBrokerVoucherErrorsNeverCarryThePairingProof: every refusal the broker
+// maps is wrapped into an error a caller may log, so none of them may quote
+// the request. The proof is a phone credential the relay only carries.
+func TestBrokerVoucherErrorsNeverCarryThePairingProof(t *testing.T) {
+	const proof = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+	for _, tc := range []struct {
+		status int
+		body   string
+	}{
+		{http.StatusConflict, `{"error":"too many active bearers"}`},
+		{http.StatusConflict, `{"error":"too many live vouchers"}`},
+		{http.StatusGone, `{"error":"invite invalid, expired, or already used"}`},
+		{http.StatusForbidden, ``},
+		{http.StatusTooManyRequests, ``},
+		{http.StatusBadRequest, `{"error":"bad json"}`},
+		{http.StatusBadGateway, ``},
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(tc.status)
+			_, _ = w.Write([]byte(tc.body))
+		}))
+		c := New(newStore(t, srv.URL))
+		_, errJoin := c.BrokerVoucher(context.Background(), "INV1-CODE", "dev-1", proof)
+		_, errRec := c.BrokerRecoveryVoucher(context.Background(), "dev-1", proof)
+		srv.Close()
+		for _, err := range []error{errJoin, errRec} {
+			if err == nil {
+				t.Fatalf("HTTP %d: no error", tc.status)
+			}
+			if strings.Contains(err.Error(), proof) {
+				t.Errorf("HTTP %d: error %q quotes the pairing proof", tc.status, err)
+			}
+		}
 	}
 }
 
@@ -974,7 +1056,7 @@ func TestBrokerVoucherStatusMapping(t *testing.T) {
 				w.WriteHeader(tc.status)
 			}))
 			defer srv.Close()
-			_, err := New(newStore(t, srv.URL)).BrokerVoucher(context.Background(), "INV1-CODE", "dev-1")
+			_, err := New(newStore(t, srv.URL)).BrokerVoucher(context.Background(), "INV1-CODE", "dev-1", "")
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("HTTP %d mapped to %v, want %v", tc.status, err, tc.want)
 			}
@@ -1016,11 +1098,11 @@ func TestBrokerVoucherConflictBodyMapping(t *testing.T) {
 				run  func(*Client) error
 			}{
 				{"invite", func(c *Client) error {
-					_, err := c.BrokerVoucher(context.Background(), "INV1-CODE", "dev-1")
+					_, err := c.BrokerVoucher(context.Background(), "INV1-CODE", "dev-1", "")
 					return err
 				}},
 				{"recovery", func(c *Client) error {
-					_, err := c.BrokerRecoveryVoucher(context.Background(), "dev-1")
+					_, err := c.BrokerRecoveryVoucher(context.Background(), "dev-1", "")
 					return err
 				}},
 			} {
@@ -1046,10 +1128,10 @@ func TestBrokerVoucherRefusesWhenNotEnrolled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("state.Open: %v", err)
 	}
-	if _, err := New(st).BrokerVoucher(context.Background(), "INV1-CODE", "dev-1"); !errors.Is(err, ErrRejected) {
+	if _, err := New(st).BrokerVoucher(context.Background(), "INV1-CODE", "dev-1", ""); !errors.Is(err, ErrRejected) {
 		t.Fatalf("err = %v, want ErrRejected", err)
 	}
-	if _, err := New(st).BrokerRecoveryVoucher(context.Background(), "dev-1"); !errors.Is(err, ErrRejected) {
+	if _, err := New(st).BrokerRecoveryVoucher(context.Background(), "dev-1", ""); !errors.Is(err, ErrRejected) {
 		t.Fatalf("err = %v, want ErrRejected", err)
 	}
 }

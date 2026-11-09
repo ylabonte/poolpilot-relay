@@ -31,6 +31,54 @@ func TestDeviceLinkFieldsAreOmitEmptyAndRoundTrip(t *testing.T) {
 			},
 		},
 		{
+			name:    "DeviceVoucherRequest with pairing proof",
+			empty:   DeviceVoucherRequest{Recovery: true, DeviceID: "dev-1"},
+			emptyIs: `{"recovery":true,"device_id":"dev-1"}`,
+			full:    DeviceVoucherRequest{InviteCode: "INV1-CODE", DeviceID: "dev-1", PairingProof: "proof-1"},
+			fullIs:  `{"invite_code":"INV1-CODE","device_id":"dev-1","pairing_proof":"proof-1"}`,
+			decode: func(b []byte) (any, error) {
+				var v DeviceVoucherRequest
+				err := json.Unmarshal(b, &v)
+				return v, err
+			},
+		},
+		{
+			name:    "PairRequest",
+			empty:   PairRequest{InviteCode: "WXYZ-1234", DeviceName: "phone"},
+			emptyIs: `{"invite_code":"WXYZ-1234","device_name":"phone"}`,
+			full:    PairRequest{InviteCode: "WXYZ-1234", DeviceName: "phone", PairingProof: "proof-1"},
+			fullIs:  `{"invite_code":"WXYZ-1234","device_name":"phone","pairing_proof":"proof-1"}`,
+			decode: func(b []byte) (any, error) {
+				var v PairRequest
+				err := json.Unmarshal(b, &v)
+				return v, err
+			},
+		},
+		{
+			name:    "PairingProofRequest",
+			empty:   PairingProofRequest{},
+			emptyIs: `{}`,
+			full:    PairingProofRequest{AttestChallenge: "ch-1"},
+			fullIs:  `{"attest_challenge":"ch-1"}`,
+			decode: func(b []byte) (any, error) {
+				var v PairingProofRequest
+				err := json.Unmarshal(b, &v)
+				return v, err
+			},
+		},
+		{
+			name:    "PairingProofResponse",
+			empty:   PairingProofResponse{},
+			emptyIs: `{"pairing_proof":"","expires_at":""}`, // required fields: not omitempty
+			full:    PairingProofResponse{PairingProof: "proof-1", ExpiresAt: "2026-11-09T12:00:00Z"},
+			fullIs:  `{"pairing_proof":"proof-1","expires_at":"2026-11-09T12:00:00Z"}`,
+			decode: func(b []byte) (any, error) {
+				var v PairingProofResponse
+				err := json.Unmarshal(b, &v)
+				return v, err
+			},
+		},
+		{
 			name:    "EnrollRedeemRequest",
 			empty:   EnrollRedeemRequest{Code: "AAAA-BBBB", AgentID: "agent-1"},
 			emptyIs: `{"code":"AAAA-BBBB","agent_id":"agent-1"}`,

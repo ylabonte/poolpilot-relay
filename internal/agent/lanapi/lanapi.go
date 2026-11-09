@@ -623,7 +623,7 @@ func (s *Server) pairJoin(w http.ResponseWriter, r *http.Request, req wire.PairR
 		return
 	}
 	s.pairWithVoucher(w, r, req, func(ctx context.Context, deviceID string) (wire.DeviceVoucherResponse, error) {
-		return s.Cloud.BrokerVoucher(ctx, req.InviteCode, deviceID)
+		return s.Cloud.BrokerVoucher(ctx, req.InviteCode, deviceID, req.PairingProof)
 	}, DeviceCap, joinRole)
 }
 
@@ -665,7 +665,7 @@ func (s *Server) pairRecover(w http.ResponseWriter, r *http.Request, req wire.Pa
 		return
 	}
 	s.pairWithVoucher(w, r, req, func(ctx context.Context, deviceID string) (wire.DeviceVoucherResponse, error) {
-		return s.Cloud.BrokerRecoveryVoucher(ctx, deviceID)
+		return s.Cloud.BrokerRecoveryVoucher(ctx, deviceID, req.PairingProof)
 	}, RecoveryDeviceCap, recoveryRole, window)
 }
 
@@ -730,6 +730,13 @@ func (s *Server) pairWithVoucher(
 		// is still good. Its own code, not voucher_quota — waiting will not
 		// clear it — and not device_quota, which is THIS relay's own cap and
 		// names a different list to remove from.
+		//
+		// That "nothing persisted, code still good" is load-bearing for the
+		// pairing proof (poolpilot-relay#117): an install with entries in
+		// several households sends one entry's proof per attempt, and on this
+		// answer retries the SAME code with its next entry's proof. So no
+		// state may be written here and no pair-attempt throttle may sit in
+		// front of this path (TestPairingProofRetryAfterHouseholdCap).
 		writeErr(w, http.StatusConflict, "household_device_quota")
 		return
 	case errors.Is(err, cloud.ErrVoucherCapReached):
