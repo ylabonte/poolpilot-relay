@@ -1231,11 +1231,26 @@ type DeviceVoucherResponse struct {
 // (or recovering) phone trades the relay-brokered voucher for its own app
 // bearer in the household the voucher names.
 //
-// There is no bearer on this request and no app_user_id: the voucher is the
-// entire authorization, which is why it is single-use, short-TTL and hash-only
-// at rest. The ROLE the new bearer gets is read from the stored voucher row and
-// never from this body — a member voucher cannot be talked into minting an
-// owner.
+// The voucher is the entire authorization, which is why it is single-use,
+// short-TTL and hash-only at rest, and the body carries no app_user_id. The
+// ROLE comes from the stored voucher row (on a reuse, below, the higher of
+// that and the role the member already holds) and never from this body — a
+// member voucher cannot be talked into minting an owner.
+//
+// Optional existing bearer: an install that is already in the voucher's
+// household (it pairs another of that household's relays) may present its
+// app bearer for that household in an Authorization: Bearer header. The
+// struct is unchanged. The bearer is an addition to the voucher, never a
+// substitute: the voucher must still be valid and is still consumed, and the
+// bearer only decides which household entry the ceremony lands on — the cloud
+// links the new relay device to that bearer and hands it back unchanged
+// instead of minting a second one. Without the header (an older app, a fresh
+// install) the cloud mints a fresh bearer as before. A bearer of another
+// household is refused with 409, and an unknown or revoked one with 409
+// "app bearer unknown"; both are refused before the voucher is consumed, so
+// the phone can retry the same voucher with another bearer or with none. An
+// Authorization header that is not exactly one Bearer credential is refused
+// with 400. The cloud's app-bearer contract has the full table.
 //
 // It answers with AppBearerMintResponse, the same shape POST /app-bearer does,
 // so the client stores {bearer, tenant_id, role} identically however it arrived.
@@ -1315,16 +1330,36 @@ type EnrollRedeemRequest struct {
 // per relay. A repeated call for the same relay replaces that relay's link; it
 // never touches the bearer's links to other relays.
 //
-// TRANSITIONAL: it exists only for legacy pairings — bearers minted without
-// a relay device id, because the relay did not send
+// Writing a link is TRANSITIONAL and only for legacy pairings — bearers
+// minted without a relay device id, because the relay did not send
 // DeviceVoucherRequest.DeviceID / EnrollRedeemRequest.DeviceID (it predates
-// them, or is an older relay still in the field), plus add-device rotations
-// of such a bearer. Since poolpilot-cloud#281 that includes pairings made
-// through an older relay after the link existed, not only those made before
-// it; the cloud refuses a bearer that is not a legacy pairing, or one that
-// already holds a ceremony link on that relay. The request
-// shape is unchanged. Planned for
-// removal 6–12 months after it ships, once those pairings have aged out.
+// them, or is an older relay still in the field, including pairings made
+// through such a relay after the link existed), plus add-device rotations of
+// such a bearer. That write path is planned for removal 6–12 months after it
+// ships, once those pairings have aged out. The request shape is unchanged.
+//
+// The cloud's answers (the response body is not a wire type here; see the
+// cloud's app-bearer contract for the authoritative table):
+//   - 200: on a newer cloud the caller is now linked for this device on this
+//     relay, and "source" says how: {"ok":true,"source":"ceremony"} when the
+//     reported relay and device id are already linked to the caller's own
+//     bearer by a pairing ceremony (nothing is written; any bearer, legacy or
+//     not, gets this, so the app can use the call to confirm its link), or
+//     {"ok":true,"source":"self_reported"} when the call wrote the caller's
+//     legacy self-report. An older cloud answers a plain {"ok":true}, also
+//     when it wrote nothing (see the next-but-one entry), so a 200 without
+//     "source" does not prove a link.
+//   - 409 "not a legacy pairing": the caller is not a legacy pairing, or (on
+//     an older cloud) already holds a ceremony link on that relay; a newer
+//     cloud answers it only when the reported device is not also
+//     ceremony-linked to the caller there. Retrying does not help.
+//   - 409 "relay device not linked" (newer cloud): the caller is a legacy
+//     pairing, but the reported device id is already held by another link,
+//     so the caller has none. An older cloud answers this case with a plain
+//     200 and writes nothing.
+//   - 400 for a body it cannot accept, 404 "unknown relay" for a relay that
+//     is not live in the caller's household (or, for a guest, not in its
+//     scope).
 //
 // Known gap, accepted for a transitional route: a relay with no controller
 // registered has no entry in POST /controllers/list, so the app never learns
