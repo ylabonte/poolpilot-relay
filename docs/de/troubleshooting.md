@@ -189,8 +189,10 @@ wird, oder ein Mitglied meldet sich auf einem Telefon ab, das es nicht mehr
 braucht. Danach mit demselben Code erneut koppeln.
 
 Ein Telefon, das schon zum Haushalt gehört (es ist mit einem anderen Relay
-desselben Haushalts gekoppelt), braucht keinen freien Platz, um auch dieses
-Relay zu koppeln: Es behält seinen Platz im Haushalt und belegt keinen weiteren.
+desselben Haushalts gekoppelt), braucht keinen freien Platz im Haushalt, um
+auch dieses Relay zu koppeln: Es behält seinen Platz im Haushalt und belegt
+keinen weiteren. Auf der eigenen Geräteliste dieses Relays muss aber Platz sein
+(`device_quota`).
 Die App schickt beim Koppeln einen kurzlebigen Nachweis dafür mit, den das Relay
 an die PoolPilot-Cloud weiterreicht, ohne ihn zu lesen oder zu speichern. Das
 setzt ein Relay neuer als v1.0.0 sowie eine Cloud und eine App voraus, die das

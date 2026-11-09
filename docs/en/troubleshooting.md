@@ -172,8 +172,9 @@ To make room, an owner removes a phone that is no longer used under
 phone they no longer need. Then pair again with the same code.
 
 A phone that is already in the household (it is paired with another Relay of
-the same household) does not need a free slot to pair this Relay too: it keeps
-its place in the household and takes no extra one. The app sends a short-lived
+the same household) does not need a free slot in the household to pair this
+Relay too: it keeps its place in the household and takes no extra one. This
+Relay's own device list still needs room, though (`device_quota`). The app sends a short-lived
 proof of that with the pairing, and the Relay passes it on to the PoolPilot
 cloud without reading or storing it. This needs a Relay newer than v1.0.0, a
 cloud and an app that support it; with an older Relay or app, a full household

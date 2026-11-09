@@ -139,17 +139,36 @@ func TestPairingProofRetryAfterHouseholdCap(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			before := f.store.Get()
+			beforeDoc, _ := json.Marshal(before)
+			beforeFile, err := os.ReadFile(f.statePath)
+			if err != nil {
+				t.Fatalf("read state file: %v", err)
+			}
 			// First entry: another household's proof. The cap applies.
 			resp, raw := pairRaw(t, f, tc.req(proofA))
 			if resp.StatusCode != http.StatusConflict || errCode(t, raw) != "household_device_quota" {
 				t.Fatalf("first attempt: HTTP %d %s, want 409 household_device_quota", resp.StatusCode, raw)
 			}
 			after := f.store.Get()
+			afterDoc, _ := json.Marshal(after)
+			afterFile, err := os.ReadFile(f.statePath)
+			if err != nil {
+				t.Fatalf("read state file: %v", err)
+			}
 			if len(after.Devices) != len(before.Devices) {
 				t.Fatalf("the refused attempt persisted a device (%d → %d)", len(before.Devices), len(after.Devices))
 			}
 			if after.RecoveryWindowUsed != before.RecoveryWindowUsed {
 				t.Fatalf("the refused attempt spent the recovery window (%d → %d)", before.RecoveryWindowUsed, after.RecoveryWindowUsed)
+			}
+			// "Persists nothing" means nothing at all: a pending marker or a
+			// per-code attempt counter written here would become a throttle on
+			// the walk.
+			if !bytes.Equal(beforeDoc, afterDoc) {
+				t.Fatalf("the refused attempt changed the agent state:\nbefore %s\nafter  %s", beforeDoc, afterDoc)
+			}
+			if !bytes.Equal(beforeFile, afterFile) {
+				t.Fatal("the refused attempt rewrote the state file")
 			}
 			// Next entry, same code, immediately: this household's proof.
 			resp, raw = pairRaw(t, f, tc.req(proofB))
