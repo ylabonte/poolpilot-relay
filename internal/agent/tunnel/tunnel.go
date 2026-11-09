@@ -14,6 +14,7 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"time"
 
 	frpclient "github.com/fatedier/frp/client"
 	"github.com/fatedier/frp/pkg/config/source"
@@ -181,6 +182,29 @@ func (t *frpTunnel) Configure(cfg Config) error {
 	default:
 	}
 	return nil
+}
+
+// WaitStopped blocks until the tunnel is configured idle (no controllers) AND
+// no frp service is left running — the teardown Run performs asynchronously
+// after Configure handed it an idle config has finished, so the control
+// connection, and with it frp's authenticated heartbeat, is gone. It returns
+// ctx's error if that has not happened by then. A factory reset waits for it
+// before releasing the relay's cloud slot, so no heartbeat under the dropped
+// credential can undo the release.
+func (t *frpTunnel) WaitStopped(ctx context.Context) error {
+	for {
+		t.mu.Lock()
+		stopped := idle(t.cfg) && t.svc == nil
+		t.mu.Unlock()
+		if stopped {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
 }
 
 func (t *frpTunnel) Run(ctx context.Context) error {

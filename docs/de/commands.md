@@ -56,8 +56,9 @@ sudo poolpilot-relay show-recovery
 Er zeigt einen QR-Code / Link und den Code an, sagt dir, wann der Code abläuft
 (wenige Minuten), und erinnert daran, dass er einmalig ist. Er funktioniert nur,
 wenn das Relay bereits bei der Cloud **registriert** ist (also schon einmal
-gekoppelt war); bei einem brandneuen Relay koppelst du stattdessen normal mit
-`show-pairing`. Wie `show-pairing` ist er schreibgeschützt.
+gekoppelt war und noch eingerichtet ist); bei einem brandneuen Relay oder einem,
+das sich selbst zurückgesetzt hat, weil sich sein letztes gekoppeltes Telefon
+entfernt hat, koppelst du stattdessen normal mit `show-pairing`. Wie `show-pairing` ist er schreibgeschützt.
 
 ## Den Dienst verwalten
 

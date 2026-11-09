@@ -285,6 +285,14 @@ func TestWipeIfBindsToTheCurrentDocument(t *testing.T) {
 	if _, wiped, _ := st.WipeIf(nil); wiped {
 		t.Error("an already-wiped store was wiped again")
 	}
+	// A wiped store reads empty: nothing still running may find the dropped
+	// credential (or anything else) in it.
+	if got := st.Get(); got.Cloud.FrpcToken != "" || got.Enrolled() {
+		t.Errorf("Get after WipeIf = token %q enrolled %v, want an empty document", got.Cloud.FrpcToken, got.Enrolled())
+	}
+	if !st.Wiped() {
+		t.Error("Wiped() = false after WipeIf")
+	}
 }
 
 // SeedCloudSync flags every controller that has a cloud identity for one

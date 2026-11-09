@@ -180,6 +180,18 @@ type Server struct {
 	// probe → cloud register → persist closes that race.
 	controllerMu sync.Mutex
 
+	// setupMu serializes the first pairing (POST /v1/pair with an enrolment
+	// code, from its pairing-state check through the cloud redeem to the
+	// persist) with resetLikeFactory's wipe. Without it a first pairing whose redeem was
+	// still in flight when a last-device reset wiped the store would consume
+	// its enrolment code, mint a cloud identity, and then fail to persist it
+	// (ErrWiped) — an orphaned identity and a 500. With it the reset waits for
+	// the pairing to commit (and then skips, because the relay is paired
+	// again), or the pairing waits for the wipe (and is refused, because the
+	// relay is restarting). Held across cloud calls, so never take it while
+	// holding controllerMu or tunnelMu.
+	setupMu sync.Mutex
+
 	// bgSync tracks the fire-and-forget cloud syncs kickCloudSync starts, so a
 	// caller that tears the server down (tests removing the state dir) can
 	// wait for them via waitBackground instead of racing their state writes.
@@ -489,6 +501,24 @@ func (s *Server) pair(w http.ResponseWriter, r *http.Request) {
 	if n != 1 {
 		writeErr(w, http.StatusBadRequest, "bad_json")
 		return
+	}
+	if req.EnrollmentCode != "" {
+		// The first pairing mints a cloud identity (the redeem) before it can
+		// persist it, so it is serialized with resetLikeFactory's wipe
+		// (setupMu), and its pairing-state check runs under that lock too.
+		// The invite and recovery ceremonies need no lock: against a wiped
+		// store (which reads empty) they are refused anyway, not_paired or
+		// code_rejected, before any cloud call.
+		s.setupMu.Lock()
+		defer s.setupMu.Unlock()
+		if s.Store.Wiped() {
+			// A factory reset (or a last-device reset) already wiped the store
+			// and the process is about to restart into a fresh identity:
+			// nothing paired now could be persisted. The app retries once the
+			// relay is back.
+			writeErr(w, http.StatusServiceUnavailable, "resetting")
+			return
+		}
 	}
 	switch {
 	case req.RecoveryCode != "":
@@ -2432,16 +2462,28 @@ func (s *Server) factoryReset(w http.ResponseWriter, r *http.Request) {
 // /v1/factory-reset and by the last-device unpair over the LAN
 // (poolpilot-relay#115), so the two can never drift apart:
 //
-//  1. wipe the whole local state (state.Store.WipeIf): cloud credential,
-//     paired devices, controllers, queued alerts and reports, agent id and
-//     TLS key. still binds the wipe to the document the caller decided on
-//     (nil: unconditional); when it no longer holds nothing happens and
-//     (false, nil) is returned;
-//  2. announce paired=false over mDNS;
-//  3. if the wiped document was enrolled, best-effort release its cloud slot
+//  1. wipe the whole local state (state.Store.WipeIf), serialized with the
+//     first pairing (setupMu): cloud credential, paired devices,
+//     controllers, queued alerts and reports, agent id and TLS key. `still`
+//     binds the wipe to the document the caller decided on (nil:
+//     unconditional); when it no longer holds nothing happens and
+//     (false, nil) is returned. From here the store reads empty, so nothing
+//     still running (poller, alert delivery, controller sync, update check,
+//     lifecycle watcher) can call the cloud with the dropped credential;
+//  2. stop the tunnel and wait (bounded) until its frp service is gone, so
+//     its authenticated heartbeat cannot reach the cloud after the release —
+//     the control plane treats any authenticated call as proof of life and
+//     would un-release the row;
+//  3. announce paired=false over mDNS;
+//  4. if the wiped document was enrolled, best-effort release its cloud slot
 //     (POST /relay/release) with the credential it held, sending reason
 //     ("" for the factory reset itself, cloud.ReleaseReasonUnpaired for the
 //     unpair).
+//
+// What steps 1 and 2 cannot cover: a cloud request another goroutine had
+// already sent before the wipe, still in flight while the release lands. It
+// is a window of one request's latency, and the cloud's inactivity janitor
+// is the backstop then, as for a failed release.
 //
 // Wipe-first is deliberate, not an oversight: a release failure must never
 // block the reset, only the reset itself may. The cloud's own inactivity
@@ -2450,10 +2492,13 @@ func (s *Server) factoryReset(w http.ResponseWriter, r *http.Request) {
 // answers its request and then calls exitAfterResponse, which restarts the
 // process into the fresh identity.
 func (s *Server) resetLikeFactory(ctx context.Context, still func(state.State) bool, reason string) (bool, error) {
+	s.setupMu.Lock()
 	st, wiped, err := s.Store.WipeIf(still)
+	s.setupMu.Unlock()
 	if err != nil || !wiped {
 		return wiped, err
 	}
+	s.stopTunnelForReset(ctx)
 	if s.OnPaired != nil {
 		s.OnPaired.UpdatePaired(false)
 	}
@@ -2471,6 +2516,30 @@ func (s *Server) resetLikeFactory(ctx context.Context, still func(state.State) b
 		cancel()
 	}
 	return true, nil
+}
+
+// tunnelStopWait bounds how long a reset waits for the tunnel to stop before
+// it releases the cloud slot anyway.
+const tunnelStopWait = 3 * time.Second
+
+// stopTunnelForReset re-applies the (now empty) state to the tunnel, which
+// tears its frp service down, and waits up to tunnelStopWait until it is gone
+// (tunnel implementations that can report it; see frpTunnel.WaitStopped).
+// Best-effort: a tunnel that does not stop in time is logged, and the reset
+// goes on.
+func (s *Server) stopTunnelForReset(ctx context.Context) {
+	if err := s.reconfigureTunnel(); err != nil {
+		slog.Warn("reset: stop tunnel", "err", err)
+	}
+	stopper, ok := s.Tunnel.(interface{ WaitStopped(context.Context) error })
+	if !ok {
+		return
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, tunnelStopWait)
+	defer cancel()
+	if err := stopper.WaitStopped(waitCtx); err != nil {
+		slog.Warn("reset: tunnel still stopping; releasing the cloud slot anyway", "err", err)
+	}
 }
 
 // reasonOrFactoryReset names a release reason for the log: "" is the factory

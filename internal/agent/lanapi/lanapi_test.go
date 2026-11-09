@@ -163,6 +163,12 @@ type fixture struct {
 	// BEFORE the slot was released (poolpilot-relay#115).
 	releaseReason  string
 	releaseSawPush map[string]bool
+	// releaseSawTunnel / releaseSawEnrolled snapshot, at release time, the
+	// tunnel's state and whether the store still read as enrolled: the reset
+	// must have stopped everything that authenticates with the old credential
+	// BEFORE it releases.
+	releaseSawTunnel   string
+	releaseSawEnrolled bool
 	// revokePushHook, when set (func()), runs inside POST /devices/revoke-push
 	// before it answers — a change landing while the agent talks to the cloud.
 	revokePushHook atomic.Value
@@ -284,6 +290,12 @@ func newFixture(t *testing.T) *fixture {
 			f.releaseAuth = r.Header.Get("Authorization")
 			f.releaseReason = body.Reason
 			f.releaseSawPush = saw
+			if f.tunnel != nil {
+				f.releaseSawTunnel = f.tunnel.Status().State
+			}
+			if f.store != nil {
+				f.releaseSawEnrolled = f.store.Get().Enrolled()
+			}
 			f.releasedMu.Unlock()
 			if f.releaseNotFound.Load() {
 				w.WriteHeader(http.StatusNotFound)

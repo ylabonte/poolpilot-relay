@@ -764,10 +764,29 @@ func backupV1(path string, raw []byte) error {
 
 // Get returns a deep copy of the current state — callers can inspect it
 // without racing concurrent Updates.
+//
+// A wiped store (Wipe, WipeIf) reads as an empty document: after a factory
+// reset the relay holds nothing, so nothing still running until the process
+// restarts — the tunnel's next reconfigure, the poller, alert delivery,
+// controller sync, update checks, the lifecycle watcher — can act, or
+// authenticate to the control plane, with the credential the reset just
+// dropped. Every one of them reads its credential and controllers from here.
+// The caller that wiped gets the old document from WipeIf instead.
 func (st *Store) Get() State {
 	st.mu.Lock()
 	defer st.mu.Unlock()
+	if st.wiped {
+		return State{}
+	}
 	return cloneState(st.s)
+}
+
+// Wiped reports whether the store was wiped (factory reset) and the process
+// is waiting to restart into a fresh identity.
+func (st *Store) Wiped() bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return st.wiped
 }
 
 // Update applies fn to a deep copy of the state under the lock and persists
@@ -797,7 +816,8 @@ func (st *Store) Update(fn func(*State)) error {
 
 // Wipe removes the state file (factory reset) and marks the store dead: every
 // later Update fails with ErrWiped so a concurrent poll tick cannot recreate
-// the file from memory in the window before the process exits.
+// the file from memory in the window before the process exits, and every
+// later Get reads an empty document.
 //
 // A factory reset must erase the IDENTITY, not merely unlink the live document:
 // the "<path>.v1.bak" migration backup (backupV1) and any temp file a crashed
@@ -822,7 +842,10 @@ func (st *Store) Wipe() error {
 //
 // The last-device unpair (lanapi's deleteDevice, poolpilot-relay#115) binds
 // its wipe this way to the unpaired document it decided on: a new setup that
-// landed while it was still talking to the cloud is never wiped.
+// landed while it was still talking to the cloud is never wiped. A setup
+// still in flight (a pairing whose cloud redeem has not returned yet) is not
+// in the document, so WipeIf cannot see it; lanapi serializes the first
+// pairing with the reset (Server.setupMu) for that.
 func (st *Store) WipeIf(still func(State) bool) (State, bool, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()

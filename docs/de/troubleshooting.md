@@ -127,7 +127,10 @@ entfernen, den Fernzugriffs-Link einer Steuerung erneuern, Warnregeln ändern,
 ein **anderes** Telefon entfernen, Updates installieren oder automatische
 Updates umschalten sowie Haushalts- und Werksreset. Fragt ein Mitglieds-Telefon
 eines davon an, antwortet die lokale API des Relays mit `403` und dem Fehlercode
-`owner_required`, und nichts ändert sich.
+`owner_required`, und nichts ändert sich. Eines kann jedes Telefon auslösen: Ist
+es das **letzte** mit dem Relay gekoppelte Telefon und entfernt sich selbst,
+setzt sich das Relay wie bei einem Werksreset selbst zurück (siehe
+[Werksreset](#werksreset)).
 
 Kein anderes Telefon kann das **letzte** Eigentümer-Telefon entfernen. Versucht
 es ein Mitglieds-Telefon, erhält es `403` mit `owner_required` (siehe oben).
@@ -213,7 +216,10 @@ sudo poolpilot-relay show-recovery
 ```
 
 Der Code läuft nach wenigen Minuten ab und ist einmalig. Er funktioniert nur auf
-einem Relay, das schon einmal gekoppelt war. Siehe
+einem Relay, das schon einmal gekoppelt war und noch eingerichtet ist. Ein Relay,
+dessen letztes Telefon sich selbst entfernt hat, hat sich selbst zurückgesetzt
+(siehe [Werksreset](#werksreset)); richte es stattdessen mit
+[`show-pairing`](#relay-neu-koppeln) neu ein. Siehe
 [Befehle](commands.md#poolpilot-relay-show-recovery).
 
 ## Ein festhängendes oder fehlgeschlagenes Update
@@ -242,7 +248,8 @@ Relay einen Werksreset ab. Das löscht Kopplung und Identität, und der Agent
 startet mit einer frischen neu (systemd fährt ihn sofort wieder hoch). Danach
 ist das Relay entkoppelt — [koppel es neu](#relay-neu-koppeln), als wäre es neu.
 Weil sich die Identität geändert hat, entferne zuerst den alten Relay-Eintrag in
-der App, falls er noch gelistet ist.
+der App, falls er noch gelistet ist. Auf eine andere Weise setzt sich ein Relay
+nur noch zurück, wenn sein letztes Telefon es verlässt (siehe unten).
 
 **Verlässt das letzte Telefon das Relay, setzt es sich selbst zurück.** Entfernt
 sich das letzte mit dem Relay gekoppelte Telefon zu Hause im selben Netzwerk
@@ -250,8 +257,12 @@ sich das letzte mit dem Relay gekoppelte Telefon zu Hause im selben Netzwerk
 Telefon mehr gekoppelt ist), macht das Relay genau dasselbe wie ein Werksreset:
 Es gibt seinen Platz in deinem Haushalt in der Cloud frei, vergisst Kopplung,
 Controller und Cloud-Zugangsdaten und startet mit einer frischen Identität neu,
-sofort bereit für eine neue Einrichtung. Im Log steht dann *„relay reset: the
-last paired device left“*. Über den Fernzugriffs-Tunnel passiert das nie: Das
+sofort bereit für eine neue Einrichtung. Das gilt unabhängig von der Rolle des
+Telefons: Auch ein Mitglieds-Telefon, das als letztes übrig ist, löst es aus,
+obwohl es selbst keinen Werksreset starten kann. Ein
+[Wiederherstellungscode](#eigentümer-zugriff-verloren) hilft danach nicht mehr;
+richte das Relay neu ein. Im Log steht dann *„relay reset: the last paired
+device left“*. Über den Fernzugriffs-Tunnel passiert das nie: Das
 Relay lehnt es ab, sein letztes Telefon aus der Ferne zu entfernen.
 
 ## Aktualisieren oder neu installieren

@@ -102,6 +102,69 @@ func TestLastDeviceLeavingResetsLikeFactoryReset(t *testing.T) {
 	waitExited(t, f)
 }
 
+// Nothing may authenticate with the old credential once the reset released
+// the slot: the control plane would take it as proof of life and un-release
+// the row. So by the time the release goes out, the tunnel is stopped and the
+// store reads empty (no poller, alert, sync or update call has a credential
+// left) — for the last-device reset and the factory reset alike.
+func TestResetStopsEverythingAuthenticatedBeforeTheRelease(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		reset func(t *testing.T, f *fixture, tok, dev string)
+	}{
+		{"last device leaves", func(t *testing.T, f *fixture, tok, dev string) {
+			if resp, raw := f.do(t, "DELETE", "/v1/devices/"+dev, tok, nil); resp.StatusCode != http.StatusNoContent {
+				t.Fatalf("last device leaving: HTTP %d %s", resp.StatusCode, raw)
+			}
+		}},
+		{"factory reset", func(t *testing.T, f *fixture, tok, _ string) {
+			if resp, raw := f.do(t, "POST", "/v1/factory-reset", tok, nil); resp.StatusCode != http.StatusNoContent {
+				t.Fatalf("factory reset: HTTP %d %s", resp.StatusCode, raw)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			tok, dev := f.pairFirst(t)
+			putControllerOK(t, f, tok, wire.ControllerConfig{Preset: "procon-ip", LanAddress: f.controllerAddr(), Label: "Pool"})
+			if st := f.tunnel.Status().State; st == "disabled" {
+				t.Fatalf("setup: tunnel %q, want it configured", st)
+			}
+
+			tc.reset(t, f, tok, dev)
+
+			f.releasedMu.Lock()
+			called, tunnelAt, enrolledAt := f.releaseCalled, f.releaseSawTunnel, f.releaseSawEnrolled
+			f.releasedMu.Unlock()
+			if !called {
+				t.Fatal("no release")
+			}
+			if tunnelAt != "disabled" {
+				t.Errorf("tunnel at release time = %q, want disabled (stopped before the release)", tunnelAt)
+			}
+			if enrolledAt {
+				t.Error("the store still read as enrolled at release time; background calls could still use the old credential")
+			}
+		})
+	}
+}
+
+// A pairing that arrives after the wipe, while the relay waits to restart, is
+// refused (503 resetting) instead of consuming the enrolment code and minting
+// a cloud identity it could never persist.
+func TestPairWhileResettingIsRefused(t *testing.T) {
+	f := newFixture(t)
+	tok, dev := f.pairFirst(t)
+	if resp, raw := f.do(t, "DELETE", "/v1/devices/"+dev, tok, nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("last device leaving: HTTP %d %s", resp.StatusCode, raw)
+	}
+	f.redeemToken.Store("new-relay-token")
+	resp, raw := pairRaw(t, f, wire.PairRequest{EnrollmentCode: "GOOD-CODE", DeviceName: "too early"})
+	if resp.StatusCode != http.StatusServiceUnavailable || errCode(t, raw) != "resetting" {
+		t.Fatalf("pair during the reset: HTTP %d %s, want 503 resetting", resp.StatusCode, raw)
+	}
+}
+
 // A factory reset sends no release reason (the cloud records "factory_reset");
 // only the last-device unpair says "unpaired".
 func TestFactoryResetReleaseHasNoReason(t *testing.T) {
