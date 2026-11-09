@@ -126,24 +126,19 @@ func TestRecoveryPairingYieldsAnOwnerVoucher(t *testing.T) {
 }
 
 // TestRecoveryWorksOnAnUnpairedRelay is the case that justifies routing on the
-// CODE rather than on pairing state. A household whose last device was revoked
-// is exactly the one that needs recovering; refusing here would leave only a
-// factory reset, which throws the household away instead of recovering it.
+// CODE rather than on pairing state. A relay that is enrolled but has no
+// active device left still belongs to its household; refusing here would
+// leave only a factory reset, which throws the household away instead of
+// recovering it. (Since poolpilot-relay#115 the last-device revoke itself
+// resets the relay, so this state comes from an older version or a skipped
+// reset — see unpairKeepingCredential.)
 func TestRecoveryWorksOnAnUnpairedRelay(t *testing.T) {
 	f := newFixture(t)
-	tok, dev := f.pairFirst(t)
+	_, dev := f.pairFirst(t)
 	seedTLSKey(t, f)
+	unpairKeepingCredential(t, f, dev)
 
-	// Revoke the last device: enrolled, but no longer paired.
-	resp, raw := f.do(t, "DELETE", "/v1/devices/"+dev, tok, nil)
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
-		t.Fatalf("revoke last device: HTTP %d %s", resp.StatusCode, raw)
-	}
-	if st := f.store.Get(); st.Paired() || !st.Enrolled() {
-		t.Fatalf("setup: paired=%v enrolled=%v, want false/true", st.Paired(), st.Enrolled())
-	}
-
-	resp, raw = pairRaw(t, f, wire.PairRequest{RecoveryCode: recoveryCodeNow(t, f), DeviceName: "rescue phone"})
+	resp, raw := pairRaw(t, f, wire.PairRequest{RecoveryCode: recoveryCodeNow(t, f), DeviceName: "rescue phone"})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("recovery on an unpaired relay: HTTP %d %s", resp.StatusCode, raw)
 	}

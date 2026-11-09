@@ -244,6 +244,16 @@ ist das Relay entkoppelt — [koppel es neu](#relay-neu-koppeln), als wäre es n
 Weil sich die Identität geändert hat, entferne zuerst den alten Relay-Eintrag in
 der App, falls er noch gelistet ist.
 
+**Verlässt das letzte Telefon das Relay, setzt es sich selbst zurück.** Entfernt
+sich das letzte mit dem Relay gekoppelte Telefon zu Hause im selben Netzwerk
+(zum Beispiel, wenn der Eigentümer sein eigenes Telefon trennt und kein anderes
+Telefon mehr gekoppelt ist), macht das Relay genau dasselbe wie ein Werksreset:
+Es gibt seinen Platz in deinem Haushalt in der Cloud frei, vergisst Kopplung,
+Controller und Cloud-Zugangsdaten und startet mit einer frischen Identität neu,
+sofort bereit für eine neue Einrichtung. Im Log steht dann *„relay reset: the
+last paired device left“*. Über den Fernzugriffs-Tunnel passiert das nie: Das
+Relay lehnt es ab, sein letztes Telefon aus der Ferne zu entfernen.
+
 ## Aktualisieren oder neu installieren
 
 Den Installer-Einzeiler erneut auszuführen bringt ein Gerät auf die aktuelle

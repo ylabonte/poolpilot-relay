@@ -157,6 +157,15 @@ type fixture struct {
 	releaseCalled   bool
 	releaseAuth     string
 	releaseNotFound atomic.Bool
+	// releaseReason is the "reason" of the release body ("" when bodyless);
+	// releaseSawPush snapshots, at release time, the device_ids already
+	// push-revoked — so a test can pin that the removal reports went out
+	// BEFORE the slot was released (poolpilot-relay#115).
+	releaseReason  string
+	releaseSawPush map[string]bool
+	// revokePushHook, when set (func()), runs inside POST /devices/revoke-push
+	// before it answers — a change landing while the agent talks to the cloud.
+	revokePushHook atomic.Value
 
 	// e2eEnabled, when set, makes register and rotate answer with the
 	// end-to-end URLs too ("https://<guid>-e2e.remote.example",
@@ -230,6 +239,9 @@ func newFixture(t *testing.T) *fixture {
 			f.revokedPushMu.Lock()
 			f.revokePushAuth[body["device_id"]] = auth
 			f.revokedPushMu.Unlock()
+			if hook, _ := f.revokePushHook.Load().(func()); hook != nil {
+				hook()
+			}
 			newTok, _ := f.redeemToken.Load().(string)
 			if auth != "Bearer relay-frpc-token" && (newTok == "" || auth != "Bearer "+newTok) {
 				w.WriteHeader(http.StatusUnauthorized)
@@ -257,9 +269,21 @@ func newFixture(t *testing.T) *fixture {
 		// 204, or 404 when the test wants to simulate an old control plane that
 		// does not have the route yet.
 		if r.Method == http.MethodPost && r.URL.Path == "/relay/release" {
+			var body struct {
+				Reason string `json:"reason"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			f.revokedPushMu.Lock()
+			saw := make(map[string]bool, len(f.revokedPush))
+			for id, ok := range f.revokedPush {
+				saw[id] = ok
+			}
+			f.revokedPushMu.Unlock()
 			f.releasedMu.Lock()
 			f.releaseCalled = true
 			f.releaseAuth = r.Header.Get("Authorization")
+			f.releaseReason = body.Reason
+			f.releaseSawPush = saw
 			f.releasedMu.Unlock()
 			if f.releaseNotFound.Load() {
 				w.WriteHeader(http.StatusNotFound)

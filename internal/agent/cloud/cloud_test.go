@@ -345,18 +345,48 @@ func TestRevokePushForDeviceStatusMapping(t *testing.T) {
 // the call cannot be accidentally satisfied from the store instead.
 func TestReleaseSendsBearer(t *testing.T) {
 	var gotMethod, gotPath, gotAuth string
+	var gotBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod, gotPath, gotAuth = r.Method, r.URL.Path, r.Header.Get("Authorization")
+		gotBody, _ = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer srv.Close()
 
 	c := New(newStore(t, ""))
-	if err := c.Release(context.Background(), srv.URL, "release-token"); err != nil {
+	if err := c.Release(context.Background(), srv.URL, "release-token", ""); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
 	if gotMethod != http.MethodPost || gotPath != "/relay/release" || gotAuth != "Bearer release-token" {
 		t.Errorf("request = %s %s auth=%q", gotMethod, gotPath, gotAuth)
+	}
+	// The factory reset's release stays bodyless: the control plane records
+	// a bodyless release as "factory_reset".
+	if len(gotBody) != 0 {
+		t.Errorf("factory-reset release body = %q, want none", gotBody)
+	}
+}
+
+// The last-device unpair (poolpilot-relay#115) sends its reason as
+// {"reason":"unpaired"}, with a JSON content type.
+func TestReleaseSendsReason(t *testing.T) {
+	var gotType string
+	var got map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotType = r.Header.Get("Content-Type")
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	if err := New(newStore(t, "")).Release(context.Background(), srv.URL, "tok", ReleaseReasonUnpaired); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	if gotType != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", gotType)
+	}
+	if len(got) != 1 || got["reason"] != "unpaired" {
+		t.Errorf("release body = %v, want {\"reason\":\"unpaired\"}", got)
 	}
 }
 
@@ -368,7 +398,7 @@ func TestReleaseStatusMapping(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer notFound.Close()
-	if err := New(newStore(t, "")).Release(context.Background(), notFound.URL, "tok"); err != nil {
+	if err := New(newStore(t, "")).Release(context.Background(), notFound.URL, "tok", ""); err != nil {
 		t.Errorf("404 must be best-effort success (old cloud without the route), got %v", err)
 	}
 
@@ -376,7 +406,7 @@ func TestReleaseStatusMapping(t *testing.T) {
 		w.WriteHeader(http.StatusBadRequest)
 	}))
 	defer rejecting.Close()
-	if err := New(newStore(t, "")).Release(context.Background(), rejecting.URL, "tok"); !errors.Is(err, ErrRejected) {
+	if err := New(newStore(t, "")).Release(context.Background(), rejecting.URL, "tok", ""); !errors.Is(err, ErrRejected) {
 		t.Errorf("other 4xx must map to ErrRejected, got %v", err)
 	}
 
@@ -384,11 +414,11 @@ func TestReleaseStatusMapping(t *testing.T) {
 		w.WriteHeader(http.StatusBadGateway)
 	}))
 	defer failing.Close()
-	if err := New(newStore(t, "")).Release(context.Background(), failing.URL, "tok"); !errors.Is(err, ErrUnavailable) {
+	if err := New(newStore(t, "")).Release(context.Background(), failing.URL, "tok", ""); !errors.Is(err, ErrUnavailable) {
 		t.Errorf("5xx must map to ErrUnavailable, got %v", err)
 	}
 
-	if err := New(newStore(t, "")).Release(context.Background(), "http://127.0.0.1:1", "tok"); !errors.Is(err, ErrUnavailable) {
+	if err := New(newStore(t, "")).Release(context.Background(), "http://127.0.0.1:1", "tok", ""); !errors.Is(err, ErrUnavailable) {
 		t.Errorf("transport failure must map to ErrUnavailable, got %v", err)
 	}
 }

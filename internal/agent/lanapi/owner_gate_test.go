@@ -47,10 +47,8 @@ func TestPairingStoresTheHouseholdRole(t *testing.T) {
 // configures the controller right after pairing, which is an owner-only route.
 func TestRecoveredDeviceIsAnOwner(t *testing.T) {
 	f := newFixture(t)
-	ownerTok, ownerID := f.pairFirst(t)
-	if resp, raw := f.do(t, "DELETE", "/v1/devices/"+ownerID, ownerTok, nil); resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("self-revoke: HTTP %d %s", resp.StatusCode, raw)
-	}
+	_, ownerID := f.pairFirst(t)
+	unpairKeepingCredential(t, f, ownerID)
 	seedTLSKey(t, f)
 	resp, raw := pairRaw(t, f, wire.PairRequest{RecoveryCode: recoveryCodeNow(t, f), DeviceName: "recovered"})
 	if resp.StatusCode != http.StatusOK {

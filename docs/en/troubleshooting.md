@@ -221,6 +221,16 @@ straight back up). Afterwards the Relay is unpaired —
 [re‑pair](#re-pair-the-relay) it as if it were new. Because the identity
 changed, remove the old Relay entry in the app first if it's still listed.
 
+**When the last phone leaves, the Relay resets itself.** If the last phone
+paired with the Relay removes itself at home, on the same network (for example
+the owner disconnecting their own phone when no other phone is paired), the
+Relay does exactly what a factory reset does: it frees its place in your
+household in the cloud, forgets its pairing, controllers and cloud credentials,
+and restarts with a fresh identity, ready to be set up again right away. The
+log shows *"relay reset: the last paired device left"*. This never happens
+through the remote tunnel: the Relay refuses to remove its last phone
+remotely.
+
 ## Update or reinstall
 
 Re‑running the installer one‑liner updates a device to the current release and

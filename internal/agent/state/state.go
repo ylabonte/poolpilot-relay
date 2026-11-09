@@ -809,6 +809,35 @@ func (st *Store) Update(fn func(*State)) error {
 func (st *Store) Wipe() error {
 	st.mu.Lock()
 	defer st.mu.Unlock()
+	return st.wipeLocked()
+}
+
+// WipeIf is Wipe, applied only while still holds for the CURRENT document —
+// evaluated under the store lock the wipe itself takes, so nothing can land
+// between the check and the wipe. still == nil wipes unconditionally. It
+// returns the document as it was at the moment of the wipe, so the caller can
+// still release the cloud credentials the wipe destroyed (factory reset's
+// POST /relay/release) without a separate, racy Get beforehand. A store that
+// is already wiped is never wiped "again": (zero, false, nil).
+//
+// The last-device unpair (lanapi's deleteDevice, poolpilot-relay#115) binds
+// its wipe this way to the unpaired document it decided on: a new setup that
+// landed while it was still talking to the cloud is never wiped.
+func (st *Store) WipeIf(still func(State) bool) (State, bool, error) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.wiped || (still != nil && !still(st.s)) {
+		return State{}, false, nil
+	}
+	prev := cloneState(st.s)
+	if err := st.wipeLocked(); err != nil {
+		return State{}, false, err
+	}
+	return prev, true, nil
+}
+
+// wipeLocked is Wipe's body; st.mu must be held.
+func (st *Store) wipeLocked() error {
 	if err := os.Remove(st.path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
