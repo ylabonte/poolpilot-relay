@@ -16,7 +16,7 @@
 # be bumped here too. The tag tracks the toolchain line, not the `go` directive
 # (the minimum for importers such as poolpilot-cloud), so its minor may be
 # newer than the `go` directive's.
-FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine AS build
 RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /src
 COPY go.mod go.sum ./
