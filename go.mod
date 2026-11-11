@@ -2,7 +2,7 @@ module github.com/ylabonte/poolpilot-relay
 
 go 1.26
 
-toolchain go1.27.3
+toolchain go1.27.4
 
 // Listen with plain TCP, not Multipath TCP. Go 1.24+ opens listeners as
 // MPTCP sockets by default; nothing that connects to the relay needs it
