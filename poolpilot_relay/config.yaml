@@ -36,7 +36,8 @@ startup: application
 # the default 8443 on the host network.
 #
 # mdns_verbose_logs: off by default. The mDNS library logs harmless RFC 6762
-# "sanitize" notices on every announce; we suppress them so the log stays clean.
+# "sanitize" notices on every announce, and "no such network interface" when a
+# short-lived (veth) interface vanishes; we suppress them so the log stays clean.
 # Turn this on only when debugging discovery — then the extra lines come back.
 options:
   lan_port: 8443

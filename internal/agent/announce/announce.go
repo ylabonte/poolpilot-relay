@@ -23,19 +23,25 @@ import (
 const ServiceType = "_poolpilot-relay._tcp"
 
 // SetVerboseLogging controls the dnssd library's own INFO logger. That logger is
-// enabled by default and chatters RFC 6762 "sanitize" notices — e.g. "…the
-// Recursion Available bit MUST be zero on transmission (RFC6762 18.7)" — to
-// stdout on every announce burst. The messages are harmless (the library clears
-// the flag and sends a compliant packet), so we quiet them by default and let
-// operators opt back in via the Home Assistant `mdns_verbose_logs` option or the
-// MDNS_VERBOSE_LOGS env var.
+// enabled by default and chatters two kinds of harmless notices to stdout:
+//
+//   - RFC 6762 "sanitize" notices on every announce burst — e.g. "…the Recursion
+//     Available bit MUST be zero on transmission (RFC6762 18.7)". The library
+//     clears the flag and sends a compliant packet.
+//   - "route ip+net: no such network interface" from its netlink link-update
+//     loop, when an interface it was told about is already gone by the time it
+//     looks it up. On a Home Assistant host, backups and app container churn
+//     create and remove veth interfaces in bursts, so these arrive several at a
+//     time; dnssd just skips the vanished interface.
+//
+// We quiet both by default and let operators opt back in via the Home Assistant
+// `mdns_verbose_logs` option or the MDNS_VERBOSE_LOGS env var.
 //
 // Off (the default) does NOT blanket-disable the logger: dnssd routes genuine
-// diagnostics through the same Info logger (resolve errors, netlink link-update
-// failures, "invalid source address"), and those are worth seeing even when the
-// noise is off. So instead of silencing Info wholesale we filter it — dropping
-// only the sanitize notices, which are exactly the Info lines carrying "RFC6762"
-// (every real diagnostic omits it), and passing everything else to stdout.
+// diagnostics through the same Info logger (resolve errors, other netlink
+// link-update failures, "invalid source address"), and those are worth seeing
+// even when the noise is off. So instead of silencing Info wholesale we filter
+// it (see isDNSSDNoise) and pass everything else to stdout.
 //
 // It mutates a process-global logger, so call it once at startup, before Run.
 func SetVerboseLogging(verbose bool) {
@@ -43,19 +49,37 @@ func SetVerboseLogging(verbose bool) {
 		dnssdlog.Info.Enable() // restore full stdout logging, notices included
 		return
 	}
-	dnssdlog.Info.SetOutput(rfc6762Filter{w: os.Stdout})
+	dnssdlog.Info.SetOutput(dnssdNoiseFilter{w: os.Stdout})
 }
 
-// rfc6762Filter forwards dnssd's formatted Info log lines to w but swallows the
-// harmless RFC 6762 sanitize notices. log.Logger emits one fully-formatted line
-// per Write, so a substring test per Write is line-accurate.
-type rfc6762Filter struct{ w io.Writer }
+// dnssdNoiseFilter forwards dnssd's formatted Info log lines to w but swallows
+// the harmless notices isDNSSDNoise matches. log.Logger emits one
+// fully-formatted line per Write, so a substring test per Write is
+// line-accurate.
+type dnssdNoiseFilter struct{ w io.Writer }
 
-func (f rfc6762Filter) Write(p []byte) (int, error) {
-	if bytes.Contains(p, []byte("RFC6762")) {
+func (f dnssdNoiseFilter) Write(p []byte) (int, error) {
+	if isDNSSDNoise(p) {
 		return len(p), nil // swallow the notice; report a full, error-free write
 	}
 	return f.w.Write(p)
+}
+
+// isDNSSDNoise reports whether a formatted dnssd Info line is one of the
+// harmless notices hidden by default:
+//
+//   - any line carrying "RFC6762" — the sanitize notices (every real
+//     diagnostic omits it);
+//   - a line from netlink_linux.go (the Lshortfile prefix of dnssd's
+//     link-update loop) that carries "no such network interface" — the
+//     vanished-interface case. Both substrings must match, so other netlink
+//     errors and the same error from any other source file stay visible.
+func isDNSSDNoise(line []byte) bool {
+	if bytes.Contains(line, []byte("RFC6762")) {
+		return true
+	}
+	return bytes.Contains(line, []byte("netlink_linux.go:")) &&
+		bytes.Contains(line, []byte("no such network interface"))
 }
 
 // Config describes the announcement.

@@ -57,9 +57,11 @@ Two settings, on the app's **Configuration** tab:
   an already-paired Relay goes through recovery/invite, not a fresh pairing: the
   household **owner** re-pairs with the one-time recovery code (`show-recovery`),
   other phones via a new **invite**.
-- **Additional mDNS logs** (`mdns_verbose_logs`, default **off**) — the discovery
-  library prints harmless RFC 6762 notices (e.g. *"…the Recursion Available bit
-  MUST be zero on transmission (RFC6762 18.7)"*) on every announce; they are
+- **Additional mDNS logs** (`mdns_verbose_logs`, default **off**) — the
+  discovery library prints harmless RFC 6762 notices (e.g. *"…the Recursion
+  Available bit MUST be zero on transmission (RFC6762 18.7)"*) on every
+  announce, and *"route ip+net: no such network interface"* in bursts when
+  short-lived network interfaces vanish during backups or app restarts; both are
   hidden by default so the log stays readable. Turn this on only to debug
   discovery, then the extra lines reappear.
 

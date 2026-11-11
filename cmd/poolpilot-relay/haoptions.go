@@ -91,10 +91,11 @@ func haLanPort(path string) (int, bool) {
 
 // resolveMDNSVerbose decides whether the underlying dnssd library's own INFO
 // logging is on for this run. The default is OFF (the RFC 6762 sanitize notices
-// are benign noise — see announce.SetVerboseLogging). Precedence mirrors
-// resolveLanListen: an explicit MDNS_VERBOSE_LOGS env var (the systemd
-// EnvironmentFile knob) wins; otherwise the Home Assistant app's
-// `mdns_verbose_logs` option (read from haOptionsPath) applies; otherwise off.
+// and vanished-interface notes are benign noise — see
+// announce.SetVerboseLogging). Precedence mirrors resolveLanListen: an explicit
+// MDNS_VERBOSE_LOGS env var (the systemd EnvironmentFile knob) wins; otherwise
+// the Home Assistant app's `mdns_verbose_logs` option (read from haOptionsPath)
+// applies; otherwise off.
 func resolveMDNSVerbose(haOptionsPath string) bool {
 	if v, ok := envBool("MDNS_VERBOSE_LOGS"); ok {
 		return v

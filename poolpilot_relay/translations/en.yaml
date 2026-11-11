@@ -11,5 +11,7 @@ configuration:
     name: Additional mDNS logs
     description: >-
       Off by default. The mDNS library prints harmless RFC 6762 notices on every
-      announce; these are hidden to keep the log clean. Turn this on only to
-      debug discovery problems, then the extra lines reappear.
+      announce, and "no such network interface" notes when short-lived network
+      interfaces vanish (e.g. during backups); these are hidden to keep the log
+      clean. Turn this on only to debug discovery problems, then the extra lines
+      reappear.
