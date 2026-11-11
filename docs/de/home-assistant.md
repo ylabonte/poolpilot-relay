@@ -56,8 +56,10 @@ Zwei Einstellungen, im Reiter **Konfiguration** der App:
   **Einladung**.
 - **Zusätzliche mDNS-Logs** (`mdns_verbose_logs`, Standard **aus**) — die
   Discovery-Bibliothek schreibt bei jeder Ankündigung harmlose RFC-6762-Hinweise
-  ins Log; standardmäßig sind sie ausgeblendet, damit das Log lesbar bleibt.
-  Schalte das nur zum Debuggen der Discovery ein (siehe
+  ins Log, dazu Hinweise auf kurzlebige, schon wieder verschwundene
+  Netzwerkschnittstellen (gehäuft bei Backups oder App-Neustarts); standardmäßig
+  sind sie ausgeblendet, damit das Log lesbar bleibt. Schalte das nur zum
+  Debuggen der Discovery ein (siehe
   [Fehlerbehebung](troubleshooting.md#wiederkehrende-mdns-rfc6762-logzeilen)).
 
 Alles Übrige ist fest: Die App spricht mit der PoolPilot-Cloud und legt ihre

@@ -24,7 +24,8 @@
 //	                 an app-set PUT /v1/poll-interval value (persisted) takes precedence
 //	MDNS_DISABLED    "1" disables the mDNS announcer (docker/e2e)
 //	MDNS_VERBOSE_LOGS "1" re-enables the dnssd library's own INFO logging (the
-//	                 RFC 6762 sanitize notices), which is suppressed by default;
+//	                 RFC 6762 sanitize notices, vanished-interface notes),
+//	                 which is suppressed by default (non-noise lines still show);
 //	                 the HA app exposes this as the `mdns_verbose_logs` option
 //	FRPS_AUTH_TOKEN  fallback frps transport token when the redeem response
 //	                 does not carry one (dev/e2e compose)
@@ -237,8 +238,8 @@ func run() error {
 	// loopback port (see reservedLoopbackPorts).
 	lanListen := resolveLanListen(os.Getenv("HA_OPTIONS"), reservedLoopbackPorts()...)
 	// Quiet the dnssd library's own INFO chatter (harmless RFC 6762 sanitize
-	// notices) by default; MDNS_VERBOSE_LOGS / the HA `mdns_verbose_logs` option
-	// re-enables it. Set once, before the announcer starts.
+	// notices, vanished-interface notes) by default; MDNS_VERBOSE_LOGS / the HA
+	// `mdns_verbose_logs` option re-enables it. Set once, before the announcer starts.
 	announce.SetVerboseLogging(resolveMDNSVerbose(os.Getenv("HA_OPTIONS")))
 	announcer := announce.New(announce.Config{
 		AgentID:     st.AgentID,

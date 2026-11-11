@@ -33,7 +33,20 @@ ist das **normal und harmlos** – es ist nichts kaputt. Sie kommen aus der
 Discovery-Bibliothek, mit der sich das Relay per mDNS ankündigt: Vor dem Senden
 jedes Pakets setzt sie ein Header-Flag zurück, das RFC 6762 auf null verlangt,
 und protokolliert einen Hinweis. Das tatsächlich gesendete Paket ist korrekt, und
-die Discovery funktioniert. Neuere Relays blenden diese Zeilen standardmäßig aus;
+die Discovery funktioniert.
+
+Dasselbe gilt für gehäufte Zeilen wie diese, oft mehrere auf einmal (unter Home
+Assistant meist während eines Backups oder wenn Apps neu starten):
+
+```
+INFO … netlink_linux.go:29: route ip+net: no such network interface
+```
+
+Die Bibliothek beobachtet, wie Netzwerkschnittstellen kommen und gehen; ist eine
+kurzlebige virtuelle Schnittstelle schon wieder weg, wenn sie nachsieht,
+protokolliert sie das und überspringt sie.
+
+Neuere Relays blenden beide Arten standardmäßig aus;
 wenn du sie zurückhaben willst (zum Debuggen der Discovery), setze
 `MDNS_VERBOSE_LOGS=1` in der Konfiguration oder aktiviere **Zusätzliche
 mDNS-Logs** auf dem Konfigurations-Tab der Home-Assistant-App.

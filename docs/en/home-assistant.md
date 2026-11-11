@@ -49,9 +49,10 @@ Two settings, on the app's **Configuration** tab:
   pairing: the **owner** re-pairs with the one-time recovery code (see
   **Recovery / advanced** below), other phones via a new **invite**.
 - **Additional mDNS logs** (`mdns_verbose_logs`, default **off**) — the
-  discovery library prints harmless RFC 6762 notices on every announcement;
-  they are hidden by default so the log stays readable. Turn this on only to
-  debug discovery (see
+  discovery library prints harmless RFC 6762 notices on every announcement, and
+  notes about short-lived network interfaces that vanished (bursts during
+  backups or app restarts); they are hidden by default so the log stays
+  readable. Turn this on only to debug discovery (see
   [Troubleshooting](troubleshooting.md#repeated-mdns-rfc6762-log-lines)).
 
 Everything else is fixed: the app talks to the PoolPilot cloud and stores its

@@ -32,10 +32,21 @@ INFO … mdns.go:475: dnssd: In both multicast query and multicast response mess
 that's **normal and harmless** — nothing is broken. They come from the discovery
 library the Relay uses to advertise itself over mDNS: before sending each packet
 it clears a header flag that RFC 6762 requires to be zero and logs a note. The
-packet that actually goes out is correct, and discovery works. Newer Relays
-suppress these by default; if you want them back (to debug discovery), set
-`MDNS_VERBOSE_LOGS=1` in the config, or enable **Additional mDNS logs** on the
-Home Assistant app's Configuration tab.
+packet that actually goes out is correct, and discovery works.
+
+The same goes for bursts of this line, often several at once (on Home Assistant
+typically while a backup runs or apps restart):
+
+```
+INFO … netlink_linux.go:29: route ip+net: no such network interface
+```
+
+The library watches network interfaces come and go; when a short-lived virtual
+interface is already gone by the time it looks, it logs this and skips it.
+
+Newer Relays suppress both by default; if you want them back (to debug
+discovery), set `MDNS_VERBOSE_LOGS=1` in the config, or enable **Additional mDNS
+logs** on the Home Assistant app's Configuration tab.
 
 ## The app can't reach the Relay
 

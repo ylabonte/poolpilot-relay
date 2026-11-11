@@ -12,6 +12,8 @@ configuration:
     name: Zusätzliche mDNS-Logs
     description: >-
       Standardmäßig aus. Die mDNS-Bibliothek gibt bei jeder Ankündigung harmlose
-      RFC-6762-Hinweise aus; diese werden ausgeblendet, damit das Log sauber
-      bleibt. Nur zum Debuggen von Discovery-Problemen einschalten – dann
-      erscheinen die zusätzlichen Zeilen wieder.
+      RFC-6762-Hinweise aus, dazu „no such network interface“, wenn kurzlebige
+      Netzwerkschnittstellen verschwinden (z. B. bei Backups); diese werden
+      ausgeblendet, damit das Log sauber bleibt. Nur zum Debuggen von
+      Discovery-Problemen einschalten – dann erscheinen die zusätzlichen Zeilen
+      wieder.
