@@ -459,8 +459,22 @@ type DeviceRegisterRequest struct {
 	// Environment selects the APNs host per token ("sandbox" | "prod");
 	// FCM tokens are always "prod".
 	Environment string `json:"environment,omitempty"`
-	// Locale drives push-text localization ("de" | "en"; default "de" — the
-	// user base is overwhelmingly German).
+	// Locale selects the language of the push texts the cloud renders for this
+	// token. Send the app's current UI language and re-register when it
+	// changes. Format: a BCP 47 tag or POSIX/ICU locale name ("fr-CA", "nb_NO",
+	// "en_US.UTF-8"); case is ignored, and anything from the first "." or "@"
+	// on is dropped. The cloud stores only the primary language subtag
+	// ("fr-CA" → "fr"), folding "no"/"nn" onto "nb" and "gsw"/"nds"/"bar" onto
+	// "de".
+	//
+	// Supported set: "de", "en", "es", "fr", "it", "nb", "pl", "uk". Fallback:
+	// a well-formed language outside that set (e.g. "pt") is stored as sent and
+	// renders in English; a missing or malformed value is stored and rendered
+	// as German. The cloud is authoritative for the supported set
+	// (poolpilot-cloud push.SupportedLocales, documented in its
+	// docs/app-bearer-contract.md §4), so this list may lag a newly added
+	// language; the fallback is resolved at send time, so a newly added
+	// language needs no re-registration.
 	Locale string `json:"locale,omitempty"`
 	// DeviceID is the agent-issued device id this phone received from the relay's
 	// PairResponse.DeviceID (present since the multi-device round). Optional
@@ -795,9 +809,16 @@ type PushSourceSubscribeRequest struct {
 	// Environment selects the APNs host per token ("sandbox" | "prod"); FCM
 	// tokens are always "prod". Same defaulting as DeviceRegisterRequest.
 	Environment string `json:"environment,omitempty"`
-	// Locale drives push-text localization ("de" | "en"; default "de").
-	// Refreshed on every renewal, so a language change propagates on the next
-	// re-proof.
+	// Locale is the app's current UI language, accepted and normalized
+	// exactly like DeviceRegisterRequest.Locale: the primary language subtag
+	// is stored; supported set "de", "en", "es", "fr", "it", "nb", "pl", "uk";
+	// a well-formed unsupported language resolves to English, a missing or
+	// malformed one to German. The cloud is authoritative for the set, so this
+	// list may lag a newly added language. Today the cloud renders no text of
+	// its own for a subscription (a VIOLET push carries the controller's title
+	// and message verbatim), so the stored value only takes effect once it
+	// does. Refreshed on every renewal, so a language change propagates on the
+	// next re-proof.
 	Locale string `json:"locale,omitempty"`
 	// AttestChallenge — see DeviceRegisterRequest.AttestChallenge's doc.
 	AttestChallenge string `json:"attest_challenge,omitempty"`
