@@ -6,7 +6,10 @@
 // internal/agent/alert.effectiveBands; the control-band parity itself is pinned
 // app-side in shared/test-fixtures/control-band-parity.json, not vendored here), so
 // Defaults below is a historical severity scale kept only as the known-banded-type set,
-// not a live parity contract. The vendored testdata/measurement-parity.json is
+// not a live parity contract. Classification includes the multilingual
+// air-sensor rule (AirLabelHints in Kotlin, ported in airhints.go): a Celsius
+// label is air when one of its words names outdoor / ambient air in any enforced
+// app language and none names water. The vendored testdata/measurement-parity.json is
 // asserted by bands_test.go; when the classification contract changes in
 // pool-apps, re-vendor the file and this package must follow.
 package bands
@@ -127,12 +130,16 @@ var Defaults = map[string]BandsConfig{
 // MeasurementBands.classify in Kotlin — keep the rules in lockstep:
 //   - "ppm" is chlorine only on a "chlor…" / exact-"cl" label (a bare "cl"
 //     substring would also match "Cycle"/"Clarity").
-//   - Celsius is air only when the label says air/ambient/outdoor; Fahrenheit
+//   - Celsius is air only when the label names an air sensor in any enforced app
+//     language (AirLabelHints in Kotlin, see airhints.go): a whole air word
+//     ("Outdoor", "Außen", "Extérieur", "Повітря") or a stem+tail compound
+//     ("Außentemperatur", "Umgebungslufttemperatur"), matched per word — words
+//     split on anything that is not a Unicode letter or decimal digit — and
+//     vetoed by any water word ("Outdoor pool" stays water). Fahrenheit
 //     deliberately stays unclassified (the gradients' stops are Celsius numbers).
 func Classify(unit string, labelHint string) string {
 	u := strings.ToLower(strings.TrimSpace(unit))
 	hint := strings.ToLower(strings.TrimSpace(labelHint))
-	labelHintsAir := hint != "" && (strings.Contains(hint, "air") || strings.Contains(hint, "ambient") || strings.Contains(hint, "outdoor"))
 	labelHintsChlorine := hint != "" && (strings.Contains(hint, "chlor") || hint == "cl")
 	switch {
 	case u == "ph":
@@ -144,7 +151,7 @@ func Classify(unit string, labelHint string) string {
 	case u == "ppm" && labelHintsChlorine:
 		return TypeChlorine
 	case u == "c" || u == "°c":
-		if labelHintsAir {
+		if labelHintsAir(hint) {
 			return TypeTempAir
 		}
 		return TypeTempWater
