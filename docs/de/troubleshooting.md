@@ -208,7 +208,7 @@ keinen weiteren. Auf der eigenen Geräteliste dieses Relays muss aber Platz sein
 (`device_quota`).
 Die App schickt beim Koppeln einen kurzlebigen Nachweis dafür mit, den das Relay
 an die PoolPilot-Cloud weiterreicht, ohne ihn zu lesen oder zu speichern. Das
-setzt ein Relay neuer als v1.0.0 sowie eine Cloud und eine App voraus, die das
+setzt ein Relay ab v1.1.0 sowie eine Cloud und eine App voraus, die das
 unterstützen; mit einem älteren Relay oder einer älteren App lehnt ein voller
 Haushalt auch dieses Telefon ab. Ein Telefon, das zu mehreren Haushalten gehört,
 probiert sie mit demselben Code nacheinander durch.
