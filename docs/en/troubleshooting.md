@@ -187,7 +187,7 @@ the same household) does not need a free slot in the household to pair this
 Relay too: it keeps its place in the household and takes no extra one. This
 Relay's own device list still needs room, though (`device_quota`). The app sends a short-lived
 proof of that with the pairing, and the Relay passes it on to the PoolPilot
-cloud without reading or storing it. This needs a Relay newer than v1.0.0, a
+cloud without reading or storing it. This needs Relay v1.1.0 or later, a
 cloud and an app that support it; with an older Relay or app, a full household
 refuses that phone as well. A phone that belongs to several households tries
 them one after the other with the same code.
