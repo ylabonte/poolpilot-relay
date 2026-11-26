@@ -50,10 +50,10 @@ Zwei Einstellungen, im Reiter **Konfiguration** der App:
   Wechsel bei einem bereits gekoppelten Relay unterbricht daher den direkten
   LAN-Pfad, die App fällt auf den Cloud-Tunnel zurück, bis du neu koppelst. Ein
   erneutes Koppeln eines bereits gekoppelten Relays läuft über
-  Wiederherstellung/Einladung, nicht über frisches Koppeln: der **Eigentümer**
-  koppelt mit dem einmaligen Wiederherstellungscode neu (siehe
-  **Wiederherstellung / Fortgeschritten** unten), andere Handys über eine neue
-  **Einladung**.
+  Wiederherstellung/Einladung, nicht über frisches Koppeln. Trenne das Handy
+  dafür in der App zuerst vom Relay; danach koppelt der **Eigentümer** mit dem
+  einmaligen Wiederherstellungscode (siehe **Wiederherstellung /
+  Fortgeschritten** unten), andere Handys über eine neue **Einladung**.
 - **Zusätzliche mDNS-Logs** (`mdns_verbose_logs`, Standard **aus**) — die
   Discovery-Bibliothek schreibt bei jeder Ankündigung harmlose RFC-6762-Hinweise
   ins Log, dazu Hinweise auf kurzlebige, schon wieder verschwundene

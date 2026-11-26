@@ -54,9 +54,10 @@ Two settings, on the app's **Configuration** tab:
   automatically; an already-paired phone keeps the port it paired on and does not
   re-resolve it, so changing the port on an already-paired Relay drops the direct
   LAN path — the app falls back to the cloud tunnel until you re-pair. Re-pairing
-  an already-paired Relay goes through recovery/invite, not a fresh pairing: the
-  household **owner** re-pairs with the one-time recovery code (`show-recovery`),
-  other phones via a new **invite**.
+  an already-paired Relay goes through recovery/invite, not a fresh pairing.
+  Disconnect the phone from the Relay in the app first; then the household
+  **owner** pairs with the one-time recovery code (`show-recovery`), other
+  phones via a new **invite**.
 - **Additional mDNS logs** (`mdns_verbose_logs`, default **off**) — the
   discovery library prints harmless RFC 6762 notices (e.g. *"…the Recursion
   Available bit MUST be zero on transmission (RFC6762 18.7)"*) on every

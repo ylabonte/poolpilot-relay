@@ -46,8 +46,9 @@ Two settings, on the app's **Configuration** tab:
   not re-resolve it, so changing the port on an already-paired Relay drops the
   direct LAN path — the app falls back to the cloud tunnel until you re-pair.
   Re-pairing an already-paired Relay goes through recovery/invite, not a fresh
-  pairing: the **owner** re-pairs with the one-time recovery code (see
-  **Recovery / advanced** below), other phones via a new **invite**.
+  pairing. Disconnect the phone from the Relay in the app first; then the
+  **owner** pairs with the one-time recovery code (see **Recovery / advanced**
+  below), other phones via a new **invite**.
 - **Additional mDNS logs** (`mdns_verbose_logs`, default **off**) — the
   discovery library prints harmless RFC 6762 notices on every announcement, and
   notes about short-lived network interfaces that vanished (bursts during
