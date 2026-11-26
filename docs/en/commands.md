@@ -29,8 +29,9 @@ when the app doesn't discover the Relay automatically:
    you sent yourself, or open it in the phone's browser — and it opens the
    PoolPilot app, just like the camera does;
 3. the Relay's **fingerprint**, to type into the app's manual entry if you can
-   neither scan nor open the link. Manual entry accepts only the fingerprint
-   (`sha256/…`), not the link.
+   neither scan nor open the link. With PoolPilot app 1.3 or later, manual
+   entry accepts the fingerprint (`sha256/…`) or the full pairing link; older
+   app versions accept only the fingerprint.
 
 ```bash
 sudo poolpilot-relay show-pairing
