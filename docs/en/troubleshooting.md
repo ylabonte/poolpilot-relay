@@ -116,7 +116,7 @@ entry. This is read‑only and safe to run any time.
 
 ## Owner and member phones
 
-Every phone paired with the Relay has a household role, fixed when it is paired:
+Every phone paired with the Relay has a role on the Relay, set when it pairs:
 
 - **Owner**: the phone that set the Relay up, and a phone that took the owner
   role back with a [recovery code](#lost-owner-access).
@@ -158,9 +158,16 @@ that clearly joined later through an invite becomes a member. If a phone ends up
 with the wrong role, an owner can remove it and invite it again, or take the
 owner role back with a recovery code (below).
 
-The role on the Relay is set at pairing. Promoting or demoting someone in the
-app's household settings does not change it; to give a member phone owner
-rights on the Relay, pair it with a recovery code.
+The role on the Relay is set at pairing and cannot be changed afterwards, not in
+the app either. To give a member phone owner rights, first disconnect it from
+the Relay in the app, then pair it again with a
+[recovery code](#lost-owner-access). That also makes it an owner in the
+household, so it can, for example, invite others and remove them. An invited
+phone is always a member on the Relay.
+
+Take care if it is the last phone paired with the Relay: disconnecting it at
+home makes the Relay reset itself (see [Factory reset](#factory-reset)), and a
+recovery code no longer applies afterwards.
 
 ## The household is at its device limit
 
