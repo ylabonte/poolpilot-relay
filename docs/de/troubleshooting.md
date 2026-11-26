@@ -200,7 +200,10 @@ verbraucht: Der Einladungs- oder Wiederherstellungscode gilt weiter, bis er
 abläuft. Das Limit wird vor dem
 Einladungscode selbst geprüft, daher bekommt auch eine vertippte oder
 abgelaufene Einladung diese Antwort und wird erst als solche abgelehnt, wenn
-wieder Platz ist.
+wieder Platz ist. Eine seltene Ausnahme: Koppeln zwei Telefone im selben Moment
+und ist auf der Liste dieses Relays nur noch ein Platz frei, erhält das Telefon,
+das leer ausgeht, `device_quota`; kam es mit einer Einladung, ist diese
+verbraucht.
 
 Um Platz zu schaffen, entfernt ein Eigentümer in der App unter
 **PoolPilot Relay → Gekoppelte Geräte** ein Telefon, das nicht mehr genutzt
