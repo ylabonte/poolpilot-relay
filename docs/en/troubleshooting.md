@@ -187,7 +187,8 @@ room.
 
 To make room, an owner removes a phone that is no longer used under
 **PoolPilot Relay → Paired devices** in the app, or a member signs out on a
-phone they no longer need. Then pair again with the same code.
+phone they no longer need. Then pair again: with the same code while it is
+still valid, otherwise with a new invite or a new recovery code.
 
 A phone that is already in the household (it is paired with another Relay of
 the same household) does not need a free slot in the household to pair this

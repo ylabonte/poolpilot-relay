@@ -205,7 +205,8 @@ wieder Platz ist.
 Um Platz zu schaffen, entfernt ein Eigentümer in der App unter
 **PoolPilot Relay → Gekoppelte Geräte** ein Telefon, das nicht mehr genutzt
 wird, oder ein Mitglied meldet sich auf einem Telefon ab, das es nicht mehr
-braucht. Danach mit demselben Code erneut koppeln.
+braucht. Danach erneut koppeln: mit demselben Code, solange er noch gilt, sonst
+mit einer neuen Einladung oder einem neuen Wiederherstellungscode.
 
 Ein Telefon, das schon zum Haushalt gehört (es ist mit einem anderen Relay
 desselben Haushalts gekoppelt), braucht keinen freien Platz im Haushalt, um
