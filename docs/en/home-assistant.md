@@ -91,7 +91,7 @@ different **`lan_port`** on the Configuration tab (see above).
 The `poolpilot-relay show-pairing` and `show-recovery` commands print the pairing
 link and the owner-recovery code. There is no shell in the app image and Home
 Assistant has no "exec into app" button, so run them from a host shell — for
-example via the **Advanced SSH & Web Terminal** add-on with Protection mode
+example via the **Advanced SSH & Web Terminal** app with Protection mode
 off. The container name embeds this repository's id, so match it by substring:
 
 ```sh

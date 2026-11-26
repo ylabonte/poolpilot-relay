@@ -35,7 +35,7 @@ same things apply:
 > commands print the pairing link and the owner-recovery code, but there is no
 > shell in this image and Home Assistant has no "exec into app" button. If you
 > ever need them, run them via `docker exec` from a host shell (e.g. the
-> Advanced SSH & Web Terminal add-on with Protection mode off). The container
+> Advanced SSH & Web Terminal app with Protection mode off). The container
 > name embeds this repository's id (`addon_<repo-id>_poolpilot_relay`), so match
 > it by substring:
 >
