@@ -1,7 +1,7 @@
 # Home Assistant app (add-on) repository descriptor.
 #
 # This turns the poolpilot-relay repo into an installable Home Assistant app
-# repository. In Home Assistant, open Settings -> Add-ons -> Add-on store, then
+# repository. In Home Assistant, open Settings -> Apps -> App store, then
 # the ⋮ menu -> Repositories, and add:
 #
 #     https://github.com/ylabonte/poolpilot-relay
