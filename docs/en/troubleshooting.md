@@ -183,9 +183,9 @@ own list that is full). Nothing is paired and nothing is used up: the invite or
 recovery code keeps working until it expires.
 The limit is checked before the invite code itself, so a mistyped or expired
 invite gets this answer too and is only refused for what it is once there is
-room. One rare exception: if two phones pair at the same moment and only one
-place is left on this Relay's own list, the phone that loses gets
-`device_quota`, and if it joined with an invite, that invite is used up.
+room. A rare exception: if two phones pair at the same moment for the last
+free place, on this Relay's own list or in the household, the one that loses
+can find its code used up and then needs a new one.
 
 To make room, an owner removes a phone that is no longer used under
 **PoolPilot Relay → Paired devices** in the app, or a member signs out on a

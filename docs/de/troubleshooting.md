@@ -201,9 +201,9 @@ abläuft. Das Limit wird vor dem
 Einladungscode selbst geprüft, daher bekommt auch eine vertippte oder
 abgelaufene Einladung diese Antwort und wird erst als solche abgelehnt, wenn
 wieder Platz ist. Eine seltene Ausnahme: Koppeln zwei Telefone im selben Moment
-und ist auf der Liste dieses Relays nur noch ein Platz frei, erhält das Telefon,
-das leer ausgeht, `device_quota`; kam es mit einer Einladung, ist diese
-verbraucht.
+um den letzten freien Platz, auf der Liste dieses Relays oder im Haushalt, kann
+der Code des Telefons, das leer ausgeht, verbraucht sein; es braucht dann einen
+neuen.
 
 Um Platz zu schaffen, entfernt ein Eigentümer in der App unter
 **PoolPilot Relay → Gekoppelte Geräte** ein Telefon, das nicht mehr genutzt
