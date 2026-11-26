@@ -15,8 +15,8 @@ für dich verwaltet.
 
 ## Voraussetzungen
 
-- Ein **PoolPilot-Konto mit Pro** und die iOS- oder Android-App — das Relay wird
-  aus der App mit deinem Haushalt gekoppelt.
+- **PoolPilot Pro** (ein aktives Abo) und die iOS- oder Android-App — das Relay
+  wird aus der App mit deinem Haushalt gekoppelt.
 - Eine **ProCon.IP**-, **VIOLET**- oder **BADU-Blue**-Steuerung, erreichbar in
   deinem lokalen Netzwerk.
 - Home Assistant OS oder Supervised auf einem 64-Bit-System (`aarch64` oder
@@ -24,8 +24,8 @@ für dich verwaltet.
 
 ## Installation
 
-1. Öffne in Home Assistant **Einstellungen → Add-ons → Add-on-Store**.
-2. Öffne das **⋮**-Menü (oben rechts) → **Repositories** und füge hinzu:
+1. Öffne in Home Assistant **Einstellungen → Apps → App-Store**.
+2. Öffne das **⋮**-Menü (oben rechts) → **Repositorys** und füge hinzu:
 
    ```
    https://github.com/ylabonte/poolpilot-relay
@@ -50,10 +50,10 @@ Zwei Einstellungen, im Reiter **Konfiguration** der App:
   Wechsel bei einem bereits gekoppelten Relay unterbricht daher den direkten
   LAN-Pfad, die App fällt auf den Cloud-Tunnel zurück, bis du neu koppelst. Ein
   erneutes Koppeln eines bereits gekoppelten Relays läuft über
-  Wiederherstellung/Einladung, nicht über frisches Koppeln: der **Eigentümer**
-  koppelt mit dem einmaligen Wiederherstellungscode neu (siehe
-  **Wiederherstellung / Fortgeschritten** unten), andere Handys über eine neue
-  **Einladung**.
+  Wiederherstellung/Einladung, nicht über frisches Koppeln. Trenne das Handy
+  dafür in der App zuerst vom Relay; danach koppelt der **Eigentümer** mit dem
+  einmaligen Wiederherstellungscode (siehe **Wiederherstellung /
+  Fortgeschritten** unten), andere Handys über eine neue **Einladung**.
 - **Zusätzliche mDNS-Logs** (`mdns_verbose_logs`, Standard **aus**) — die
   Discovery-Bibliothek schreibt bei jeder Ankündigung harmlose RFC-6762-Hinweise
   ins Log, dazu Hinweise auf kurzlebige, schon wieder verschwundene
@@ -85,7 +85,7 @@ erzwingt das erneute Koppeln.
 
 Den Update-Ablauf steuert hier der Home-Assistant-Supervisor, das Relay
 aktualisiert sich in der App also **nicht** selbst. Neue Relay-Versionen
-erscheinen im Add-on-Store wie bei jeder anderen App.
+erscheinen im App-Store wie bei jeder anderen App.
 
 ## Netzwerk
 

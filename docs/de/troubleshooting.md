@@ -125,8 +125,8 @@ gefahrlos aufrufbar.
 
 ## Eigentümer- und Mitglieds-Telefone
 
-Jedes mit dem Relay gekoppelte Telefon hat eine Haushaltsrolle, die beim Koppeln
-festgelegt wird:
+Jedes mit dem Relay gekoppelte Telefon hat auf dem Relay eine Rolle, die beim
+Koppeln festgelegt wird:
 
 - **Eigentümer**: das Telefon, das das Relay eingerichtet hat, und ein Telefon,
   das die Eigentümer-Rolle mit einem [Wiederherstellungscode](#eigentümer-zugriff-verloren)
@@ -173,10 +173,16 @@ Einladung beigetreten ist, wird Mitglied. Hat ein Telefon die falsche Rolle, kan
 ein Eigentümer es entfernen und neu einladen oder die Eigentümer-Rolle mit einem
 Wiederherstellungscode zurückholen (unten).
 
-Die Rolle auf dem Relay wird beim Koppeln festgelegt. Wer in den
-Haushaltseinstellungen der App befördert oder herabgestuft wird, behält auf dem
-Relay seine Rolle; soll ein Mitglieds-Telefon auf dem Relay Eigentümer-Rechte
-bekommen, koppel es mit einem Wiederherstellungscode.
+Die Rolle auf dem Relay wird beim Koppeln festgelegt und lässt sich danach nicht
+ändern, auch nicht in der App. Soll ein Mitglieds-Telefon Eigentümer-Rechte
+bekommen, trenne es in der App zuerst vom Relay und koppel es dann mit einem
+[Wiederherstellungscode](#eigentümer-zugriff-verloren) neu. Damit wird es auch
+im Haushalt Eigentümer und darf zum Beispiel einladen und andere entfernen. Ein
+eingeladenes Telefon ist auf dem Relay immer Mitglied.
+
+Vorsicht, wenn es das letzte mit dem Relay gekoppelte Telefon ist: Trennst du es
+zu Hause, setzt sich das Relay selbst zurück (siehe [Werksreset](#werksreset)),
+und ein Wiederherstellungscode hilft danach nicht mehr.
 
 ## Der Haushalt hat sein Geräte-Limit erreicht
 

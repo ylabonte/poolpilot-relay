@@ -16,7 +16,7 @@ contents:
 | What | Notes |
 | --- | --- |
 | The Relay's TLS identity | Its key pair. The fingerprint you see at pairing is derived from it. |
-| Paired phones | A name, the household role (owner or member) and a **hash** of each phone's access token, never the token itself. |
+| Paired phones | A name, the role on the Relay (owner or member) and a **hash** of each phone's access token, never the token itself. |
 | Your pool controllers | Address, name and type — and the controller's **username and password**. |
 | Alert rules | What should trigger a push, plus a short queue of alerts not yet delivered. |
 | Tunnel credentials | What the Relay needs to log in to the PoolPilot tunnel server. |
@@ -70,7 +70,8 @@ Remote access works because the Relay itself opens the tunnel to the cloud.
 
 At home, the app reaches your pool over your Wi‑Fi. Away from home, it goes
 through the **tunnel**: a connection the Relay opens from your home to the
-PoolPilot cloud and keeps open.
+PoolPilot cloud's tunnel server and keeps open. Where this page says "the
+cloud", that includes the tunnel server unless it names it separately.
 
 - **Encrypted.** The tunnel runs over TLS. Before the Relay sends any
   credentials, it checks the tunnel server's certificate against the one the
@@ -99,8 +100,9 @@ PoolPilot cloud and keeps open.
   how much data flowed.
   If a connection uses the older TLS 1.2, the cloud can also see the Relay's
   certificate, which names the Relay's ID and the device's host name (as it was
-  when the Relay first started). It does not see what you request, your
-  controller login or your readings.
+  when the Relay first started). In the tunnel it does not see what you
+  request, your controller login or your readings. Separately, it does receive
+  your alerts, including the value that triggered them (next point).
 - **Separate from the tunnel.** The app talks to the PoolPilot cloud directly
   for pairing, your household and push setup, and the Relay sends your alerts
   to the cloud so it can deliver push messages (see *What is stored where*

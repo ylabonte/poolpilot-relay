@@ -29,8 +29,10 @@ passt, wenn die App das Relay nicht automatisch findet:
    Nachricht an dich selbst an oder öffne ihn im Browser des Handys —, dann
    öffnet sich die PoolPilot-App, genau wie mit der Kamera;
 3. den **Fingerabdruck** des Relays, zum Eintippen in die manuelle Eingabe der
-   App, falls du weder scannen noch den Link öffnen kannst. Die manuelle Eingabe
-   nimmt nur den Fingerabdruck (`sha256/…`) an, nicht den Link.
+   App, falls du weder scannen noch den Link öffnen kannst. Ab PoolPilot-App 1.3
+   nimmt die manuelle Eingabe den Fingerabdruck (`sha256/…`) oder den
+   vollständigen Kopplungslink an; ältere App-Versionen nehmen nur den
+   Fingerabdruck an.
 
 ```bash
 sudo poolpilot-relay show-pairing

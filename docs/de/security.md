@@ -16,7 +16,7 @@ Linux-Installation bzw. `/data/state.json` in der
 | Was | Hinweise |
 | --- | --- |
 | Die TLS-Identität des Relays | Sein Schlüsselpaar. Daraus ergibt sich der Fingerabdruck, den du beim Koppeln siehst. |
-| Gekoppelte Telefone | Ein Name, die Haushaltsrolle (Eigentümer oder Mitglied) und ein **Hash** des Zugangstokens jedes Telefons, nie das Token selbst. |
+| Gekoppelte Telefone | Ein Name, die Rolle auf dem Relay (Eigentümer oder Mitglied) und ein **Hash** des Zugangstokens jedes Telefons, nie das Token selbst. |
 | Deine Poolsteuerungen | Adresse, Name und Typ — und **Benutzername und Passwort** der Steuerung. |
 | Alarmregeln | Was einen Push auslösen soll, dazu eine kurze Warteschlange noch nicht zugestellter Alarme. |
 | Tunnel-Zugangsdaten | Was das Relay braucht, um sich am PoolPilot-Tunnelserver anzumelden. |
@@ -70,8 +70,9 @@ Fernzugriff funktioniert, weil das Relay den Tunnel zur Cloud selbst aufbaut.
 ## Der Tunnel in einfachen Worten
 
 Zu Hause erreicht die App deinen Pool über dein WLAN. Unterwegs geht das über
-den **Tunnel**: eine Verbindung, die das Relay von zu Hause zur PoolPilot-Cloud
-aufbaut und offen hält.
+den **Tunnel**: eine Verbindung, die das Relay von zu Hause zum Tunnelserver
+der PoolPilot-Cloud aufbaut und offen hält. Wo diese Seite „die Cloud“ sagt,
+ist der Tunnelserver mitgemeint, außer sie nennt ihn eigens.
 
 - **Verschlüsselt.** Der Tunnel läuft über TLS. Bevor das Relay irgendwelche
   Zugangsdaten schickt, prüft es das Zertifikat des Tunnelservers gegen das,
@@ -104,7 +105,9 @@ aufbaut und offen hält.
   Verbindung das ältere TLS 1.2, kann die Cloud außerdem das Zertifikat des
   Relays sehen, das die Kennung des Relays und den Hostnamen des Geräts
   enthält (so, wie er beim ersten Start des Relays hieß). Was du abfragst, die
-  Zugangsdaten deiner Steuerung und deine Werte sieht sie nicht.
+  Zugangsdaten deiner Steuerung und deine Werte sieht sie im Tunnel nicht.
+  Getrennt davon bekommt sie deine Alarme samt dem Wert, der sie ausgelöst hat
+  (nächster Punkt).
 - **Getrennt vom Tunnel.** Für Koppeln, deinen Haushalt und die
   Push-Einrichtung spricht die App direkt mit der PoolPilot-Cloud, und das
   Relay schickt deine Alarme an die Cloud, damit sie Push-Nachrichten

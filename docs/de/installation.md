@@ -68,7 +68,7 @@ Shell-Profile. Ein erneuter Aufruf ist unbedenklich (idempotent) — so
 ## App mit dem Relay koppeln
 
 Wenn die Installation fertig ist, läuft das Relay bereits. So verbindest du es
-mit deinem Konto:
+mit der App:
 
 1. Öffne die **PoolPilot-App** auf einem Telefon, das im **selben Netzwerk** wie
    das Relay ist.
