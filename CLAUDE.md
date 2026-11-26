@@ -81,7 +81,13 @@ coordinating a new tagged release (see *Cross-repo* below).
   dependency-update reflex. Change it deliberately, with the reason in the commit.
 - Log mistakes in MISTAKES.md (what happened, root cause, prevention), and create the file if it
   does not exist yet: a missing file is never a reason to skip the entry. This repo is public, so
-  the file is gitignored and never committed.
+  the file is gitignored and never committed. In a git worktree the entry goes into the main
+  checkout's MISTAKES.md, never into a copy in the worktree, which would disappear with it. Print
+  the shared git directory with `git rev-parse --path-format=absolute --git-common-dir` (the main
+  checkout is its parent), then append with one plain shell command:
+  `cat >> <main checkout>/MISTAKES.md <<'EOF'` … `EOF`. The file tools of a worktree-isolated
+  session refuse that path, and so does a command that computes it inline. This append is the one
+  write into the main checkout that is allowed; touch nothing else there.
 
 ## Cross-repo
 
