@@ -62,8 +62,8 @@ a device.
 
 ## Pair the app with your Relay
 
-When the install finishes, the Relay is already running. To connect it to your
-account:
+When the install finishes, the Relay is already running. To connect it to the
+app:
 
 1. Open the **PoolPilot app** on a phone that is on the **same network** as the
    Relay.

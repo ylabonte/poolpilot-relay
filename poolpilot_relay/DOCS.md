@@ -11,10 +11,10 @@ it.
 This app runs the **same agent** as a standalone PoolPilot Relay install, so the
 same things apply:
 
-- A **PoolPilot account with Pro** and the iOS or Android app. The Relay is
-  paired to your household from the app; until it is paired it serves only an
-  unauthenticated info endpoint (`/v1/info`) plus the LAN-only pairing endpoint —
-  nothing else.
+- **PoolPilot Pro** (an active subscription) and the iOS or Android app. The
+  Relay is paired to your household from the app; until it is paired it serves
+  only an unauthenticated info endpoint (`/v1/info`) plus the LAN-only pairing
+  endpoint — nothing else.
 - A **ProCon.IP**, **VIOLET** or **BADU Blue** controller reachable on your
   local network.
 - Home Assistant OS or Supervised (apps require the Supervisor) on a **64-bit**
