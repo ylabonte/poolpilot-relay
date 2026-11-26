@@ -79,7 +79,9 @@ coordinating a new tagged release (see *Cross-repo* below).
 - **Treat the frp version as a vetting gate, not a routine bump.** `github.com/fatedier/frp` is pinned
   (currently `v0.70.1`); it terminates the user's tunnel, so a bump is a security review, not a
   dependency-update reflex. Change it deliberately, with the reason in the commit.
-- Log mistakes in MISTAKES.md (what happened, root cause, prevention).
+- Log mistakes in MISTAKES.md (what happened, root cause, prevention), and create the file if it
+  does not exist yet: a missing file is never a reason to skip the entry. This repo is public, so
+  the file is gitignored and never committed.
 
 ## Cross-repo
 
