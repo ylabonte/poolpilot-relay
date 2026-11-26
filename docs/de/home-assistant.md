@@ -100,9 +100,9 @@ einen anderen **`lan_port`** (siehe oben).
 Die Befehle `poolpilot-relay show-pairing` und `show-recovery` zeigen den
 Kopplungslink und den Owner-Wiederherstellungscode. Im App-Image gibt es keine
 Shell und Home Assistant hat keinen „In-App-Exec"-Knopf — führe sie also aus
-einer Host-Shell aus, z. B. über das **SSH & Web Terminal**-Add-on mit
-ausgeschaltetem Protection Mode. Der Containername enthält die Repository-ID,
-matche ihn daher per Teilstring:
+einer Host-Shell aus, z. B. über die **Advanced SSH & Web Terminal**-App
+mit ausgeschaltetem Protection Mode. Der Containername enthält die
+Repository-ID, matche ihn daher per Teilstring:
 
 ```sh
 docker exec "$(docker ps --filter name=poolpilot_relay --format '{{.Names}}')" \

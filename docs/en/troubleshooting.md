@@ -179,15 +179,19 @@ an owner who lost every phone can get back in and then remove the stale ones. A
 second recovery while the household is already one over the limit is refused
 until a phone is removed. The app is told a full household with `409` and the
 error code `household_device_quota` (or `device_quota` when it is this Relay's
-own list that is full). Nothing is paired and nothing is used up:
-neither the invite code nor the recovery code, which works until it expires.
+own list that is full). Nothing is paired and nothing is used up: the invite or
+recovery code keeps working until it expires.
 The limit is checked before the invite code itself, so a mistyped or expired
 invite gets this answer too and is only refused for what it is once there is
-room.
+room. A rare exception: if two phones pair at the same moment for the last
+free place, on this Relay's own list or in the household, the one that loses
+can find its code used up and then needs a new one.
 
 To make room, an owner removes a phone that is no longer used under
 **PoolPilot Relay → Paired devices** in the app, or a member signs out on a
-phone they no longer need. Then pair again with the same code.
+phone they no longer need. Then pair again: with the same code while it is
+still valid, otherwise with a new code of the same kind (a new invite from an
+owner, or a fresh recovery code from [`show-recovery`](#lost-owner-access)).
 
 A phone that is already in the household (it is paired with another Relay of
 the same household) does not need a free slot in the household to pair this
@@ -206,9 +210,10 @@ Relay and a PoolPilot cloud that both include that exemption. On Relays up to
 v1.0.0 the Relay itself still refuses with `409 device_quota`; and with a newer
 Relay but a cloud that does not have the exemption yet, the cloud answers
 `409 household_device_quota`. In both cases nothing is paired and the recovery
-code stays valid, so a member has to sign out on a phone they no longer need
-first. If no member can (the extra phones were reset or uninstalled without
-signing out), see [Still stuck?](#still-stuck).
+code is not used up, so a member has to sign out on a phone they no longer need
+first; if that takes longer than the code lasts, get a fresh one with
+`show-recovery`. If no member can (the extra phones were reset or uninstalled
+without signing out), see [Still stuck?](#still-stuck).
 
 Relays up to v0.12.0 answer this case with `409 voucher_quota` instead, for which
 the app says to wait a few minutes and try again with the same code. Waiting
