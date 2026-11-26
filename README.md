@@ -46,8 +46,8 @@ dann aktualisiert es sich [von selbst](docs/de/self-update.md). Lieber erst
 lesen, was du ausführst? Der Installer liegt offen in diesem Repo:
 [`deploy/relay/install.sh`](deploy/relay/install.sh).
 
-**Mit Home Assistant:** Füge dieses Repo unter **Einstellungen → Add-ons →
-Add-on-Store → ⋮ → Repositories** hinzu und installiere **PoolPilot Relay**:
+**Mit Home Assistant:** Füge dieses Repo unter **Einstellungen → Apps →
+App-Store → ⋮ → Repositorys** hinzu und installiere **PoolPilot Relay**:
 
 ```
 https://github.com/ylabonte/poolpilot-relay
@@ -123,7 +123,7 @@ it [updates itself](docs/en/self-update.md). Prefer to read what you run first?
 The installer is right here in this repo:
 [`deploy/relay/install.sh`](deploy/relay/install.sh).
 
-**With Home Assistant:** add this repo under **Settings → Add-ons → Add-on store
+**With Home Assistant:** add this repo under **Settings → Apps → App store
 → ⋮ → Repositories** and install **PoolPilot Relay**:
 
 ```

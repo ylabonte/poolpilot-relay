@@ -21,7 +21,7 @@ features — just running in a container the Home Assistant Supervisor manages.
 
 ## Install
 
-1. In Home Assistant, open **Settings → Add-ons → Add-on store**.
+1. In Home Assistant, open **Settings → Apps → App store**.
 2. Open the **⋮** menu (top right) → **Repositories**, and add:
 
    ```

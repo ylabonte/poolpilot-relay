@@ -24,8 +24,8 @@ für dich verwaltet.
 
 ## Installation
 
-1. Öffne in Home Assistant **Einstellungen → Add-ons → Add-on-Store**.
-2. Öffne das **⋮**-Menü (oben rechts) → **Repositories** und füge hinzu:
+1. Öffne in Home Assistant **Einstellungen → Apps → App-Store**.
+2. Öffne das **⋮**-Menü (oben rechts) → **Repositorys** und füge hinzu:
 
    ```
    https://github.com/ylabonte/poolpilot-relay
@@ -85,7 +85,7 @@ erzwingt das erneute Koppeln.
 
 Den Update-Ablauf steuert hier der Home-Assistant-Supervisor, das Relay
 aktualisiert sich in der App also **nicht** selbst. Neue Relay-Versionen
-erscheinen im Add-on-Store wie bei jeder anderen App.
+erscheinen im App-Store wie bei jeder anderen App.
 
 ## Netzwerk
 

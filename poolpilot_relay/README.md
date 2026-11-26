@@ -3,7 +3,7 @@
 Runs the PoolPilot edge agent as a Home Assistant app (add-on). See
 [DOCS.md](DOCS.md) for installation and usage.
 
-Add this repository to Home Assistant (**Settings → Add-ons → Add-on store → ⋮ →
+Add this repository to Home Assistant (**Settings → Apps → App store → ⋮ →
 Repositories**):
 
 ```

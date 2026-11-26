@@ -22,7 +22,7 @@ same things apply:
 
 ## Install
 
-1. In Home Assistant, go to **Settings → Add-ons → Add-on store**.
+1. In Home Assistant, go to **Settings → Apps → App store**.
 2. Open the **⋮** menu (top right) → **Repositories**, and add:
    `https://github.com/ylabonte/poolpilot-relay`
 3. Find **PoolPilot Relay** in the store, open it, and click **Install**.
