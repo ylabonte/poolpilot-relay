@@ -196,8 +196,8 @@ Wiederherstellung, solange der Haushalt schon ein Gerät über dem Limit liegt,
 wird abgelehnt, bis ein Telefon entfernt ist. Die App erhält bei vollem
 Haushalt `409` mit dem Fehlercode `household_device_quota` (oder `device_quota`,
 wenn die Liste dieses Relays selbst voll ist). Es wird nichts gekoppelt und nichts
-verbraucht – weder der Einladungscode noch der Wiederherstellungscode, der bis
-zu seinem Ablauf gilt. Das Limit wird vor dem
+verbraucht: Der Einladungs- oder Wiederherstellungscode gilt weiter, bis er
+abläuft. Das Limit wird vor dem
 Einladungscode selbst geprüft, daher bekommt auch eine vertippte oder
 abgelaufene Einladung diese Antwort und wird erst als solche abgelehnt, wenn
 wieder Platz ist.
@@ -206,7 +206,9 @@ Um Platz zu schaffen, entfernt ein Eigentümer in der App unter
 **PoolPilot Relay → Gekoppelte Geräte** ein Telefon, das nicht mehr genutzt
 wird, oder ein Mitglied meldet sich auf einem Telefon ab, das es nicht mehr
 braucht. Danach erneut koppeln: mit demselben Code, solange er noch gilt, sonst
-mit einer neuen Einladung oder einem neuen Wiederherstellungscode.
+mit einem neuen Code derselben Art (einer neuen Einladung von einem Eigentümer
+oder einem neuen Wiederherstellungscode aus
+[`show-recovery`](#eigentümer-zugriff-verloren)).
 
 Ein Telefon, das schon zum Haushalt gehört (es ist mit einem anderen Relay
 desselben Haushalts gekoppelt), braucht keinen freien Platz im Haushalt, um
@@ -228,8 +230,9 @@ voraus, die beide diese Ausnahme enthalten. Bei Relays bis v1.0.0 lehnt das
 Relay selbst noch mit `409 device_quota` ab; und bei einem neueren Relay, aber
 einer Cloud ohne die Ausnahme, antwortet die Cloud mit
 `409 household_device_quota`. In beiden Fällen wird nichts gekoppelt und der
-Wiederherstellungscode bleibt gültig, daher muss sich zuerst ein Mitglied auf
-einem Telefon abmelden, das es nicht mehr braucht. Kann das auch kein Mitglied
+Wiederherstellungscode nicht verbraucht, daher muss sich zuerst ein Mitglied auf
+einem Telefon abmelden, das es nicht mehr braucht; dauert das länger, als der
+Code gilt, hol dir mit `show-recovery` einen neuen. Kann das auch kein Mitglied
 (die übrigen Telefone wurden zurückgesetzt oder deinstalliert, ohne sich
 abzumelden), siehe [Immer noch hängen?](#immer-noch-hängen).
 
