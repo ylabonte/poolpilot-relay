@@ -17,6 +17,7 @@ func TestRelayStatusResponseJSON(t *testing.T) {
 		{RelayStatusResponse{State: RelayStateSuspended, Reason: RelayReasonFree}, `{"state":"suspended","reason":"free"}`},
 		{RelayStatusResponse{State: RelayStateSuspended, Reason: RelayReasonRevoked}, `{"state":"suspended","reason":"revoked"}`},
 		{RelayStatusResponse{State: RelayStateDeleted, Reason: RelayReasonHouseholdDeleted}, `{"state":"deleted","reason":"household_deleted"}`},
+		{RelayStatusResponse{State: RelayStateDeleted, Reason: RelayReasonRelayDeleted}, `{"state":"deleted","reason":"relay_deleted"}`},
 	}
 	for _, tc := range cases {
 		raw, err := json.Marshal(tc.in)

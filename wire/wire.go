@@ -1636,8 +1636,10 @@ const (
 	// operator's reactivate). The agent parks its tunnel and KEEPS its
 	// credentials, resuming when the answer turns active again.
 	RelayStateSuspended = "suspended"
-	// RelayStateDeleted: the relay's household was erased (the cloud holds a
-	// tombstone for this token). The agent drops all household data and
+	// RelayStateDeleted: the relay's household was erased
+	// (RelayReasonHouseholdDeleted), or the cloud's janitor deleted the
+	// released relay's row (RelayReasonRelayDeleted); either way the cloud
+	// holds a tombstone for this token. The agent drops all household data and
 	// returns to the setup-ready state, keeping its own identity (agent id +
 	// TLS key, so the pairing fingerprint stays valid).
 	RelayStateDeleted = "deleted"
@@ -1649,4 +1651,10 @@ const (
 	RelayReasonFree             = "free"
 	RelayReasonRevoked          = "revoked"
 	RelayReasonHouseholdDeleted = "household_deleted"
+	// RelayReasonRelayDeleted: the cloud's janitor deleted this relay's row
+	// after the relay was released (poolpilot-cloud
+	// docs/relay-lifecycle-contract.md §3). Same agent behaviour as
+	// RelayReasonHouseholdDeleted: the agent acts on State, which is
+	// RelayStateDeleted for both.
+	RelayReasonRelayDeleted = "relay_deleted"
 )
