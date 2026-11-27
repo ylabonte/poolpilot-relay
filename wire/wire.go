@@ -1653,7 +1653,8 @@ const (
 	RelayReasonHouseholdDeleted = "household_deleted"
 	// RelayReasonRelayDeleted: the cloud's janitor deleted this relay's row
 	// after the relay was released (poolpilot-cloud
-	// docs/relay-lifecycle-contract.md §3). Same agent behaviour as
+	// docs/relay-lifecycle-contract.md §3); unlike RelayReasonHouseholdDeleted,
+	// the household may still exist. Same agent behaviour as
 	// RelayReasonHouseholdDeleted: the agent acts on State, which is
 	// RelayStateDeleted for both.
 	RelayReasonRelayDeleted = "relay_deleted"
