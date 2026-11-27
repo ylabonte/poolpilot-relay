@@ -11,9 +11,11 @@
 //	            PARK the tunnel — no frp service, no /alerts or controller
 //	            sync calls — and KEEP the credentials; re-ask with backoff and
 //	            resume on "active".
-//	deleted   → the household was erased (the cloud holds a tombstone for this
-//	            token): drop all household data (state.State.ResetHousehold)
-//	            and return to setup-ready, keeping the relay's identity.
+//	deleted   → the household was erased, or the cloud's janitor deleted this
+//	            released relay's row (either way the cloud holds a tombstone
+//	            for this token): drop all household data
+//	            (state.State.ResetHousehold) and return to setup-ready, keeping
+//	            the relay's identity.
 //	401       → the cloud knows neither the token nor a tombstone. Never
 //	            destructive: only after unknownStrikes answers at least
 //	            unknownSpacing apart does the Watcher park (LifecycleUnknown),
@@ -166,12 +168,12 @@ func (w *Watcher) Kick() {
 // Probe asks for ONE question even when the relay has no tunnel to watch —
 // called when the updater's /update-check is answered 401 (main wires it).
 // That is the only cloud call a relay with no registered controller makes,
-// so without it such a relay would never learn its household was deleted and
-// would stay paired and enrolled forever. Rate-limited to one per
-// kickMinInterval. A probe-mode answer is acted on only when it is "deleted"
-// or "suspended"/"active" for the unchanged token; a probe's 401 is never
-// counted toward parking (there is no tunnel to park, and the strike rule is
-// about a tunnel that keeps being refused).
+// so without it such a relay would never learn that the cloud deleted its
+// household or the relay itself, and would stay paired and enrolled forever.
+// Rate-limited to one per kickMinInterval. A probe-mode answer is acted on
+// only when it is "deleted" or "suspended"/"active" for the unchanged token; a
+// probe's 401 is never counted toward parking (there is no tunnel to park, and
+// the strike rule is about a tunnel that keeps being refused).
 func (w *Watcher) Probe() {
 	w.mu.Lock()
 	now := w.o.Now()
@@ -230,7 +232,7 @@ func (w *Watcher) Step(ctx context.Context, kicked bool) {
 		return
 	}
 	// Not parked and no tunnel: nothing to watch, except the occasional idle
-	// probe (see idleProbeEvery) so an erased household still reaches it.
+	// probe (see idleProbeEvery) so a "deleted" answer still reaches it.
 	if !hasTunnel(st) {
 		w.resetPacing(true)
 		if w.idleProbeDue(now) {
