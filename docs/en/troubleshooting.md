@@ -79,19 +79,27 @@ action. One
   shows the reason in `tunnel.last_error` (e.g. `suspended: lapsed`).
 - **`state=unknown`**: the cloud didn't recognise this Relay several times
   over a few hours. The Relay pauses remote access the same way, keeps its
-  settings and keeps checking. If it doesn't clear up, the household behind
-  it most likely no longer exists in the cloud (e.g. it was deleted before
-  the cloud could tell Relays, or the Relay was offline for months). Pairing
-  again won't work while the old phones are still paired to it, so do a
-  [factory reset](#factory-reset) and then set the Relay up again from the
-  app.
-- **"household deleted in the cloud; dropped household data"**: the
-  household was deleted (e.g. via "Delete all my data" in the app). The Relay
-  forgets everything that belonged to it (paired phones, controllers, cloud
-  credentials) and is ready to be set up again. It keeps its own identity, so
-  its pairing QR code and fingerprint stay the same. Just set it up again from
-  the app (below). To get a fresh identity (e.g. before giving the device
-  away), use a [factory reset](#factory-reset).
+  settings and keeps checking. If it doesn't clear up, the cloud most likely
+  no longer knows this Relay: either the household behind it no longer
+  exists (e.g. it was deleted before the cloud could tell Relays, or more
+  than about 90 days before the Relay came back), or the Relay itself was
+  deleted (see the next point) and only came back more than about 90 days
+  later. Pairing again won't work while the old phones are still paired to
+  it, so do a [factory reset](#factory-reset) and then set the Relay up again
+  from the app.
+- **"control plane reports the relay deleted; dropped household data"**: the
+  PoolPilot cloud no longer knows this Relay. Either the household was
+  deleted (e.g. via "Delete all my data" in the app), or only the Relay was
+  deleted, because it was removed in the app or by PoolPilot, or because it
+  had no contact for 12 months. The line's `reason=` says which:
+  `household_deleted` or `relay_deleted`. The Relay forgets everything that
+  belonged to its household (paired phones, controllers, cloud credentials)
+  and is ready to be set up again. It keeps its own identity, so its pairing
+  QR code and fingerprint stay the same. Just set it up again from the app
+  (below). To get a fresh identity (e.g. before giving the device away), use
+  a [factory reset](#factory-reset). Relays up to v1.1.0 write this line as
+  "household deleted in the cloud; dropped household data" for either cause,
+  with an empty `reason=` when only the Relay was deleted.
 - **"household reset over the LAN API; dropped household data"**: the same
   reset, done right away. When you use "Delete all my data" in the app while
   your phone is on the same network as the Relay, the app asks the Relay to
