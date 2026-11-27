@@ -291,7 +291,7 @@ func (f *fixture) watcherDrop(t *testing.T, frpc string) {
 	}
 }
 
-// The watcher drops a deleted household without controllerMu, so a NEW
+// The watcher's drop on a "deleted" answer runs without controllerMu, so a NEW
 // controller registered in the cloud just before the drop must not be
 // persisted onto the reset relay afterwards: the upsert's persist is bound to
 // the household token, and the caller gets 401.
