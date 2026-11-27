@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -282,13 +283,22 @@ func TestDeletedDropsHouseholdKeepsIdentity(t *testing.T) {
 }
 
 // captureLog routes slog into a buffer (JSON, one record per line) for the
-// rest of the test and restores the previous default afterwards.
+// rest of the test and restores the previous default afterwards. slog.SetDefault
+// also rewires the stdlib log package's output and flags when it installs a
+// non-default handler, and does NOT undo that when the built-in default is
+// restored, so those are saved and restored too; otherwise every later test's
+// log lines would land in this buffer.
 func captureLog(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}
 	prev := slog.Default()
+	prevOut, prevFlags := log.Writer(), log.Flags()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(buf, nil)))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	t.Cleanup(func() {
+		slog.SetDefault(prev)
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
 	return buf
 }
 
