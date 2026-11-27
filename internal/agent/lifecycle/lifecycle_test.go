@@ -1,9 +1,13 @@
 package lifecycle
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -274,6 +278,57 @@ func TestDeletedDropsHouseholdKeepsIdentity(t *testing.T) {
 	}
 	if r.cloud.calls != calls {
 		t.Fatalf("setup-ready relay kept asking (%d→%d)", calls, r.cloud.calls)
+	}
+}
+
+// captureLog routes slog into a buffer (JSON, one record per line) for the
+// rest of the test and restores the previous default afterwards.
+func captureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return buf
+}
+
+// poolpilot-relay#140: "deleted" means the household was erased OR the cloud's
+// janitor deleted only this relay's row (its household may still exist), so
+// the drop line names neither cause; the reason field tells them apart. The
+// message is pinned literally because the troubleshooting docs (and the
+// website) quote it.
+func TestDeletedLogLineFitsBothCausesAndCarriesTheReason(t *testing.T) {
+	const want = "relay lifecycle: control plane reports the relay deleted; dropped household data, relay is ready for a new setup (identity kept)"
+	for _, reason := range []string{wire.RelayReasonHouseholdDeleted, wire.RelayReasonRelayDeleted} {
+		t.Run(reason, func(t *testing.T) {
+			buf := captureLog(t)
+			r := newRig(t)
+			r.cloud.answer(wire.RelayStateDeleted, reason)
+			r.stepUntilAsked(t, downGrace+time.Minute)
+			if r.store.Get().Enrolled() {
+				t.Fatal("precondition: the deleted answer must have dropped the household")
+			}
+			var drops []map[string]any
+			for line := range bytes.Lines(buf.Bytes()) {
+				var rec map[string]any
+				if err := json.Unmarshal(line, &rec); err != nil {
+					t.Fatalf("log line is not JSON: %q", line)
+				}
+				msg, _ := rec["msg"].(string)
+				if strings.Contains(msg, "household deleted") {
+					t.Errorf("a log line still claims the household was deleted: %q", msg)
+				}
+				if strings.Contains(msg, "dropped household data") {
+					drops = append(drops, rec)
+				}
+			}
+			if len(drops) != 1 {
+				t.Fatalf("want exactly one drop line, got %d: %s", len(drops), buf)
+			}
+			if got := drops[0]; got["msg"] != want || got["level"] != "WARN" || got["reason"] != reason {
+				t.Fatalf("drop line = %v, want msg %q, level WARN, reason %q", got, want, reason)
+			}
+		})
 	}
 }
 

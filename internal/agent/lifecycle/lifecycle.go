@@ -438,7 +438,10 @@ func (w *Watcher) drop(token, reason string) {
 		w.credentialsChanged()
 		return
 	}
-	slog.Warn("relay lifecycle: household deleted in the cloud; dropped household data, relay is ready for a new setup (identity kept)", "reason", reason)
+	// One message for both causes of "deleted" — the household was erased, or
+	// the janitor deleted only this relay's row and the household may still
+	// exist — so it claims neither; reason says which (poolpilot-relay#140).
+	slog.Warn("relay lifecycle: control plane reports the relay deleted; dropped household data, relay is ready for a new setup (identity kept)", "reason", reason)
 	w.resetPacing(true)
 }
 

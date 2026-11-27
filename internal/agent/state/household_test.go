@@ -9,9 +9,10 @@ import (
 	"github.com/ylabonte/poolpilot-relay/wire"
 )
 
-// poolpilot-cloud#242: a household deleted in the cloud drops every piece of
-// household data but KEEPS the relay's identity — agent id and TLS key/cert,
-// so the pairing fingerprint (and any returning device's TLS pin) stays valid.
+// poolpilot-cloud#242: a "deleted" answer from the cloud (the household was
+// erased, or the relay's row deleted) drops every piece of household data but
+// KEEPS the relay's identity — agent id and TLS key/cert, so the pairing
+// fingerprint (and any returning device's TLS pin) stays valid.
 func TestDropHouseholdKeepsIdentityDropsHouseholdData(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	st, err := Open(path)
