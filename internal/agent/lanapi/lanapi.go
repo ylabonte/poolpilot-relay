@@ -1908,10 +1908,12 @@ func writeProbeErr(w http.ResponseWriter, err error) {
 // persist — the lifecycle watcher's "deleted" answer, which deliberately runs
 // without controllerMu. The controller is NOT persisted (the persist is bound
 // to the household's token); its cloud row is revoked best-effort. In the
-// usual case — the household erased in the cloud — the relay holds no
-// credentials any more, the revoke is skipped, and the row died with the
-// household anyway; after a new setup it is sent with the NEW household's
-// bearer, which the cloud answers 404 for a foreign guid (treated as done).
+// usual case — the cloud deleted the household, or only this relay's row —
+// the relay holds no credentials any more, the revoke is skipped, and the
+// controller row died with the relay's row anyway (it cascades). After a new
+// setup it is sent with the new setup's bearer (after relay_deleted possibly
+// in the same household), and the cloud answers 204 for a guid it no longer
+// has; RevokeController treats that, like a 404, as done.
 func (s *Server) discardOrphanController(ctx context.Context, guid string) {
 	slog.Warn("relay lifecycle: household dropped while a controller was being registered; not persisting it", "guid", guid)
 	if err := s.Cloud.RevokeController(ctx, guid); err != nil {

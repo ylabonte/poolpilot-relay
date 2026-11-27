@@ -85,20 +85,30 @@ als eine `relay lifecycle:`-Zeile im Log:
   zeigt den Grund in `tunnel.last_error` (z. B. `suspended: lapsed`).
 - **`state=unknown`**: Die Cloud hat dieses Relay über einige Stunden hinweg
   mehrfach nicht erkannt. Das Relay pausiert den Fernzugriff genauso, behält
-  seine Einstellungen und prüft weiter. Löst sich das nicht, gibt es den
-  Haushalt dahinter in der Cloud sehr wahrscheinlich nicht mehr (z. B. weil er
-  gelöscht wurde, bevor die Cloud Relays darüber informieren konnte, oder weil
-  das Relay monatelang offline war). Neu koppeln funktioniert nicht, solange
-  die alten Telefone noch gekoppelt sind. Mach deshalb einen
-  [Werksreset](#werksreset) und richte das Relay danach erneut aus der App ein.
-- **„household deleted in the cloud; dropped household data“**: Der Haushalt
-  wurde gelöscht (z. B. über „Alle meine Daten löschen“ in der App). Das Relay
-  vergisst alles, was dazugehörte (gekoppelte Telefone, Steuerungen,
-  Cloud-Zugangsdaten), und ist bereit für eine neue Einrichtung. Seine eigene
-  Identität behält es, Kopplungs-QR-Code und Fingerabdruck bleiben also gleich.
-  Richte es einfach erneut aus der App ein (siehe unten). Eine neue Identität
-  (z. B. bevor du das Gerät weitergibst) bekommst du nur per
-  [Werksreset](#werksreset).
+  seine Einstellungen und prüft weiter. Löst sich das nicht, kennt die Cloud
+  das Relay sehr wahrscheinlich nicht mehr: Entweder gibt es den Haushalt
+  dahinter nicht mehr (z. B. weil er gelöscht wurde, bevor die Cloud Relays
+  darüber informieren konnte, oder mehr als etwa 90 Tage, bevor sich das
+  Relay wieder gemeldet hat), oder das Relay selbst wurde gelöscht (siehe
+  nächster Punkt) und hat sich erst mehr als etwa 90 Tage später wieder
+  gemeldet. Neu koppeln funktioniert nicht, solange die alten Telefone noch
+  gekoppelt sind. Mach deshalb einen [Werksreset](#werksreset) und richte das
+  Relay danach erneut aus der App ein.
+- **„control plane reports the relay deleted; dropped household data“**: Die
+  PoolPilot-Cloud kennt dieses Relay nicht mehr. Entweder wurde der Haushalt
+  gelöscht (z. B. über „Alle meine Daten löschen“ in der App), oder nur das
+  Relay, weil es in der App oder von PoolPilot entfernt wurde und danach
+  30 Tage keinen Kontakt hatte, oder weil es 12 Monate keinen Kontakt hatte.
+  Welches von beiden, sagt `reason=` in der Zeile: `household_deleted` oder
+  `relay_deleted`. Das Relay vergisst alles, was zum Haushalt gehörte
+  (gekoppelte Telefone, Steuerungen, Cloud-Zugangsdaten), und ist bereit für
+  eine neue Einrichtung. Seine eigene Identität behält es, Kopplungs-QR-Code
+  und Fingerabdruck bleiben also gleich. Richte es einfach erneut aus der App
+  ein (siehe unten). Eine neue Identität (z. B. bevor du das Gerät
+  weitergibst) bekommst du nur per [Werksreset](#werksreset). Relays bis
+  v1.1.0 schreiben diese Zeile in beiden Fällen als „household deleted in the
+  cloud; dropped household data“, mit leerem `reason=`, wenn nur das Relay
+  gelöscht wurde.
 - **„household reset over the LAN API; dropped household data“**: Derselbe
   Reset, nur sofort. Nutzt du „Alle meine Daten löschen“ in der App, während
   dein Telefon im selben Netzwerk wie das Relay ist, bittet die App das Relay,

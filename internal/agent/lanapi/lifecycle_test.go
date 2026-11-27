@@ -119,9 +119,10 @@ func TestAuthedRequestKicksLifecycleOnlyWhileParked(t *testing.T) {
 	}
 }
 
-// After the household was deleted (state.Store.DropHousehold) the relay is
-// setup-ready: the tunnel stops even though no cloud credentials remain, and
-// the normal enrolment-code pairing works again and clears any lifecycle.
+// After a household drop (state.Store.DropHousehold, as on the watcher's
+// "deleted" answer for either reason) the relay is setup-ready: the tunnel
+// stops even though no cloud credentials remain, and the normal
+// enrolment-code pairing works again and clears any lifecycle.
 func TestDroppedHouseholdIsSetupReadyAndRepairs(t *testing.T) {
 	f, _ := configuredFixture(t)
 	before := f.store.Get()
