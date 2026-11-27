@@ -978,7 +978,7 @@ func (c *Client) RelayStatus(ctx context.Context, baseURL, frpcToken string) (wi
 // wire.RelayReason* values, else "".
 func knownRelayReason(reason string) string {
 	switch reason {
-	case wire.RelayReasonLapsed, wire.RelayReasonFree, wire.RelayReasonRevoked, wire.RelayReasonHouseholdDeleted:
+	case wire.RelayReasonLapsed, wire.RelayReasonFree, wire.RelayReasonRevoked, wire.RelayReasonHouseholdDeleted, wire.RelayReasonRelayDeleted:
 		return reason
 	default:
 		return ""
