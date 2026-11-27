@@ -90,8 +90,9 @@ action. One
 - **"control plane reports the relay deleted; dropped household data"**: the
   PoolPilot cloud no longer knows this Relay. Either the household was
   deleted (e.g. via "Delete all my data" in the app), or only the Relay was
-  deleted, because it was removed in the app or by PoolPilot, or because it
-  had no contact for 12 months. The line's `reason=` says which:
+  deleted, because it was removed in the app or by PoolPilot and then had no
+  contact for 30 days, or because it had no contact for 12 months. The
+  line's `reason=` says which:
   `household_deleted` or `relay_deleted`. The Relay forgets everything that
   belonged to its household (paired phones, controllers, cloud credentials)
   and is ready to be set up again. It keeps its own identity, so its pairing

@@ -97,8 +97,9 @@ als eine `relay lifecycle:`-Zeile im Log:
 - **„control plane reports the relay deleted; dropped household data“**: Die
   PoolPilot-Cloud kennt dieses Relay nicht mehr. Entweder wurde der Haushalt
   gelöscht (z. B. über „Alle meine Daten löschen“ in der App), oder nur das
-  Relay, weil es in der App oder von PoolPilot entfernt wurde oder weil es
-  12 Monate keinen Kontakt hatte. Welches von beiden, sagt `reason=` in der
+  Relay, weil es in der App oder von PoolPilot entfernt wurde und danach
+  30 Tage keinen Kontakt hatte, oder weil es 12 Monate keinen Kontakt hatte.
+  Welches von beiden, sagt `reason=` in der
   Zeile: `household_deleted` oder `relay_deleted`. Das Relay vergisst alles,
   was zum Haushalt gehörte (gekoppelte Telefone, Steuerungen,
   Cloud-Zugangsdaten), und ist bereit für eine neue Einrichtung. Seine eigene
