@@ -1329,9 +1329,9 @@ func (s *Server) putControllers(w http.ResponseWriter, r *http.Request) {
 	normalized := state.NormalizeLanAddress(cfg.LanAddress, cfg.UseHTTPS)
 	st := s.Store.Get()
 	// Every controller persist below is bound to the household this upsert
-	// was decided for (persistForHousehold): the lifecycle watcher drops a
-	// deleted household WITHOUT controllerMu, and must not have a controller
-	// from that household re-persisted onto the reset relay after it.
+	// was decided for (persistForHousehold): the lifecycle watcher drops the
+	// household on a "deleted" answer WITHOUT controllerMu, and must not have a
+	// controller from that household re-persisted onto the reset relay after it.
 	householdToken := st.Cloud.FrpcToken
 	existing, hit := st.FindControllerByAddr(normalized)
 	// A matched controller with no cloud identity yet has no GUID to reuse — the

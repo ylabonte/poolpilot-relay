@@ -190,7 +190,7 @@ const (
 	LifecycleSuspended = "suspended"
 	// LifecycleUnknown: the control plane repeatedly did not recognise the
 	// token (401) and holds no tombstone for it. Could be a cloud-side data
-	// problem as easily as a gone household, so it only parks.
+	// problem as easily as a gone household or relay, so it only parks.
 	LifecycleUnknown = "unknown"
 )
 
@@ -385,12 +385,13 @@ func (s State) TunnelParked() bool {
 }
 
 // ResetHousehold is THE one place that decides what a relay forgets when the
-// control plane reports its household deleted (POST /relay/status → "deleted",
-// poolpilot-cloud#242). It drops everything that belonged to the household —
-// the cloud credentials and lifecycle (Cloud), every paired device and every
-// still-unreported device removal (PendingDeviceRemovals — the household
-// entries they would have unlinked died with the household), every
-// controller (their GUIDs died with the household; Controller also carries the
+// control plane answers "deleted" (POST /relay/status, poolpilot-cloud#242:
+// the household was erased, or the janitor deleted the released relay's row).
+// It drops everything that belonged to the household — the cloud credentials
+// and lifecycle (Cloud), every paired device and every still-unreported device
+// removal (PendingDeviceRemovals — the relay's links to household entries they
+// would have dropped died with the household or with the relay's row), every
+// controller (their GUIDs died the same way; Controller also carries the
 // controller credentials, alert rules and alert state), the queued alert
 // outbox, and the ctrl-vhost session secret (invalidates any web session) —
 // and returns the relay to the setup-ready state: paired:false,

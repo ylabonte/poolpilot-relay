@@ -85,8 +85,8 @@ type Options struct {
 	// OnUnknownToken, when set, is called after a check the control plane
 	// answered 401 (cloud.ErrUnknownToken). main wires it to the lifecycle
 	// watcher's Probe: a relay with no tunnel makes no other cloud call, so
-	// this is how it still learns its household was deleted
-	// (poolpilot-cloud#242). Must not block.
+	// this is how it still learns that the cloud deleted its household or the
+	// relay itself (poolpilot-cloud#242). Must not block.
 	OnUnknownToken func()
 }
 

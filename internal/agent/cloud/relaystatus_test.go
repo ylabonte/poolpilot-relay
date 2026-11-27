@@ -168,6 +168,7 @@ func TestRelayStatusKeepsOnlyDocumentedReasons(t *testing.T) {
 		`{"state":"suspended","reason":"lapsed"}`:                            "lapsed",
 		`{"state":"suspended","reason":"<script>\u0000x"}`:                   "",
 		`{"state":"deleted","reason":"household_deleted"}`:                   "household_deleted",
+		`{"state":"deleted","reason":"relay_deleted"}`:                       "relay_deleted",
 		`{"state":"suspended","reason":"` + strings.Repeat("x", 4096) + `"}`: "",
 	} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
