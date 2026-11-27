@@ -99,16 +99,16 @@ als eine `relay lifecycle:`-Zeile im Log:
   gelöscht (z. B. über „Alle meine Daten löschen“ in der App), oder nur das
   Relay, weil es in der App oder von PoolPilot entfernt wurde und danach
   30 Tage keinen Kontakt hatte, oder weil es 12 Monate keinen Kontakt hatte.
-  Welches von beiden, sagt `reason=` in der
-  Zeile: `household_deleted` oder `relay_deleted`. Das Relay vergisst alles,
-  was zum Haushalt gehörte (gekoppelte Telefone, Steuerungen,
-  Cloud-Zugangsdaten), und ist bereit für eine neue Einrichtung. Seine eigene
-  Identität behält es, Kopplungs-QR-Code und Fingerabdruck bleiben also gleich.
-  Richte es einfach erneut aus der App ein (siehe unten). Eine neue Identität
-  (z. B. bevor du das Gerät weitergibst) bekommst du nur per
-  [Werksreset](#werksreset). Relays bis v1.1.0 schreiben diese Zeile in beiden
-  Fällen als „household deleted in the cloud; dropped household data“, mit
-  leerem `reason=`, wenn nur das Relay gelöscht wurde.
+  Welches von beiden, sagt `reason=` in der Zeile: `household_deleted` oder
+  `relay_deleted`. Das Relay vergisst alles, was zum Haushalt gehörte
+  (gekoppelte Telefone, Steuerungen, Cloud-Zugangsdaten), und ist bereit für
+  eine neue Einrichtung. Seine eigene Identität behält es, Kopplungs-QR-Code
+  und Fingerabdruck bleiben also gleich. Richte es einfach erneut aus der App
+  ein (siehe unten). Eine neue Identität (z. B. bevor du das Gerät
+  weitergibst) bekommst du nur per [Werksreset](#werksreset). Relays bis
+  v1.1.0 schreiben diese Zeile in beiden Fällen als „household deleted in the
+  cloud; dropped household data“, mit leerem `reason=`, wenn nur das Relay
+  gelöscht wurde.
 - **„household reset over the LAN API; dropped household data“**: Derselbe
   Reset, nur sofort. Nutzt du „Alle meine Daten löschen“ in der App, während
   dein Telefon im selben Netzwerk wie das Relay ist, bittet die App das Relay,

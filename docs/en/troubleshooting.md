@@ -92,15 +92,15 @@ action. One
   deleted (e.g. via "Delete all my data" in the app), or only the Relay was
   deleted, because it was removed in the app or by PoolPilot and then had no
   contact for 30 days, or because it had no contact for 12 months. The
-  line's `reason=` says which:
-  `household_deleted` or `relay_deleted`. The Relay forgets everything that
-  belonged to its household (paired phones, controllers, cloud credentials)
-  and is ready to be set up again. It keeps its own identity, so its pairing
-  QR code and fingerprint stay the same. Just set it up again from the app
-  (below). To get a fresh identity (e.g. before giving the device away), use
-  a [factory reset](#factory-reset). Relays up to v1.1.0 write this line as
-  "household deleted in the cloud; dropped household data" for either cause,
-  with an empty `reason=` when only the Relay was deleted.
+  line's `reason=` says which: `household_deleted` or `relay_deleted`. The
+  Relay forgets everything that belonged to its household (paired phones,
+  controllers, cloud credentials) and is ready to be set up again. It keeps
+  its own identity, so its pairing QR code and fingerprint stay the same.
+  Just set it up again from the app (below). To get a fresh identity (e.g.
+  before giving the device away), use a [factory reset](#factory-reset).
+  Relays up to v1.1.0 write this line as "household deleted in the cloud;
+  dropped household data" for either cause, with an empty `reason=` when
+  only the Relay was deleted.
 - **"household reset over the LAN API; dropped household data"**: the same
   reset, done right away. When you use "Delete all my data" in the app while
   your phone is on the same network as the Relay, the app asks the Relay to
